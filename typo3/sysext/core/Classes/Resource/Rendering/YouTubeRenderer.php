@@ -142,7 +142,7 @@ class YouTubeRenderer implements FileRendererInterface
         if (!empty($options['autoplay'])) {
             $urlParams[] = 'autoplay=1';
             // If autoplay is enabled, enforce mute=1, see https://developer.chrome.com/blog/autoplay/
-            $urlParams[] = 'mute=1';
+            # $urlParams[] = 'mute=1';
         }
         if (!empty($options['modestbranding'])) {
             $urlParams[] = 'modestbranding=1';
