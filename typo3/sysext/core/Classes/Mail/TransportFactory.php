@@ -113,6 +113,16 @@ class TransportFactory implements SingletonInterface, LoggerAwareInterface
                     $this->dispatcher,
                     $this->logManager->getLogger(EsmtpTransport::class)
                 );
+                $verifyPeer = (bool)($mailSettings['transport_smtp_verify_peer'] ?? true);
+                if(!$verifyPeer) {
+                    $stream = $transport->getStream();
+                    $streamOptions = $stream->getStreamOptions();
+
+                    $streamOptions['ssl']['verify_peer'] = false;
+                    $streamOptions['ssl']['verify_peer_name'] = false;
+
+                    $stream->setStreamOptions($streamOptions);
+                }
                 // Need authentication?
                 $username = (string)($mailSettings['transport_smtp_username'] ?? '');
                 if ($username !== '') {
