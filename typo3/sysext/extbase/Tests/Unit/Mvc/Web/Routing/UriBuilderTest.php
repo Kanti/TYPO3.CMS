@@ -34,6 +34,7 @@ use TYPO3\CMS\Extbase\Mvc\Request;
 use TYPO3\CMS\Extbase\Mvc\Web\Routing\UriBuilder;
 use TYPO3\CMS\Extbase\Persistence\ObjectStorage;
 use TYPO3\CMS\Extbase\Service\ExtensionService;
+use TYPO3\CMS\Extbase\Tests\Fixture\StringBackedEnum;
 use TYPO3\CMS\Extbase\Tests\Unit\Mvc\Web\Routing\Fixtures\EntityFixture;
 use TYPO3\CMS\Extbase\Tests\Unit\Mvc\Web\Routing\Fixtures\ValueObjectFixture;
 use TYPO3\CMS\Frontend\ContentObject\ContentObjectRenderer;
@@ -352,6 +353,18 @@ class UriBuilderTest extends UnitTestCase
         $mockDomainObject->_set('uid', '123');
         $this->uriBuilder->setArguments(['somePrefix' => ['someDomainObject' => $mockDomainObject]]);
         $expectedResult = '/typo3/test/Path?token=dummyToken&somePrefix%5BsomeDomainObject%5D=123';
+        $actualResult = $this->uriBuilder->buildBackendUri();
+        self::assertEquals($expectedResult, $actualResult);
+    }
+
+    /**
+     * @test
+     */
+    public function buildBackendUriConvertsEnumAfterArgumentsHaveBeenMerged(): void
+    {
+        $GLOBALS['TYPO3_REQUEST'] = $this->getRequestWithRouteAttribute();
+        $this->uriBuilder->setArguments(['somePrefix' => ['someDomainObject' => StringBackedEnum::FirstCase]]);
+        $expectedResult = '/typo3/test/Path?token=dummyToken&somePrefix%5BsomeDomainObject%5D=' . StringBackedEnum::FirstCase->value;
         $actualResult = $this->uriBuilder->buildBackendUri();
         self::assertEquals($expectedResult, $actualResult);
     }

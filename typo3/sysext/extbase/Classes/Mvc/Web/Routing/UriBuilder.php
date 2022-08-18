@@ -760,6 +760,8 @@ class UriBuilder
                 }
             } elseif (is_array($argumentValue)) {
                 $arguments[$argumentKey] = $this->convertDomainObjectsToIdentityArrays($argumentValue);
+            } elseif ($argumentValue instanceof \UnitEnum) {
+                $arguments[$argumentKey] = $argumentValue->value ?? $argumentValue->name;
             }
         }
         return $arguments;
