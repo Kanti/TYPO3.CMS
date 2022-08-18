@@ -36,6 +36,9 @@ use TYPO3\CMS\Extbase\Persistence\Generic\QueryFactoryInterface;
 use TYPO3\CMS\Extbase\Persistence\Generic\Session;
 use TYPO3\CMS\Extbase\Reflection\ClassSchema;
 use TYPO3\CMS\Extbase\Reflection\ReflectionService;
+use TYPO3\CMS\Extbase\Tests\Fixture\IntegerBackedEnum;
+use TYPO3\CMS\Extbase\Tests\Fixture\StringBackedEnum;
+use TYPO3\CMS\Extbase\Tests\Fixture\UnbackedEnum;
 use TYPO3\CMS\Extbase\Tests\Unit\Persistence\Generic\Mapper\Fixture\DummyChildEntity;
 use TYPO3\CMS\Extbase\Tests\Unit\Persistence\Generic\Mapper\Fixture\DummyEntity;
 use TYPO3\CMS\Extbase\Tests\Unit\Persistence\Generic\Mapper\Fixture\DummyParentEntity;
@@ -128,6 +131,7 @@ class DataMapperTest extends UnitTestCase
             'uninitializedDateTimeProperty' => 0,
             'uninitializedMandatoryDateTimeProperty' => 0,
             'initializedDateTimeProperty' => 0,
+            'initializedEnumProperty' => StringBackedEnum::SecondCase->value,
         ];
         $columnMaps = [
             'uid' => new ColumnMap('uid', 'uid'),
@@ -140,6 +144,7 @@ class DataMapperTest extends UnitTestCase
             'uninitializedDateTimeProperty' => new ColumnMap('uninitializedDateTimeProperty', 'uninitializedDateTimeProperty'),
             'uninitializedMandatoryDateTimeProperty' => new ColumnMap('uninitializedMandatoryDateTimeProperty', 'uninitializedMandatoryDateTimeProperty'),
             'initializedDateTimeProperty' => new ColumnMap('initializedDateTimeProperty', 'initializedDateTimeProperty'),
+            'initializedEnumProperty' => new ColumnMap('initializedEnumProperty', 'initializedEnumProperty'),
         ];
         $dataMap = $this->getAccessibleMock(DataMap::class, ['dummy'], [$className, $className]);
         $dataMap->_set('columnMaps', $columnMaps);
@@ -175,6 +180,7 @@ class DataMapperTest extends UnitTestCase
         self::assertSame('foo', $object->uninitializedStringProperty);
         self::assertNull($object->uninitializedDateTimeProperty);
         self::assertFalse(isset($object->uninitializedMandatoryDateTimeProperty));
+        self::assertSame(StringBackedEnum::SecondCase, $object->initializedEnumProperty);
 
         // Property is initialized with "null", so isset would return false.
         // Test, if property was "really" initialized.
@@ -500,6 +506,9 @@ class DataMapperTest extends UnitTestCase
             'traversable domain object to identifier' => [1, $traversableDomainObject->reveal()],
             'integer value is returned unchanged' => [1234, 1234],
             'float is converted to string' => ['1234.56', 1234.56],
+            'UnbackedEnum is converted to string' => [UnbackedEnum::ThirdCase->name, UnbackedEnum::ThirdCase],
+            'StringBackedEnum is converted to string' => [StringBackedEnum::SecondCase->value, StringBackedEnum::SecondCase],
+            'IntegerBackedEnum is converted to integer' => [IntegerBackedEnum::SecondCase->value, IntegerBackedEnum::SecondCase],
         ];
     }
 

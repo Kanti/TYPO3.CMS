@@ -40,6 +40,7 @@ use TYPO3\CMS\Extbase\Persistence\Generic\Session;
 use TYPO3\CMS\Extbase\Persistence\ObjectStorage;
 use TYPO3\CMS\Extbase\Persistence\QueryInterface;
 use TYPO3\CMS\Extbase\Persistence\QueryResultInterface;
+use TYPO3\CMS\Extbase\Property\Exception\InvalidTargetException;
 use TYPO3\CMS\Extbase\Reflection\ClassSchema\Exception\NoSuchPropertyException;
 use TYPO3\CMS\Extbase\Reflection\ReflectionService;
 use TYPO3\CMS\Extbase\Utility\TypeHandlingUtility;
@@ -251,6 +252,8 @@ class DataMapper
                             $columnMap->getDateTimeStorageFormat(),
                             $propertyType
                         );
+                    } elseif (is_subclass_of($propertyType, \UnitEnum::class)) {
+                        $propertyValue = $this->mapEnum($row[$columnName], $propertyType);
                     } elseif (TypeHandlingUtility::isCoreType($propertyType)) {
                         $propertyValue = $this->mapCoreType($propertyType, $row[$columnName]);
                     } else {
@@ -305,6 +308,31 @@ class DataMapper
         // All date/datetime/time values are stored in the database "as is", independent of any time zone information.
         // It is therefore only important to use the same time zone in PHP when storing and retrieving the values.
         return GeneralUtility::makeInstance($targetType, $value);
+    }
+
+    /**
+     * @template T of UnitEnum
+     * @param float|int|string $value
+     * @param class-string<T> $targetType
+     * @return T|null
+     * @throws InvalidTargetException
+     */
+    protected function mapEnum(float|int|string $source, string $targetType): ?\UnitEnum
+    {
+        if (!enum_exists($targetType)) {
+            throw new \InvalidTargetException('TargetType "' . $targetType . '" is not an enum.', 1660834545);
+        }
+        foreach ($targetType::cases() as $enum) {
+            if (property_exists($enum, 'value') && $enum->value == $source) {
+                return $enum;
+            }
+        }
+        foreach ($targetType::cases() as $enum) {
+            if ($enum->name == $source) {
+                return $enum;
+            }
+        }
+        return null;
     }
 
     /**
@@ -788,6 +816,8 @@ class DataMapper
             } else {
                 $parameter = $input->format('U');
             }
+        } elseif ($input instanceof \UnitEnum) {
+            $parameter = $input->value ?? $input->name;
         } elseif ($input instanceof DomainObjectInterface) {
             $parameter = (int)$input->getUid();
         } elseif (TypeHandlingUtility::isValidTypeForMultiValueComparison($input)) {

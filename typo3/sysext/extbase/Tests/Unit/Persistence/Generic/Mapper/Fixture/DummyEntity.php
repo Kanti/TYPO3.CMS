@@ -18,6 +18,7 @@ declare(strict_types=1);
 namespace TYPO3\CMS\Extbase\Tests\Unit\Persistence\Generic\Mapper\Fixture;
 
 use TYPO3\CMS\Extbase\DomainObject\AbstractEntity;
+use TYPO3\CMS\Extbase\Tests\Fixture\StringBackedEnum;
 
 /**
  * Fixture
@@ -57,4 +58,6 @@ class DummyEntity extends AbstractEntity
     public \DateTime $uninitializedMandatoryDateTimeProperty;
 
     public ?\DateTime $initializedDateTimeProperty = null;
+
+    public StringBackedEnum $initializedEnumProperty = StringBackedEnum::FirstCase;
 }
