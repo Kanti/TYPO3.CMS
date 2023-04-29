@@ -78,6 +78,7 @@ class ImageService implements SingletonInterface
      */
     public function getImageUri(FileInterface $image, bool $absolute = false): string
     {
+        $absolute = true;
         $imageUrl = $image->getPublicUrl();
         if (!$absolute || $imageUrl === null) {
             return (string)$imageUrl;
