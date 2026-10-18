@@ -19,10 +19,12 @@ namespace TYPO3\CMS\Core\Domain\Persistence;
 
 use TYPO3\CMS\Core\DataHandling\Localization\State;
 use TYPO3\CMS\Core\Domain\Persistence\Exception\InvalidRecordValueException;
+use TYPO3\CMS\Core\Domain\Persistence\Exception\InvalidWriteContextException;
 use TYPO3\CMS\Core\Domain\Persistence\Exception\RecordAccessDeniedException;
 use TYPO3\CMS\Core\Domain\Persistence\Exception\UnsupportedRecordWriteException;
 use TYPO3\CMS\Core\LinkHandling\TypoLinkCodecService;
 use TYPO3\CMS\Core\LinkHandling\TypolinkParameter;
+use TYPO3\CMS\Core\Schema\Capability\TcaSchemaCapability;
 use TYPO3\CMS\Core\Schema\Field\FieldTranslationBehaviour;
 use TYPO3\CMS\Core\Schema\Field\FieldTypeInterface;
 use TYPO3\CMS\Core\Schema\Field\RelationalFieldTypeInterface;
@@ -35,6 +37,12 @@ final readonly class RecordFieldNormalizer
 
     public function changes(RecordDraft $draft, TcaSchema $schema, array $identifiers = [], ?RecordWriteTarget $currentTarget = null, ?array $changes = null): array
     {
+        if ($schema->hasCapability(TcaSchemaCapability::AccessReadOnly)) {
+            throw new UnsupportedRecordWriteException('The table is read-only.', 1792305009);
+        }
+        if ($draft->context->workspaceId !== 0 && (!$schema->isWorkspaceAware() || !empty($schema->getRawConfiguration()['versioningWS_alwaysAllowLiveEdit']))) {
+            throw new InvalidWriteContextException('Writing a non-versioned table or an always-Live table in a workspace is not supported.', 1792330004);
+        }
         $changes ??= $draft->getChanges();
         $currentTarget ??= $draft->target;
         $effectiveSchema = $schema;

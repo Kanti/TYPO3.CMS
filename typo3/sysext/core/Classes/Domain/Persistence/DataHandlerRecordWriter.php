@@ -65,7 +65,8 @@ final readonly class DataHandlerRecordWriter
         } catch (\Throwable $exception) {
             throw new DataHandlerExecutionException('DataHandler execution failed; persistence may have partially succeeded.', 1792305101, array_values($handler->errorLog), $exception, $handler->getWrittenRecords(), $handler->substNEWwithIDs);
         } finally {
-            GeneralUtility::makeInstance(CacheManager::class)->getCache('runtime')->flushByTag(BackendUtility::RUNTIME_CACHE_TAG);
+            // Existing backend caches have no shared invalidation tag.
+            GeneralUtility::makeInstance(CacheManager::class)->getCache('runtime')->flush();
         }
         if ($handler->errorLog !== []) {
             throw new DataHandlerExecutionException('DataHandler reported errors; persistence may have partially succeeded.', 1792305102, array_values($handler->errorLog), null, $handler->getWrittenRecords(), $handler->substNEWwithIDs);

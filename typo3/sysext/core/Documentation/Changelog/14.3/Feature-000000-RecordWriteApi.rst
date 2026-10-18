@@ -31,6 +31,12 @@ Its permissions, TCA evaluation, hooks, history, reference-index updates,
 localization, workspace versioning and cache handling remain active. This API
 neither uses Extbase persistence nor introduces another persistence framework.
 
+The only DataHandler integration additions are internal accessors for creation
+defaults (including Page/User-TSconfig), the existing table ACL with its hooks,
+and physical insert/update acknowledgements for partial-write reconciliation.
+They expose existing processing without replacing authorization/default logic or
+changing execution order. An empty error log alone does not confirm a write.
+
 Execution identities and dependency injection
 --------------------------------------------
 
@@ -76,28 +82,32 @@ existing :php:`CommandLineUserCreation::ensureCliUserExists()` mechanism, using
 the same default administrator configuration and random password as native CLI
 authentication. No prior CLI command or manual setup is required.
 
-The Core provisioner serializes its existence check and insertion with
-:php:`LockFactory`. All provisioning callers, including native CLI bootstrap,
-share that lock. Native CLI authentication reloads the identity after
-provisioning, including when a concurrent caller created it. Multi-node installations must configure an appropriate shared
-locking strategy/domain, as for other Core locks. The ``_cli_`` account is the
-only special bootstrap write here; ordinary record and relation mutations remain
-inside DataHandler.
+Provisioning retains existing Core semantics without changing native CLI
+behavior. Disabled, expired or otherwise unavailable active accounts fail with
+:php:`InvalidWriteContextException`; their permissions are never elevated and
+there is no fallback to an editor session. Core ignores soft-deleted accounts
+when deciding whether to provision a new default identity; deleted rows are not
+reactivated or changed. Maintenance restrictions remain active.
 
-Existing reserved identities are never reactivated, replaced or elevated. A
-soft-deleted account still reserves the name. Disabled, expired, deleted or
-otherwise unavailable identities and disallowed maintenance modes fail explicitly
-with :php:`InvalidWriteContextException`; there is no fallback to an editor
-session. Operators must review such accounts explicitly. Authentication of an
-established CLI user retains its normal Core behavior.
+The API adds no global provisioning lock or concurrency guarantee. Concurrent
+first-use provisioning inherits the existing Core limitation; hardening that
+bootstrap mechanism is separate work. The existing CLI-user bootstrap is the
+only special identity write here; ordinary records and relations use DataHandler.
 
 Each execution passes its identity explicitly to a fresh DataHandler. Legacy
 Core dependencies and hooks also require a temporary global backend context;
 the writer scopes that context and restores authentication globals and Context
 aspects in a ``finally`` block. History and logs attribute system writes to the
 ``_cli_`` user. There is no frontend session, user impersonation or CLI-mode spoof.
-Context-dependent backend read caches are invalidated when switching identities
-and after an execution, preventing stale layouts and workspace preview data.
+The selected authentication object is the sole authority passed to DataHandler.
+The ``backend.user`` Context aspect is synchronized for legacy readers and
+restored afterward; a different previous aspect neither authorizes nor denies
+a write. Workspace, language and request-lifetime checks remain active.
+
+The API flushes the in-memory runtime cache when switching identities and after
+an execution. This prevents stale layouts and workspace preview data without
+changing BackendUtility or BackendLayoutView cache behavior. It does not flush
+persistent caches merely to switch identities.
 
 **The system identity does not authorize an HTTP request.** Extension controllers
 must enforce application permissions, request-method/CSRF or equivalent request
@@ -106,12 +116,20 @@ pages and fields on the server. Do not pass arbitrary visitor input to this API.
 Neither a frontend login nor a backend session automatically authorizes a public
 frontend business operation.
 
-Before returning an existing draft, the writer uses DataHandler's table, page
-and update checks and :php:`BackendUserAuthentication::checkRecordEditAccess()`
-for language, authMode, edit locks and existing hooks. Draft reads also enforce
-excluded-field permissions. It does not use the frontend visibility voter as a
-replacement for backend write permissions. DataHandler remains responsible for
-the complete write-time access checks.
+Reading is independent of write permission. :php:`edit()`, :php:`editByUid()`,
+:php:`RecordDraft::get()` and relation reads do not require edit access, including
+excluded or read-only fields, locked records, restricted pages or languages.
+Structural identity checks still reject ambiguous overlays, foreign workspace
+versions and invalid records. Extensions must enforce their own application
+read-access policy when exposing record values to visitors.
+
+:php:`save()` and batch preflight enforce write permissions. Existing-record
+checks reuse DataHandler's table/page/update checks and
+:php:`BackendUserAuthentication::checkRecordEditAccess()` for language, authMode,
+edit locks and registered hooks. Excluded-field permissions and read-only TCA
+policies are checked when normalizing changes. DataHandler remains responsible
+for complete write-time access checks; the API does not introduce another
+permission system. No-op saves still require edit permission.
 
 Create and update
 -----------------
@@ -288,17 +306,27 @@ never used as the authoritative existing relation list. Saved membership and
 ordering are checked again after execution.
 
 Supported relations are single references, ordinary select/group relations,
-MM relations and standard category reverse-MM relations. Existing foreign-field
-IRRE children can be attached, detached and reordered with workspace-aware
-ownership checks. Detachment submits
-an explicit child datamap update; it does not delete the child. Child permissions
-are checked using the existing backend/DataHandler checks. Reparenting an already
-owned child, inline cycles and multiple batch owners are rejected.
+MM relations and standard category reverse-MM relations. Live foreign-field IRRE
+children can be attached, detached and reordered with ownership checks.
+Detachment submits an explicit child datamap update and does not delete the
+child. Child write permissions use existing backend/DataHandler checks.
+Reparenting an owned child, inline cycles and multiple batch owners are rejected.
 
-New IRRE children in a workspace must be created in the same batch, or already
-have a workspace version. Existing owned children are versioned with their parent
-by DataHandler. Attaching an unowned, unversioned Live child from a workspace is
-rejected, preventing an implicit Live foreign-key update.
+Workspace IRRE writes require versioned child tables and deliberately follow
+the unchanged Core RelationHandler.
+New workspace-owned children can be created in a batch, attached, detached and
+reordered. Existing Live children may be retained when versioning their parent.
+Adding or detaching an existing Live child's identity in a workspace is rejected
+before execution, even if the child already has a workspace version. Core's
+foreign-field resolver does not reliably reflect independently changed workspace
+ownership: it can retain detached children or omit attached versions. Repairing
+that global behavior requires a separate Core change.
+
+The API also rejects pre-existing workspace IRRE data whose effective ownership
+and Core-resolved membership disagree, instead of returning incomplete or
+incorrect membership. This restriction does not affect Live IRRE or workspace
+MM, select and group relations. Core copy/localization commands retain their
+native recursive behavior.
 
 Arbitrary inverse-MM configurations, duplicate-member relations, inline relations
 without a foreign field, symmetric or foreign-selector/table/match-discriminator
@@ -424,8 +452,8 @@ relevant system permission changes are revalidated before execution. Drafts from
 another request are rejected, including reads of their original values.
 
 Nested operations reuse an already-bound context while retaining ``finally``
-restoration. Context-dependent backend read caches are invalidated on actual
-identity switches and after DataHandler execution. New-record construction avoids
+restoration. The runtime cache is flushed on actual identity switches and after
+DataHandler execution. New-record construction avoids
 unnecessary global context switches; batch storage pages are resolved once per
 position and checked again at execution.
 
@@ -441,7 +469,7 @@ Preflight and reconciliation
 
 :php:`RecordWriteBatch::validate()` returns per-draft diagnostics without executing
 DataHandler or consuming drafts. It checks values, effective schemas, existing
-record access, references, cycles and conflicts between otherwise valid drafts.
+record write access, references, cycles and conflicts between otherwise valid drafts.
 An importer can correct a draft or :php:`remove()` an invalid row from the batch.
 Validation is a best-effort preflight, not a reservation, a dry-run of every hook
 or a guarantee that DataHandler will accept the write. Create permissions and all
@@ -615,10 +643,12 @@ All writes retain native permission checks, versioning, localization, hooks,
 history and cache handling. Frontend writes use a trusted system identity and
 require application-level authorization at the extension boundary.
 
-Narrow Core additions expose acknowledged DataHandler writes for verification,
-tag context-dependent backend runtime reads for invalidation, and correct
-RelationHandler's foreign-field ownership checks after workspace resolution.
-Regression tests cover workspace ownership and updated backend layouts.
+Narrow internal DataHandler integration points expose defaults, table ACLs and
+physical write acknowledgements. Native CLI authentication, CLI provisioning,
+RelationHandler, BackendUtility and BackendLayoutView remain unchanged. The new
+API manages its runtime cache invalidation and rejects unsupported workspace
+foreign-field ownership changes. Regression tests cover these boundaries and
+updated backend layouts.
 
 The Forge issue is temporarily recorded as ``000000``. Replace the placeholder
 and rename this file when assigning the real review issue.

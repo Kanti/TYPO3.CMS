@@ -21,7 +21,6 @@ use TYPO3\CMS\Core\Context\Context;
 use TYPO3\CMS\Core\DataHandling\RecordFieldTransformer;
 use TYPO3\CMS\Core\Domain\DateTimeFactory;
 use TYPO3\CMS\Core\Domain\Persistence\Exception\InvalidRecordValueException;
-use TYPO3\CMS\Core\Domain\Persistence\Exception\RecordAccessDeniedException;
 use TYPO3\CMS\Core\Domain\RawRecord;
 use TYPO3\CMS\Core\Domain\Record\ComputedProperties;
 use TYPO3\CMS\Core\Domain\RecordPropertyClosure;
@@ -40,16 +39,12 @@ final readonly class RecordDraftValueResolver
         private RecordFieldTransformer $transformer,
         private RecordRelationResolver $relations,
         private TypoLinkCodecService $links,
-        private DataHandlerRecordWriter $adapter,
     ) {}
 
     public function get(RecordDraft $draft, string $name, mixed $value, bool $pending): mixed
     {
         $draft->context->assertCurrent(GeneralUtility::makeInstance(Context::class));
         return $draft->context->run(function () use ($draft, $name, $value, $pending) {
-            if ($draft->target !== null) {
-                $this->adapter->assertCanChangeRecord($draft->target, $draft->context);
-            }
             $schema = $this->schemas->get($draft->table);
             if (!$schema->hasField($name)) {
                 if (in_array($name, ['uid', 'pid'], true) && !$pending) {
@@ -66,9 +61,6 @@ final readonly class RecordDraftValueResolver
                 }
             }
             $field = $schema->getField($name);
-            if ($field->supportsAccessControl() && !$draft->context->user->check('non_exclude_fields', $draft->table . ':' . $name)) {
-                throw new RecordAccessDeniedException('The field is not accessible to this write identity.', 1792310012);
-            }
             if ($field instanceof RelationalFieldTypeInterface) {
                 $references = $pending ? ($value instanceof RecordRelationSet ? $value->toArray() : $value) : $this->relations->load($draft, $name);
                 if (!is_array($references)) {

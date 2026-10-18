@@ -887,10 +887,10 @@ class RelationHandler
                 $queryBuilder->expr()->eq($field, $queryBuilder->createNamedParameter($value))
             );
         }
-        // Include the current workspace before resolving and checking actual child ownership.
+        // Select children from the live(!) workspace only
         if ($schema->isWorkspaceAware()) {
             $queryBuilder->getRestrictions()->add(
-                GeneralUtility::makeInstance(WorkspaceRestriction::class, $this->getWorkspaceId(), true)
+                GeneralUtility::makeInstance(WorkspaceRestriction::class, $this->getWorkspaceId())
             );
         }
 
@@ -937,25 +937,7 @@ class RelationHandler
         }
         if (!empty($rows)) {
             $sortby = $queryBuilder->getOrderBy();
-            $resolver = $this->getResolver($foreign_table, array_keys($rows), $sortby);
-            if ($schema->isWorkspaceAware() && $this->getWorkspaceId() > 0) {
-                // Resolve physical versions before checking ownership: a workspace child may
-                // have been attached to or detached from this parent independently of Live.
-                $ids = $resolver->setKeepLiveIds(false)->get();
-                if ($ids !== []) {
-                    $membershipQuery = clone $queryBuilder;
-                    $membershipQuery->getRestrictions()->removeByType(WorkspaceRestriction::class);
-                    $matchingIds = $membershipQuery->andWhere(
-                        $membershipQuery->expr()->in('uid', $membershipQuery->createNamedParameter(array_values($ids), Connection::PARAM_INT_ARRAY))
-                    )->executeQuery()->fetchFirstColumn();
-                    $ids = array_intersect($ids, array_map('intval', $matchingIds));
-                    if ($this->useLiveReferenceIds) {
-                        $ids = $resolver->setKeepLiveIds(true)->applyLiveIds($ids);
-                    }
-                }
-            } else {
-                $ids = $resolver->get();
-            }
+            $ids = $this->getResolver($foreign_table, array_keys($rows), $sortby)->get();
             $itemArray = [];
             foreach ($ids as $id) {
                 $item = [

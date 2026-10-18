@@ -81,7 +81,6 @@ final readonly class RecordWriter implements RecordWriterInterface
         $context->assertCurrent($this->context);
         return $context->run(function () use ($context, $record) {
             $target = $this->targets->fromRecord($record, $context);
-            $this->adapter->assertCanChangeRecord($target, $context);
             return new RecordDraft($target->table, (int)$target->row['pid'], $context, $target, $this->relations, $this->draftValues);
         });
     }
@@ -97,7 +96,6 @@ final readonly class RecordWriter implements RecordWriterInterface
         $context->assertCurrent($this->context);
         return $context->run(function () use ($context, $table, $uid) {
             $target = $this->targets->byUid($table, $uid, $context);
-            $this->adapter->assertCanChangeRecord($target, $context);
             return new RecordDraft($table, (int)$target->row['pid'], $context, $target, $this->relations, $this->draftValues);
         });
     }
@@ -112,7 +110,6 @@ final readonly class RecordWriter implements RecordWriterInterface
         $context = $this->contexts->capture($this->context, true);
         return $context->run(function () use ($record, $context) {
             $target = $this->targets->fromRecord($record, $context);
-            $this->adapter->assertCanChangeRecord($target, $context);
             return $this->targetIdentity($target, $context);
         });
     }
@@ -172,6 +169,9 @@ final readonly class RecordWriter implements RecordWriterInterface
             $key = spl_object_id($draft);
             $schema = $this->targets->schema($draft->table, $draft->context);
             $currentTarget = $draft->target !== null ? $this->targets->byUid($draft->table, $draft->target->uid, $draft->context) : null;
+            if ($currentTarget !== null) {
+                $this->adapter->assertCanChangeRecord($currentTarget, $draft->context);
+            }
             [$changesByDraft[$key], $observedByDraft[$key]] = $this->relations->prepareChanges($draft);
             $values[$key] = $this->normalizer->changes($draft, $schema, $identifiers, $currentTarget, $changesByDraft[$key]);
             if ($currentTarget !== null) {
@@ -190,9 +190,6 @@ final readonly class RecordWriter implements RecordWriterInterface
                     if ($value === $original || (is_scalar($value) && $original !== null && (string)$value === (string)$original)) {
                         unset($values[$key][$name]);
                     }
-                }
-                if ($values[$key] === []) {
-                    $this->adapter->assertCanChangeRecord($currentTarget, $draft->context);
                 }
             } else {
                 if ($draft->pid > 0 && !isset($checkedPages[$draft->pid])) {
@@ -235,6 +232,7 @@ final readonly class RecordWriter implements RecordWriterInterface
             $exception->diagnostics = $this->diagnostics($drafts, $identifiers, $exception->newRecordIds, $exception->writtenRecords, [], [], $exception);
             throw $exception;
         }
+        $writtenRecords = $handler?->getWrittenRecords() ?? [];
         $saved = [];
         $records = [];
         $newUids = [];
@@ -251,7 +249,7 @@ final readonly class RecordWriter implements RecordWriterInterface
                 if ($saved[$key]->languageId !== $expectedLanguage || ($draft->context->workspaceId > 0 && $values[$key] !== [] && (int)($saved[$key]->row['t3ver_wsid'] ?? 0) !== $draft->context->workspaceId)) {
                     throw new RecordPersistenceException('The saved record does not belong to the requested language and workspace.', 1792305105);
                 }
-                if ($values[$key] !== [] && !$handler?->hasWrittenRecord($draft->table, (int)$saved[$key]->row['uid'])) {
+                if ($values[$key] !== [] && !isset($writtenRecords[$draft->table][(int)$saved[$key]->row['uid']])) {
                     // IRRE reordering can update only child rows while the parent count stays equal.
                     // Such relation-only operations still require exact post-write verification below.
                     $schema = $this->targets->schema($draft->table, $draft->context);

@@ -40,13 +40,8 @@ final readonly class RecordWriteTargetResolver
             throw new UnsupportedRecordWriteException('Unknown TCA table "' . $table . '".', 1792305007);
         }
         $schema = $this->schemaFactory->get($table);
-        if ($context->workspaceId !== 0 && (!$schema->isWorkspaceAware()
-            || !ExtensionManagementUtility::isLoaded('workspaces')
-            || !empty($schema->getRawConfiguration()['versioningWS_alwaysAllowLiveEdit']))) {
-            throw new InvalidWriteContextException('Writing a non-versioned table in a workspace is not supported.', 1792305008);
-        }
-        if ($schema->hasCapability(TcaSchemaCapability::AccessReadOnly)) {
-            throw new UnsupportedRecordWriteException('The table is read-only.', 1792305009);
+        if ($context->workspaceId !== 0 && $schema->isWorkspaceAware() && !ExtensionManagementUtility::isLoaded('workspaces')) {
+            throw new InvalidWriteContextException('Workspace overlays require the workspace infrastructure.', 1792305008);
         }
         return $schema;
     }
@@ -76,9 +71,6 @@ final readonly class RecordWriteTargetResolver
         }
         $languageId = $schema->isLanguageAware()
             ? (int)$row[$schema->getCapability(TcaSchemaCapability::Language)->getLanguageField()->getName()] : 0;
-        if (!$context->user->checkLanguageAccess($languageId)) {
-            throw new InvalidWriteContextException('The backend user cannot access this record language.', 1792305013);
-        }
         return new RecordWriteTarget($table, $logicalUid, $row, $languageId);
     }
 

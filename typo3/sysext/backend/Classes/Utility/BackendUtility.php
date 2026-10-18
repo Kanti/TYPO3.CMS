@@ -72,9 +72,6 @@ use TYPO3\CMS\Core\Versioning\VersionState;
  */
 class BackendUtility
 {
-    /** @internal Invalidate context-dependent backend reads when writes or execution identities change. */
-    public const RUNTIME_CACHE_TAG = 'backend-context';
-
     /*******************************************
      *
      * SQL-related, selecting records, searching
@@ -448,7 +445,7 @@ class BackendUtility
                 }
             }
             $beGetRootLineCache[$ident] = $output;
-            $runtimeCache->set('backendUtilityBeGetRootLine', $beGetRootLineCache, [self::RUNTIME_CACHE_TAG]);
+            $runtimeCache->set('backendUtilityBeGetRootLine', $beGetRootLineCache);
         }
         return $output;
     }
@@ -527,7 +524,7 @@ class BackendUtility
                 }
                 if (is_array($row)) {
                     $pageForRootlineCache[$ident] = $row;
-                    $runtimeCache->set('backendUtilityPageForRootLine', $pageForRootlineCache, [self::RUNTIME_CACHE_TAG]);
+                    $runtimeCache->set('backendUtilityPageForRootLine', $pageForRootlineCache);
                 }
             }
         }
@@ -799,8 +796,8 @@ class BackendUtility
         }
         $pageTsConfigHash = hash('xxh3', $cacheRelevantData);
 
-        $runtimeCache->set('pageTsConfig-pid-to-hash-' . $pageUid, $pageTsConfigHash, [self::RUNTIME_CACHE_TAG]);
-        $runtimeCache->set('pageTsConfig-hash-to-object-' . $pageTsConfigHash, $pageTsConfig, [self::RUNTIME_CACHE_TAG]);
+        $runtimeCache->set('pageTsConfig-pid-to-hash-' . $pageUid, $pageTsConfigHash);
+        $runtimeCache->set('pageTsConfig-hash-to-object-' . $pageTsConfigHash, $pageTsConfig);
         return $pageTsConfig->getPageTsConfigArray();
     }
 

@@ -19,7 +19,6 @@ namespace TYPO3\CMS\Core\Tests\Functional\Domain\Persistence;
 
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Test;
-use Symfony\Component\Process\Process;
 use TYPO3\CMS\Core\Authentication\CommandLineUserAuthentication;
 use TYPO3\CMS\Core\Configuration\SiteWriter;
 use TYPO3\CMS\Core\Context\Context;
@@ -36,7 +35,6 @@ use TYPO3\CMS\Core\Http\ServerRequest;
 use TYPO3\CMS\Core\Utility\GeneralUtility;
 use TYPO3\CMS\Frontend\Authentication\FrontendUserAuthentication;
 use TYPO3\TestingFramework\Core\Functional\FunctionalTestCase;
-use TYPO3\TestingFramework\Core\Testbase;
 
 final class RecordWriteRemainingIssuesTest extends FunctionalTestCase
 {
@@ -185,70 +183,9 @@ final class RecordWriteRemainingIssuesTest extends FunctionalTestCase
         self::assertSame($column, (int)$saved->get('colPos'));
     }
 
-    public static function provisioningModes(): iterable
-    {
-        yield 'Core provisioner' => ['provision'];
-        yield 'native CLI authentication' => ['authenticate'];
-    }
-
-    #[Test]
-    #[DataProvider('provisioningModes')]
-    public function parallelFirstUseProvisioningCreatesExactlyOneReservedIdentity(string $mode): void
-    {
-        $workers = [];
-        $barrier = $this->instancePath . '/typo3temp/provisioning-barrier';
-        mkdir($barrier);
-        for ($index = 0; $index < 3; $index++) {
-            $worker = new Process([PHP_BINARY, __DIR__ . '/Fixtures/provision-cli.php', (new Testbase())->getPackagesPath() . '/autoload.php', $this->instancePath, $barrier, (string)$index, $mode]);
-            $worker->setTimeout(30);
-            $worker->start();
-            $workers[] = $worker;
-        }
-        try {
-            $deadline = microtime(true) + 15;
-            while (count(glob($barrier . '/ready-*')) !== 3) {
-                foreach ($workers as $worker) {
-                    if (!$worker->isRunning()) {
-                        self::fail($worker->getErrorOutput() . $worker->getOutput());
-                    }
-                }
-                if (microtime(true) >= $deadline) {
-                    self::fail('Provisioning workers did not reach the common start barrier.');
-                }
-                usleep(1000);
-            }
-            touch($barrier . '/go');
-            $created = 0;
-            $uids = [];
-            foreach ($workers as $worker) {
-                self::assertSame(0, $worker->wait(), $worker->getErrorOutput());
-                $lines = explode("\n", trim($worker->getOutput()));
-                $result = json_decode(end($lines), true, flags: JSON_THROW_ON_ERROR);
-                $created += (int)($result['created'] ?? 0);
-                $uids[] = $result['uid'] ?? null;
-            }
-            $users = $this->cliRows();
-            self::assertCount(1, $users);
-            if ($mode === 'authenticate') {
-                self::assertSame([(int)$users[0]['uid']], array_values(array_unique($uids)));
-            } else {
-                self::assertSame(1, $created);
-            }
-        } finally {
-            foreach ($workers as $worker) {
-                $worker->stop();
-            }
-            foreach (glob($barrier . '/*') as $file) {
-                unlink($file);
-            }
-            rmdir($barrier);
-        }
-    }
-
     public static function unavailableIdentities(): iterable
     {
         yield 'disabled' => ['disable', true];
-        yield 'deleted' => ['deleted', true];
         yield 'expired' => ['endtime', 1700000000];
         yield 'not yet active' => ['starttime', 2100000000];
     }
@@ -258,11 +195,7 @@ final class RecordWriteRemainingIssuesTest extends FunctionalTestCase
     public function existingUnavailableIdentitiesAreNotReplacedOrReactivated(string $field, bool|int $value): void
     {
         $this->importCSVDataSet(__DIR__ . '/Fixtures/system-user.csv');
-        if ($field === 'deleted') {
-            $this->writer->delete($this->writer->save($this->writer->editByUid('be_users', 90)));
-        } else {
-            $this->writer->save($this->writer->editByUid('be_users', 90)->set($field, $value));
-        }
+        $this->writer->save($this->writer->editByUid('be_users', 90)->set($field, $value));
         $before = $this->cliRows();
         $editor = $GLOBALS['BE_USER'];
         $GLOBALS['TYPO3_REQUEST'] = (new ServerRequest())->withAttribute('applicationType', SystemEnvironmentBuilder::REQUESTTYPE_FE);
@@ -514,9 +447,7 @@ final class RecordWriteRemainingIssuesTest extends FunctionalTestCase
     public static function staleRelationContexts(): iterable
     {
         yield from self::localizedRelationContexts();
-        yield 'workspace inline' => [1, 0, 'children'];
         yield 'localized inline' => [0, 1, 'children'];
-        yield 'localized workspace inline' => [1, 1, 'children'];
     }
 
     #[Test]

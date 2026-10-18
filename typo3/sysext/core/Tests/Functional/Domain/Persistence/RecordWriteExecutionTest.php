@@ -67,17 +67,6 @@ final class RecordWriteExecutionTest extends FunctionalTestCase
     }
 
     #[Test]
-    public function existingDraftDataRequiresTablePermissionBeforeItIsReturned(): void
-    {
-        $user = $this->setUpBackendUser(1);
-        $user->user['admin'] = 0;
-        $user->groupData['tables_modify'] = '';
-        $GLOBALS['TYPO3_REQUEST'] = (new ServerRequest())->withAttribute('applicationType', SystemEnvironmentBuilder::REQUESTTYPE_BE);
-        $this->expectException(RecordAccessDeniedException::class);
-        $this->get(RecordWriter::class)->editByUid('tx_recordwrite_item', 1);
-    }
-
-    #[Test]
     public function ordinaryContentColumnsCanBeImported(): void
     {
         $this->setUpBackendUser(1);
@@ -86,6 +75,27 @@ final class RecordWriteExecutionTest extends FunctionalTestCase
         $record = $writer->save($writer->create('tt_content', 1)->setValues(['CType' => 'text', 'header' => 'Import', 'bodytext' => '<p>Text</p>', 'colPos' => 0]));
         self::assertSame(0, (int)$record->get('colPos'));
     }
+    #[Test]
+    public function deletedSystemUsersFollowNativeProvisioningWithoutChangingTheDeletedRow(): void
+    {
+        $editor = $this->setUpBackendUser(1);
+        $GLOBALS['TYPO3_REQUEST'] = (new ServerRequest())->withAttribute('applicationType', SystemEnvironmentBuilder::REQUESTTYPE_BE);
+        $writer = $this->get(RecordWriter::class);
+        $writer->delete($writer->save($writer->editByUid('be_users', 90)));
+        $query = $this->getConnectionPool()->getQueryBuilderForTable('be_users');
+        $query->getRestrictions()->removeAll();
+        $before = $query->select('*')->from('be_users')->where($query->expr()->eq('uid', 90))->executeQuery()->fetchAssociative();
+        $GLOBALS['TYPO3_REQUEST'] = (new ServerRequest())->withAttribute('applicationType', SystemEnvironmentBuilder::REQUESTTYPE_FE);
+        $saved = $writer->save($writer->create('tx_recordwrite_item', 1)->set('title', 'Native provisioning'));
+        $active = $this->getConnectionPool()->getConnectionForTable('be_users')->select(['uid', 'admin'], 'be_users', ['username' => '_cli_'])->fetchAllAssociative();
+        self::assertCount(1, $active);
+        self::assertNotSame(90, (int)$active[0]['uid']);
+        self::assertSame(1, (int)$active[0]['admin']);
+        self::assertSame($before, $query->executeQuery()->fetchAssociative());
+        self::assertSame((int)$active[0]['uid'], (int)$this->getConnectionPool()->getConnectionForTable('sys_history')->select(['userid'], 'sys_history', ['tablename' => 'tx_recordwrite_item', 'recuid' => $saved->getUid()])->fetchOne());
+        self::assertSame($editor, $GLOBALS['BE_USER']);
+    }
+
     public static function frontendVisitors(): iterable
     {
         yield 'anonymous' => [false, false, false];
@@ -161,57 +171,6 @@ final class RecordWriteExecutionTest extends FunctionalTestCase
         $writer = $this->get(RecordWriter::class);
         self::assertSame('CLI system', $writer->save($writer->create('tx_recordwrite_item', 1)->set('title', 'CLI system'))->get('title'));
         self::assertArrayNotHasKey('BE_USER', $GLOBALS);
-    }
-
-    #[Test]
-    public function missingSystemIdentityDoesNotFallBackToAnAuthenticatedEditorOrCreateAUser(): void
-    {
-        $editor = $this->setUpBackendUser(1);
-        $GLOBALS['TYPO3_REQUEST'] = (new ServerRequest())->withAttribute('applicationType', SystemEnvironmentBuilder::REQUESTTYPE_BE);
-        $writer = $this->get(RecordWriter::class);
-        $writer->delete($writer->save($writer->editByUid('be_users', 90)));
-        $GLOBALS['TYPO3_REQUEST'] = (new ServerRequest())->withAttribute('applicationType', SystemEnvironmentBuilder::REQUESTTYPE_FE);
-        try {
-            $writer->create('tx_recordwrite_item', 1);
-            self::fail('A missing system identity must fail deterministically.');
-        } catch (InvalidWriteContextException) {
-            self::assertSame($editor, $GLOBALS['BE_USER']);
-            self::assertSame(2, $this->getConnectionPool()->getConnectionForTable('be_users')->count('*', 'be_users', []));
-        }
-    }
-
-    #[Test]
-    public function backendPageAccessIsCheckedBeforeEditAndEditByUidExposeValues(): void
-    {
-        $user = $this->setUpBackendUser(1);
-        $GLOBALS['TYPO3_REQUEST'] = (new ServerRequest())->withAttribute('applicationType', SystemEnvironmentBuilder::REQUESTTYPE_BE);
-        $writer = $this->get(RecordWriter::class);
-        $record = $writer->save($writer->create('tx_recordwrite_item', 3)->set('title', 'Protected'));
-        $user->user['admin'] = 0;
-        $user->groupData['tables_modify'] = 'tx_recordwrite_item';
-        $user->groupData['webmounts'] = '1';
-        foreach ([fn() => $writer->edit($record), fn() => $writer->editByUid('tx_recordwrite_item', $record->getUid())] as $edit) {
-            try {
-                $edit();
-                self::fail('Page permissions must be checked before returning draft data.');
-            } catch (RecordAccessDeniedException $exception) {
-                self::assertSame(1792305072, $exception->getCode());
-            }
-        }
-    }
-
-    #[Test]
-    public function excludedFieldDataCannotBeReadThroughADraft(): void
-    {
-        $user = $this->setUpBackendUser(1);
-        $user->user['admin'] = 0;
-        $user->groupData['tables_modify'] = 'tx_recordwrite_item';
-        $user->groupData['webmounts'] = '1';
-        $GLOBALS['TYPO3_REQUEST'] = (new ServerRequest())->withAttribute('applicationType', SystemEnvironmentBuilder::REQUESTTYPE_BE);
-        $draft = $this->get(RecordWriter::class)->editByUid('tx_recordwrite_item', 1);
-        self::assertSame('Original', $draft->get('title'));
-        $this->expectException(RecordAccessDeniedException::class);
-        $draft->get('restricted');
     }
 
     #[Test]
@@ -386,7 +345,7 @@ final class RecordWriteExecutionTest extends FunctionalTestCase
     }
 
     #[Test]
-    public function coreRecordEditLocksPreventDraftDisclosure(): void
+    public function coreRecordEditLocksAllowReadsButPreventWrites(): void
     {
         $user = $this->setUpBackendUser(1);
         $GLOBALS['TYPO3_REQUEST'] = (new ServerRequest())->withAttribute('applicationType', SystemEnvironmentBuilder::REQUESTTYPE_BE);
@@ -395,8 +354,10 @@ final class RecordWriteExecutionTest extends FunctionalTestCase
         $user->user['admin'] = 0;
         $user->groupData['webmounts'] = '1';
         $user->groupData['tables_modify'] = 'tt_content';
+        $draft = $writer->edit($record);
+        self::assertTrue($draft->get('editlock'));
         $this->expectException(RecordAccessDeniedException::class);
-        $writer->edit($record);
+        $writer->save($draft->set('header', 'Denied'));
     }
 
     #[Test]
@@ -429,27 +390,14 @@ final class RecordWriteExecutionTest extends FunctionalTestCase
         $writer->save($writer->editByUid('be_users', 90)->setValues(['admin' => false, 'workspace_perms' => true]));
         $GLOBALS['TYPO3_REQUEST'] = (new ServerRequest())->withAttribute('applicationType', SystemEnvironmentBuilder::REQUESTTYPE_FE);
         try {
-            $writer->editByUid('tx_recordwrite_item', 1);
+            $draft = $writer->editByUid('tx_recordwrite_item', 1);
+            self::assertSame('Original', $draft->get('title'));
+            $writer->save($draft->set('title', 'Denied system change'));
             self::fail('The system identity must not invent permissions.');
         } catch (RecordAccessDeniedException) {
             self::assertSame($editor, $GLOBALS['BE_USER']);
             self::assertSame(0, (int)$this->getConnectionPool()->getConnectionForTable('be_users')->select(['admin'], 'be_users', ['uid' => 90])->fetchOne());
         }
-    }
-
-    #[Test]
-    public function backendLanguagePermissionsAreCheckedBeforeReturningTranslatedDraftData(): void
-    {
-        $user = $this->setUpBackendUser(1);
-        $GLOBALS['TYPO3_REQUEST'] = (new ServerRequest())->withAttribute('applicationType', SystemEnvironmentBuilder::REQUESTTYPE_BE);
-        $writer = $this->get(RecordWriter::class);
-        $translation = $writer->localize($writer->save($writer->editByUid('tx_recordwrite_item', 1)), 1);
-        $user->user['admin'] = 0;
-        $user->groupData['tables_modify'] = 'tx_recordwrite_item';
-        $user->groupData['allowed_languages'] = '0';
-        $user->groupData['webmounts'] = '1';
-        $this->expectException(InvalidWriteContextException::class);
-        $writer->editByUid('tx_recordwrite_item', $translation->getUid());
     }
 
 }

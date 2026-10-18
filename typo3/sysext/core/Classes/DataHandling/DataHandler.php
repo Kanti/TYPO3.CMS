@@ -467,16 +467,6 @@ class DataHandler
         return $this->checkModifyAccessList($table);
     }
 
-    /**
-     * Whether this instance successfully inserted or updated the physical record.
-     * Does not imply transaction atomicity or confirmation of individual field values.
-     * @internal Used by the Core record write adapter.
-     */
-    public function hasWrittenRecord(string $table, int $uid): bool
-    {
-        return isset($this->writtenRecords[$table][$uid]);
-    }
-
     /** @internal Physical write acknowledgements for reconciliation after failed execution. */
     public function getWrittenRecords(): array
     {

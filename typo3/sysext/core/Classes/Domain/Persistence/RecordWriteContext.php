@@ -18,7 +18,6 @@ declare(strict_types=1);
 namespace TYPO3\CMS\Core\Domain\Persistence;
 
 use Psr\Http\Message\ServerRequestInterface;
-use TYPO3\CMS\Backend\Utility\BackendUtility;
 use TYPO3\CMS\Core\Authentication\BackendUserAuthentication;
 use TYPO3\CMS\Core\Authentication\CommandLineUserAuthentication;
 use TYPO3\CMS\Core\Authentication\SystemUserAuthentication;
@@ -127,13 +126,14 @@ final readonly class RecordWriteContext
             || (int)$context->getPropertyFromAspect('workspace', 'id', 0) !== $this->workspaceId;
         $runtimeCache = GeneralUtility::makeInstance(CacheManager::class)->getCache('runtime');
         if ($switchingIdentity) {
-            $runtimeCache->flushByTag(BackendUtility::RUNTIME_CACHE_TAG);
+            $runtimeCache->flush();
         }
         try {
+            // Synchronize legacy readers; this aspect never selects or authorizes the actor.
+            $context->setAspect('backend.user', new UserAspect($this->user));
             if (!$alreadyBound) {
                 $GLOBALS['BE_USER'] = $this->user;
                 $context->setAspect('workspace', new WorkspaceAspect($this->workspaceId));
-                $context->setAspect('backend.user', new UserAspect($this->user));
                 $context->setAspect('language', $this->languageAspect);
                 if ($this->user instanceof SystemUserAuthentication || !isset($GLOBALS['LANG'])) {
                     $GLOBALS['LANG'] = GeneralUtility::makeInstance(LanguageServiceFactory::class)->createFromUserPreferences($this->user);
@@ -142,7 +142,7 @@ final readonly class RecordWriteContext
             return $operation();
         } finally {
             if ($switchingIdentity) {
-                $runtimeCache->flushByTag(BackendUtility::RUNTIME_CACHE_TAG);
+                $runtimeCache->flush();
             }
             foreach ($aspects as $key => $aspect) {
                 $context->setAspect($key, $aspect);

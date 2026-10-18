@@ -44,7 +44,7 @@ final class RecordFieldNormalizerTest extends UnitTestCase
     {
         return new RecordFieldNormalizer(
             new TypoLinkCodecService($this->createMock(EventDispatcherInterface::class)),
-            new RecordRelationResolver(new RecordWriteTargetResolver(new ConnectionPool(), $this->createMock(TcaSchemaFactory::class)), new DataHandlerRecordWriter()),
+            new RecordRelationResolver(new RecordWriteTargetResolver(new ConnectionPool(), $this->createMock(TcaSchemaFactory::class)), new DataHandlerRecordWriter(), new ConnectionPool()),
             new DataHandlerRecordWriter()
         );
     }

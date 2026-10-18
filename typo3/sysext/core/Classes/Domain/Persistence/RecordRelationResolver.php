@@ -18,9 +18,12 @@ declare(strict_types=1);
 namespace TYPO3\CMS\Core\Domain\Persistence;
 
 use TYPO3\CMS\Core\Context\Context;
+use TYPO3\CMS\Core\Database\Connection;
+use TYPO3\CMS\Core\Database\ConnectionPool;
+use TYPO3\CMS\Core\Database\Query\Restriction\DeletedRestriction;
+use TYPO3\CMS\Core\Database\Query\Restriction\WorkspaceRestriction;
 use TYPO3\CMS\Core\Database\RelationHandler;
 use TYPO3\CMS\Core\Domain\Persistence\Exception\InvalidRecordValueException;
-use TYPO3\CMS\Core\Domain\Persistence\Exception\RecordAccessDeniedException;
 use TYPO3\CMS\Core\Domain\Persistence\Exception\RecordPersistenceException;
 use TYPO3\CMS\Core\Domain\Persistence\Exception\UnsupportedRecordWriteException;
 use TYPO3\CMS\Core\Domain\RecordInterface;
@@ -31,7 +34,7 @@ use TYPO3\CMS\Core\Utility\GeneralUtility;
 /** @internal Owns backend relation reads and DataHandler reference encoding. */
 final readonly class RecordRelationResolver
 {
-    public function __construct(private RecordWriteTargetResolver $targets, private DataHandlerRecordWriter $adapter) {}
+    public function __construct(private RecordWriteTargetResolver $targets, private DataHandlerRecordWriter $adapter, private ConnectionPool $connectionPool) {}
 
     public function reference(RecordInterface|RecordReference|RecordDraft $record, RecordWriteContext $context): RecordReference
     {
@@ -55,20 +58,49 @@ final readonly class RecordRelationResolver
         return $draft->context->run(function () use ($draft, $name) {
             $field = $this->targets->schema($draft->table, $draft->context)->getField($name);
             $field = $this->supportedField($field);
-            if ($field->supportsAccessControl() && !$draft->context->user->check('non_exclude_fields', $draft->table . ':' . $name)) {
-                throw new RecordAccessDeniedException('The relation field is not accessible to this write identity.', 1792310014);
-            }
             if ($draft->target === null) {
                 return [];
             }
             $target = $this->targets->byUid($draft->table, $draft->target->uid, $draft->context);
-            $this->adapter->assertCanChangeRecord($target, $draft->context);
             $handler = GeneralUtility::makeInstance(RelationHandler::class);
             $handler->setWorkspaceId($draft->context->workspaceId);
             $handler->initializeForField($draft->table, $field, $target->row, $target->row[$name] ?? null);
             $handler->processDeletePlaceholder();
-            return array_values(array_map(static fn(array $item): RecordReference => new RecordReference($item['table'], (int)$item['id']), $handler->itemArray));
+            $references = array_values(array_map(static fn(array $item): RecordReference => new RecordReference($item['table'], (int)$item['id']), $handler->itemArray));
+            $this->assertWorkspaceInlineMembership($draft, $field, $target, $references);
+            return $references;
         });
+    }
+
+    /** Reject inconsistent Core IRRE resolution rather than repairing global RelationHandler behavior. */
+    private function assertWorkspaceInlineMembership(RecordDraft $draft, FieldTypeInterface $field, RecordWriteTarget $parent, array $references): void
+    {
+        if ($draft->context->workspaceId === 0 || $field->getType() !== 'inline') {
+            return;
+        }
+        $config = $field->getConfiguration();
+        if (!$this->targets->schema($config['foreign_table'], $draft->context)->isWorkspaceAware()) {
+            return;
+        }
+        $parents = array_values(array_unique([$parent->uid, (int)$parent->row['uid']]));
+        $members = [];
+        foreach ($references as $reference) {
+            $child = $this->targets->byUid($reference->table, $reference->uid, $draft->context);
+            if (!in_array((int)$child->row[$config['foreign_field']], $parents, true)) {
+                throw new UnsupportedRecordWriteException('Core RelationHandler cannot reliably resolve this workspace inline ownership change.', 1792330001);
+            }
+            $members[] = $child->uid;
+        }
+        $query = $this->connectionPool->getQueryBuilderForTable($config['foreign_table']);
+        $query->getRestrictions()->removeAll()->add(new DeletedRestriction())->add(new WorkspaceRestriction($draft->context->workspaceId, true));
+        $versionedMembers = $query->select('t3ver_oid')->from($config['foreign_table'])->where(
+            $query->expr()->eq('t3ver_wsid', $query->createNamedParameter($draft->context->workspaceId, Connection::PARAM_INT)),
+            $query->expr()->gt('t3ver_oid', 0),
+            $query->expr()->in($config['foreign_field'], $query->createNamedParameter($parents, Connection::PARAM_INT_ARRAY)),
+        )->executeQuery()->fetchFirstColumn();
+        if (array_diff(array_map('intval', $versionedMembers), $members) !== []) {
+            throw new UnsupportedRecordWriteException('Core RelationHandler omits attached workspace versions from this inline relation.', 1792330002);
+        }
     }
 
     /** @return array{array, array<string, list<RecordReference>>} */
@@ -119,6 +151,9 @@ final readonly class RecordRelationResolver
             $encodedUid = $reference->uid;
             if ($field->getType() === 'inline' && !empty($config['foreign_field'])) {
                 $child = $this->targets->byUid($reference->table, $reference->uid, $draft->context);
+                if ($draft->context->workspaceId > 0 && !$this->targets->schema($reference->table, $draft->context)->isWorkspaceAware()) {
+                    throw new UnsupportedRecordWriteException('Workspace inline writes require a versioned child table.', 1792330005);
+                }
                 $this->adapter->assertCanChangeRecord($child, $draft->context);
                 if ($reference->table === $draft->table && $reference->uid === $currentTarget?->uid) {
                     throw new InvalidRecordValueException('A record cannot be its own inline child.', 1792305055);
@@ -139,8 +174,9 @@ final readonly class RecordRelationResolver
                 if ($draft->context->workspaceId > 0) {
                     $childWorkspace = (int)($child->row['t3ver_wsid'] ?? 0);
                     $parentWorkspace = (int)($currentTarget?->row['t3ver_wsid'] ?? 0);
-                    if ($childWorkspace === 0 && ($owner === 0 || $parentWorkspace > 0)) {
-                        throw new UnsupportedRecordWriteException('An unversioned inline child cannot be attached to this workspace parent. Create the child in the batch or edit its workspace version first.', 1792305054);
+                    if (($childWorkspace === 0 && ($owner === 0 || $parentWorkspace > 0))
+                        || ((int)($child->row['t3ver_oid'] ?? 0) > 0 && !in_array($owner, [$currentTarget?->uid, $currentTarget?->row['uid']], true))) {
+                        throw new UnsupportedRecordWriteException('This Live child cannot be attached to the workspace inline parent. Create a new workspace-owned child in the batch instead.', 1792305054);
                     }
                     $encodedUid = (int)$child->row['uid'];
                 }
@@ -227,7 +263,11 @@ final readonly class RecordRelationResolver
             foreach (($observed[$name] ?? $this->load($draft, $name)) as $reference) {
                 $reference = $this->reference($reference, $draft->context);
                 if (!in_array($reference->key(), $retained, true)) {
-                    $this->adapter->assertCanChangeRecord($this->targets->byUid($reference->table, $reference->uid, $draft->context), $draft->context);
+                    $child = $this->targets->byUid($reference->table, $reference->uid, $draft->context);
+                    if ($draft->context->workspaceId > 0 && ((int)($child->row['t3ver_wsid'] ?? 0) === 0 || (int)($child->row['t3ver_oid'] ?? 0) > 0)) {
+                        throw new UnsupportedRecordWriteException('Detaching a Live inline child in a workspace requires a separate Core RelationHandler fix.', 1792330003);
+                    }
+                    $this->adapter->assertCanChangeRecord($child, $draft->context);
                     $data[$reference->table][$reference->uid][$config['foreign_field']] = 0;
                 }
             }

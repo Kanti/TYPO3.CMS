@@ -21,11 +21,11 @@ use Symfony\Component\DependencyInjection\Attribute\Autoconfigure;
 use TYPO3\CMS\Core\Crypto\PasswordHashing\PasswordHashFactory;
 use TYPO3\CMS\Core\Crypto\Random;
 use TYPO3\CMS\Core\Database\ConnectionPool;
-use TYPO3\CMS\Core\Locking\LockFactory;
+use TYPO3\CMS\Core\Database\Query\Restriction\DeletedRestriction;
 use TYPO3\CMS\Core\Utility\GeneralUtility;
 
 /**
- * @internal Reserved system identity provisioning for CLI authentication, system writes and TYPO3 setup
+ * @internal Exclusively for use in CommandLineUserAuthentication and in TYPO3 setup code (cli and controller)
  */
 #[Autoconfigure(public: true)]
 final readonly class CommandLineUserCreation
@@ -35,7 +35,6 @@ final readonly class CommandLineUserCreation
     public function __construct(
         private ConnectionPool $connectionPool,
         private PasswordHashFactory $passwordHashFactory,
-        private LockFactory $lockFactory,
     ) {}
 
     /**
@@ -44,39 +43,32 @@ final readonly class CommandLineUserCreation
      */
     public function ensureCliUserExists(): bool
     {
-        $lock = $this->lockFactory->createLocker('core-cli-user-provisioning');
-        if (!$lock->acquire()) {
-            throw new \RuntimeException('Cannot acquire the system identity provisioning lock.', 1792320001);
+        if ($this->cliUserExists()) {
+            return false;
         }
-        try {
-            // Check the reserved name and insert while holding the same installation lock.
-            if ($this->cliUserExists()) {
-                return false;
-            }
-            $userFields = [
-                'username' => self::CLI_USERNAME,
-                'password' => $this->generateHashedPassword(),
-                'admin'    => 1,
-                'tstamp'   => $GLOBALS['EXEC_TIME'] ?? time(),
-                'crdate'   => $GLOBALS['EXEC_TIME'] ?? time(),
-            ];
+        $userFields = [
+            'username' => self::CLI_USERNAME,
+            'password' => $this->generateHashedPassword(),
+            'admin'    => 1,
+            'tstamp'   => $GLOBALS['EXEC_TIME'] ?? time(),
+            'crdate'   => $GLOBALS['EXEC_TIME'] ?? time(),
+        ];
 
-            $databaseConnection = $this->connectionPool->getConnectionForTable('be_users');
-            $databaseConnection->insert('be_users', $userFields);
-            return true;
-        } finally {
-            $lock->release();
-        }
+        $databaseConnection = $this->connectionPool->getConnectionForTable('be_users');
+        $databaseConnection->insert('be_users', $userFields);
+        return true;
     }
 
     /**
-     * Check the reserved username without enable-column filtering. Even a deleted or
-     * unavailable identity must not be replaced with a new administrator.
+     * Check if a user with username "_cli_" exists. Deleted users are left out
+     * but hidden and start / endtime restricted users are considered.
      */
     private function cliUserExists(): bool
     {
         $queryBuilder = $this->connectionPool->getQueryBuilderForTable('be_users');
-        $queryBuilder->getRestrictions()->removeAll();
+        $queryBuilder->getRestrictions()
+            ->removeAll()
+            ->add(GeneralUtility::makeInstance(DeletedRestriction::class));
         $count = $queryBuilder
             ->count('*')
             ->from('be_users')

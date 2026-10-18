@@ -151,7 +151,7 @@ readonly class BackendLayoutView
             throw new \RuntimeException('Fallback to default backend layout failed', 1768151069);
         }
         $selectedBackendLayoutsByPageId[$pageId] = $backendLayout;
-        $this->runtimeCache->set(self::SELECTED_BACKEND_LAYOUTS_CACHE_IDENTIFIER, $selectedBackendLayoutsByPageId, [BackendUtility::RUNTIME_CACHE_TAG]);
+        $this->runtimeCache->set(self::SELECTED_BACKEND_LAYOUTS_CACHE_IDENTIFIER, $selectedBackendLayoutsByPageId);
         return $backendLayout;
     }
 
@@ -344,7 +344,7 @@ readonly class BackendLayoutView
             $selectedLayout = '0';
         }
         $selectedCombinedIdentifiers[$pageId] = $selectedLayout;
-        $this->runtimeCache->set(self::SELECTED_COMBINED_CACHE_IDENTIFIER, $selectedCombinedIdentifiers, [BackendUtility::RUNTIME_CACHE_TAG]);
+        $this->runtimeCache->set(self::SELECTED_COMBINED_CACHE_IDENTIFIER, $selectedCombinedIdentifiers);
         return $selectedLayout;
     }
 }

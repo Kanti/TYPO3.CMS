@@ -630,21 +630,56 @@ final class RecordWriterTest extends FunctionalTestCase
     }
 
     #[Test]
-    public function workspaceInlineDetachVersionsChildrenAndLeavesLiveOwnershipIntact(): void
+    public function workspaceInlineDetachmentOfLiveChildrenFailsBeforePersistence(): void
     {
-        $draft = $this->writer->editByUid(self::TABLE, 1)->setRelation('children', new \TYPO3\CMS\Core\Domain\Persistence\RecordReference(self::TABLE, 2));
-        $this->writer->save($draft);
+        $this->writer->save($this->writer->editByUid(self::TABLE, 1)->setRelation('children', new \TYPO3\CMS\Core\Domain\Persistence\RecordReference(self::TABLE, 2)));
         $GLOBALS['BE_USER']->workspace = 1;
         $this->get(Context::class)->setAspect('workspace', new WorkspaceAspect(1));
         $draft = $this->writer->editByUid(self::TABLE, 1);
         $draft->relations('children')->clear();
-        $version = $this->writer->save($draft);
-        self::assertNotSame(1, $version->getUid());
-        self::assertSame(1, (int)$this->row(2)['parent']);
-        $childVersion = $this->writer->save($this->writer->editByUid(self::TABLE, 2));
-        self::assertNotSame(2, $childVersion->getUid());
-        self::assertSame(0, (int)$childVersion->getRawRecord()->get('parent'));
-        self::assertSame([], $this->writer->edit($version)->relations('children')->toArray());
+        try {
+            $this->writer->save($draft);
+            self::fail('Workspace detachment of a Live child depends on an independent Core fix.');
+        } catch (\TYPO3\CMS\Core\Domain\Persistence\Exception\UnsupportedRecordWriteException) {
+            self::assertSame(1, (int)$this->row(2)['parent']);
+            self::assertSame(2, $this->getConnectionPool()->getConnectionForTable(self::TABLE)->count('*', self::TABLE, []));
+            self::assertTrue($draft->hasChanges());
+        }
+    }
+
+    public static function inconsistentWorkspaceInlineParents(): iterable
+    {
+        yield 'detached child still reported' => [101, 1792330001];
+        yield 'attached version omitted' => [102, 1792330002];
+    }
+
+    #[Test]
+    #[DataProvider('inconsistentWorkspaceInlineParents')]
+    public function inconsistentWorkspaceInlineMembershipIsRejectedInsteadOfReturningIncorrectRelations(int $parent, int $code): void
+    {
+        $this->importCSVDataSet(__DIR__ . '/Fixtures/workspace-inline-ownership.csv');
+        $GLOBALS['BE_USER']->workspace = 1;
+        $this->get(Context::class)->setAspect('workspace', new WorkspaceAspect(1));
+        $this->expectException(\TYPO3\CMS\Core\Domain\Persistence\Exception\UnsupportedRecordWriteException::class);
+        $this->expectExceptionCode($code);
+        $this->writer->editByUid(self::TABLE, $parent)->relations('children');
+    }
+
+    #[Test]
+    public function attachingAnExistingVersionedLiveChildFailsBeforePersistence(): void
+    {
+        $GLOBALS['BE_USER']->workspace = 1;
+        $this->get(Context::class)->setAspect('workspace', new WorkspaceAspect(1));
+        $this->writer->save($this->writer->editByUid(self::TABLE, 2)->set('title', 'Workspace child'));
+        $draft = $this->writer->editByUid(self::TABLE, 1)->setRelation('children', new \TYPO3\CMS\Core\Domain\Persistence\RecordReference(self::TABLE, 2));
+        try {
+            $this->writer->save($draft);
+            self::fail('Attaching an existing Live child would produce inconsistent Core relation reads.');
+        } catch (\TYPO3\CMS\Core\Domain\Persistence\Exception\UnsupportedRecordWriteException) {
+            self::assertSame(0, (int)$this->row(2)['parent']);
+            self::assertSame(0, (int)$this->row(1)['t3ver_wsid']);
+            self::assertSame(3, $this->getConnectionPool()->getConnectionForTable(self::TABLE)->count('*', self::TABLE, []));
+        }
     }
 
     #[Test]
@@ -662,6 +697,33 @@ final class RecordWriterTest extends FunctionalTestCase
         self::assertSame(1, (int)$childRecord->getRawRecord()->get('parent'));
         self::assertSame(0, (int)$this->row(1)['children']);
         self::assertCount(1, $this->writer->edit($result->recordFor($parent))->relations('children')->toArray());
+    }
+
+    #[Test]
+    public function workspaceOwnedInlineChildrenCanBeReorderedAndDetached(): void
+    {
+        $GLOBALS['BE_USER']->workspace = 1;
+        $this->get(Context::class)->setAspect('workspace', new WorkspaceAspect(1));
+        $batch = $this->writer->batch();
+        $parent = $batch->editByUid(self::TABLE, 1);
+        $first = $batch->create(self::TABLE, 1)->set('title', 'First workspace child');
+        $second = $batch->create(self::TABLE, 1)->set('title', 'Second workspace child');
+        $parent->relations('children')->setMembers([$first, $second]);
+        $result = $batch->execute();
+        $parentRecord = $result->recordFor($parent);
+        $firstRecord = $result->recordFor($first);
+        $secondRecord = $result->recordFor($second);
+        $draft = $this->writer->edit($parentRecord);
+        $draft->relations('children')->reorder([$secondRecord, $firstRecord]);
+        $saved = $this->writer->save($draft);
+        self::assertSame([$secondRecord->getUid(), $firstRecord->getUid()], array_map(static fn($reference): int => $reference->uid, $this->writer->edit($saved)->get('children')));
+        $draft = $this->writer->edit($saved);
+        $draft->relations('children')->remove($firstRecord);
+        $saved = $this->writer->save($draft);
+        self::assertSame([$secondRecord->getUid()], array_map(static fn($reference): int => $reference->uid, $this->writer->edit($saved)->get('children')));
+        self::assertSame(0, (int)$this->row($firstRecord->getUid())['parent']);
+        self::assertSame(1, (int)$this->row($firstRecord->getUid())['t3ver_wsid']);
+        self::assertSame(0, (int)$this->row(1)['children']);
     }
 
     #[Test]
