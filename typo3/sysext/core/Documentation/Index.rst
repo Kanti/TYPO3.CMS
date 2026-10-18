@@ -54,6 +54,7 @@ documented here.
    Changelog-8
    Changelog-7
    Changelog/Howto
+   RecordWriteApi
 
 .. Meta Menu
 

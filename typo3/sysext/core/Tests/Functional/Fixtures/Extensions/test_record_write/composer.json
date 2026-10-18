@@ -1,0 +1,15 @@
+{
+	"name": "typo3tests/test-record-write",
+	"type": "typo3-cms-extension",
+	"description": "Record write API fixtures",
+	"version": "1.0.0",
+	"license": "GPL-2.0-or-later",
+	"require": {
+		"typo3/cms-core": "14.3.*@dev"
+	},
+	"extra": {
+		"typo3/cms": {
+			"extension-key": "test_record_write"
+		}
+	}
+}

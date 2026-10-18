@@ -229,6 +229,9 @@ class DataHandler
      */
     public array $errorLog = [];
 
+    /** @var array<string, array<int, true>> */
+    private array $writtenRecords = [];
+
     /**
      * Fields from the pages-table for which changes will trigger a pagetree refresh
      */
@@ -446,6 +449,32 @@ class DataHandler
     public function setControl(array $control): void
     {
         $this->control = $control;
+    }
+
+    /**
+     * Resolve creation defaults without executing a datamap or assigning sorting values.
+     * @internal Used by the Core record write adapter for effective-type validation.
+     */
+    public function getDefaultsForNewRecord(string $table, int $pageId, array $incomingFieldArray = []): array
+    {
+        $recordContext = ['pid' => $pageId] + $incomingFieldArray;
+        return $this->applyDefaultsForFieldArray($table, $pageId, $this->newFieldArray($table, $recordContext), $recordContext);
+    }
+
+    /** @internal Allows Core adapters to apply the same table ACL, including registered hooks. */
+    public function canModifyTable(string $table): bool
+    {
+        return $this->checkModifyAccessList($table);
+    }
+
+    /**
+     * Whether this instance successfully inserted or updated the physical record.
+     * Does not imply transaction atomicity or confirmation of individual field values.
+     * @internal Used by the Core record write adapter.
+     */
+    public function hasWrittenRecord(string $table, int $uid): bool
+    {
+        return isset($this->writtenRecords[$table][$uid]);
     }
 
     /**
@@ -7812,6 +7841,7 @@ class DataHandler
             $this->log($table, $uid, SystemLogDatabaseAction::UPDATE, null, SystemLogErrorClassification::SYSTEM_ERROR, 'SQL error: "{reason}" ({table}:{uid})', null, ['reason' => $e->getMessage(), 'table' => $table, 'uid' => $uid]);
             return;
         }
+        $this->writtenRecords[$table][(int)$uid] = true;
         $this->updateRefIndex($table, $uid);
         // Set History data
         $historyEntryId = 0;
@@ -7868,6 +7898,7 @@ class DataHandler
         // the NEW_id now holds the 'NEW....' -id
         $NEW_id = $id;
         $id = $this->postProcessDatabaseInsert($connection, $table, $suggestedUid);
+        $this->writtenRecords[$table][(int)$id] = true;
         $this->substNEWwithIDs[$NEW_id] = $id;
         $this->substNEWwithIDs_table[$NEW_id] = $table;
         $newRow = $fieldArray;
