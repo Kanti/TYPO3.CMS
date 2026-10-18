@@ -47,6 +47,9 @@ final class RegistrationController extends ActionController
         // The application chooses the storage page and writable fields, never request data.
         $draft = $this->writer->create('tx_recordwrite_item', 1)->setValues(['title' => $name, 'email' => $email]);
         $record = $this->writer->save($draft);
+        if ($record === null) {
+            return $this->jsonResponse('{"error":"Registration result unavailable; contact support before retrying"}')->withStatus(409);
+        }
         return $this->jsonResponse(json_encode(['uid' => $record->getUid(), 'name' => $this->summary->title($record)], JSON_THROW_ON_ERROR))->withStatus(201);
     }
 }

@@ -23,13 +23,12 @@ namespace TYPO3\CMS\Core\Domain\Persistence\Exception;
  */
 final class DataHandlerExecutionException extends RecordPersistenceException
 {
-    /** @internal DataHandler execution snapshots; application code uses diagnostics instead. */
+    /** @internal Native NEW identifier mappings, which do not confirm completion. */
     public function __construct(
         string $message,
         int $code,
         array $errors = [],
         ?\Throwable $previous = null,
-        public readonly array $writtenRecords = [],
         public readonly array $newRecordIds = [],
     ) {
         parent::__construct($message, $code, $errors, $previous);

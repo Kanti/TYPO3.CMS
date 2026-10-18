@@ -51,6 +51,6 @@ final class InteroperabilityController extends ActionController
         // This example has no pending Extbase changes. clearState() would discard such changes.
         $this->persistence->clearState();
         $reloaded = $this->registrations->findByUid($uid);
-        return $this->jsonResponse(json_encode(['before' => $before, 'stale' => $stale, 'reloaded' => $reloaded?->getTitle(), 'record' => $record->get('title')], JSON_THROW_ON_ERROR));
+        return $this->jsonResponse(json_encode(['before' => $before, 'stale' => $stale, 'reloaded' => $reloaded?->getTitle(), 'record' => $record?->get('title')], JSON_THROW_ON_ERROR));
     }
 }

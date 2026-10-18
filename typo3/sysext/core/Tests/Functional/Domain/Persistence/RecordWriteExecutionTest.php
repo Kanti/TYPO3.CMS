@@ -25,9 +25,9 @@ use TYPO3\CMS\Core\Context\Context;
 use TYPO3\CMS\Core\Context\LanguageAspect;
 use TYPO3\CMS\Core\Context\WorkspaceAspect;
 use TYPO3\CMS\Core\Core\SystemEnvironmentBuilder;
+use TYPO3\CMS\Core\Domain\Persistence\Exception\DataHandlerExecutionException;
 use TYPO3\CMS\Core\Domain\Persistence\Exception\InvalidRecordValueException;
 use TYPO3\CMS\Core\Domain\Persistence\Exception\InvalidWriteContextException;
-use TYPO3\CMS\Core\Domain\Persistence\Exception\RecordAccessDeniedException;
 use TYPO3\CMS\Core\Domain\Persistence\RecordWriteContext;
 use TYPO3\CMS\Core\Domain\Persistence\RecordWriter;
 use TYPO3\CMS\Core\Http\ServerRequest;
@@ -356,7 +356,7 @@ final class RecordWriteExecutionTest extends FunctionalTestCase
         $user->groupData['tables_modify'] = 'tt_content';
         $draft = $writer->edit($record);
         self::assertTrue($draft->get('editlock'));
-        $this->expectException(RecordAccessDeniedException::class);
+        $this->expectException(DataHandlerExecutionException::class);
         $writer->save($draft->set('header', 'Denied'));
     }
 
@@ -394,7 +394,7 @@ final class RecordWriteExecutionTest extends FunctionalTestCase
             self::assertSame('Original', $draft->get('title'));
             $writer->save($draft->set('title', 'Denied system change'));
             self::fail('The system identity must not invent permissions.');
-        } catch (RecordAccessDeniedException) {
+        } catch (DataHandlerExecutionException) {
             self::assertSame($editor, $GLOBALS['BE_USER']);
             self::assertSame(0, (int)$this->getConnectionPool()->getConnectionForTable('be_users')->select(['admin'], 'be_users', ['uid' => 90])->fetchOne());
         }

@@ -17,6 +17,7 @@ declare(strict_types=1);
 
 namespace TYPO3\CMS\Core\Domain\Persistence;
 
+use TYPO3\CMS\Backend\Utility\BackendUtility;
 use TYPO3\CMS\Core\Context\Context;
 use TYPO3\CMS\Core\Database\Connection;
 use TYPO3\CMS\Core\Database\ConnectionPool;
@@ -24,17 +25,18 @@ use TYPO3\CMS\Core\Database\Query\Restriction\DeletedRestriction;
 use TYPO3\CMS\Core\Database\Query\Restriction\WorkspaceRestriction;
 use TYPO3\CMS\Core\Database\RelationHandler;
 use TYPO3\CMS\Core\Domain\Persistence\Exception\InvalidRecordValueException;
-use TYPO3\CMS\Core\Domain\Persistence\Exception\RecordPersistenceException;
+use TYPO3\CMS\Core\Domain\Persistence\Exception\RecordAccessDeniedException;
 use TYPO3\CMS\Core\Domain\Persistence\Exception\UnsupportedRecordWriteException;
 use TYPO3\CMS\Core\Domain\RecordInterface;
 use TYPO3\CMS\Core\Schema\Field\FieldTypeInterface;
 use TYPO3\CMS\Core\Schema\Field\RelationalFieldTypeInterface;
+use TYPO3\CMS\Core\Type\Bitmask\Permission;
 use TYPO3\CMS\Core\Utility\GeneralUtility;
 
 /** @internal Owns backend relation reads and DataHandler reference encoding. */
 final readonly class RecordRelationResolver
 {
-    public function __construct(private RecordWriteTargetResolver $targets, private DataHandlerRecordWriter $adapter, private ConnectionPool $connectionPool) {}
+    public function __construct(private RecordWriteTargetResolver $targets, private ConnectionPool $connectionPool) {}
 
     public function reference(RecordInterface|RecordReference|RecordDraft $record, RecordWriteContext $context): RecordReference
     {
@@ -151,10 +153,10 @@ final readonly class RecordRelationResolver
             $encodedUid = $reference->uid;
             if ($field->getType() === 'inline' && !empty($config['foreign_field'])) {
                 $child = $this->targets->byUid($reference->table, $reference->uid, $draft->context);
+                $this->assertInlineChildAccess($child, $draft->context);
                 if ($draft->context->workspaceId > 0 && !$this->targets->schema($reference->table, $draft->context)->isWorkspaceAware()) {
                     throw new UnsupportedRecordWriteException('Workspace inline writes require a versioned child table.', 1792330005);
                 }
-                $this->adapter->assertCanChangeRecord($child, $draft->context);
                 if ($reference->table === $draft->table && $reference->uid === $currentTarget?->uid) {
                     throw new InvalidRecordValueException('A record cannot be its own inline child.', 1792305055);
                 }
@@ -267,7 +269,6 @@ final readonly class RecordRelationResolver
                     if ($draft->context->workspaceId > 0 && ((int)($child->row['t3ver_wsid'] ?? 0) === 0 || (int)($child->row['t3ver_oid'] ?? 0) > 0)) {
                         throw new UnsupportedRecordWriteException('Detaching a Live inline child in a workspace requires a separate Core RelationHandler fix.', 1792330003);
                     }
-                    $this->adapter->assertCanChangeRecord($child, $draft->context);
                     $data[$reference->table][$reference->uid][$config['foreign_field']] = 0;
                 }
             }
@@ -289,28 +290,16 @@ final readonly class RecordRelationResolver
         return array_values(array_unique($expected)) === $actual;
     }
 
-    public function verify(RecordDraft $draft, RecordWriteTarget $saved, array $newUids = [], ?array $changes = null): void
+    private function assertInlineChildAccess(RecordWriteTarget $child, RecordWriteContext $context): void
     {
-        $fresh = new RecordDraft($saved->table, (int)$saved->row['pid'], $draft->context, $saved);
-        foreach (($changes ?? $draft->getChanges()) as $name => $value) {
-            $field = $this->targets->schema($draft->table, $draft->context)->getField($name);
-            if (!$field instanceof RelationalFieldTypeInterface) {
-                continue;
-            }
-            $records = $value instanceof RecordRelationSet ? $value->toArray() : $value;
-            $expected = [];
-            foreach ($records as $record) {
-                $expected[] = $record instanceof RecordDraft && $record->target === null
-                    ? $this->reference(new RecordReference($record->table, $newUids[spl_object_id($record)]), $draft->context)->key()
-                    : $this->reference($record, $draft->context)->key();
-            }
-            $actual = [];
-            foreach ($this->load($fresh, $name) as $reference) {
-                $actual[] = $this->reference($reference, $draft->context)->key();
-            }
-            if (array_values(array_unique($expected)) !== $actual) {
-                throw new RecordPersistenceException('The saved relation members or their order differ from the requested changes.', 1792305103);
-            }
+        // RelationHandler updates foreign fields as part of the parent operation.
+        // Check existing children through public backend APIs before attaching them.
+        $permission = $child->table === 'pages' ? Permission::PAGE_EDIT : Permission::CONTENT_EDIT;
+        $pageId = $child->table === 'pages' ? $child->uid : (int)$child->row['pid'];
+        $page = BackendUtility::readPageAccess($pageId, $context->user->getPagePermsClause(Permission::PAGE_SHOW | $permission));
+        if ($page === false || !$context->user->checkRecordEditAccess($child->table, $child->row)->isAllowed
+            || ($pageId > 0 && !$context->user->checkRecordEditAccess('pages', $page)->isAllowed)) {
+            throw new RecordAccessDeniedException('The inline child cannot be changed by this backend user.', 1792350002);
         }
     }
 

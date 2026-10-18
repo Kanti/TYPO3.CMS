@@ -93,7 +93,7 @@ final class ImportController extends ActionController
         }
         foreach ($drafts as $rowKey => $draft) {
             $entry = $diagnostics?->forDraft($draft);
-            $results[$rowKey] = ['outcome' => $entry?->outcome->value ?? 'unknown', 'uid' => $entry?->identity?->logicalUid, 'physicalUid' => $entry?->identity?->physicalUid, 'errors' => $entry->errors ?? []];
+            $results[$rowKey] = ['outcome' => $entry?->outcome->value ?? 'unknown', 'identifier' => $entry?->identifier, 'uid' => $entry?->uid, 'errors' => $entry->errors ?? []];
         }
         ksort($results);
         return $this->jsonResponse(json_encode(['rows' => $results], JSON_THROW_ON_ERROR));

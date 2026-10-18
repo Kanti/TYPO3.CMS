@@ -25,13 +25,10 @@ use TYPO3\CMS\Core\DataHandling\DataHandler;
 use TYPO3\CMS\Core\DataHandling\History\RecordHistoryStore;
 use TYPO3\CMS\Core\Domain\Persistence\Exception\DataHandlerExecutionException;
 use TYPO3\CMS\Core\Domain\Persistence\Exception\InvalidWriteContextException;
-use TYPO3\CMS\Core\Domain\Persistence\Exception\RecordAccessDeniedException;
 use TYPO3\CMS\Core\Domain\Persistence\Exception\RecordPersistenceException;
-use TYPO3\CMS\Core\Domain\Persistence\Exception\UnsupportedRecordWriteException;
 use TYPO3\CMS\Core\Domain\Persistence\RecordWriteOutcome;
 use TYPO3\CMS\Core\Domain\Persistence\RecordWriter;
 use TYPO3\CMS\Core\Http\ServerRequest;
-use TYPO3\CMS\Core\Log\LogManager;
 use TYPO3\CMS\Core\Utility\GeneralUtility;
 use TYPO3\TestingFramework\Core\Functional\FunctionalTestCase;
 
@@ -45,6 +42,7 @@ final class RecordWriteDataHandlerTest extends FunctionalTestCase
     protected function setUp(): void
     {
         parent::setUp();
+        GeneralUtility::flushInternalRuntimeCaches();
         $this->importCSVDataSet(__DIR__ . '/../../Fixtures/be_users_admin.csv');
         $this->importCSVDataSet(__DIR__ . '/Fixtures/base.csv');
         $this->setUpBackendUser(1);
@@ -60,7 +58,7 @@ final class RecordWriteDataHandlerTest extends FunctionalTestCase
 
     #[Test]
     #[DataProvider('operations')]
-    public function failureInHistoryAfterSqlLeavesAnUnknownOutcomeAndPreventsRetry(bool $create): void
+    public function failureInHistoryPreservesNativeExceptionAndMappingsWithoutInferringSuccess(bool $create): void
     {
         $draft = ($create ? $this->writer->create(self::TABLE, 1) : $this->writer->editByUid(self::TABLE, 1))->set('title', 'Persisted before history failure');
         $history = $this->createMock(RecordHistoryStore::class);
@@ -68,14 +66,13 @@ final class RecordWriteDataHandlerTest extends FunctionalTestCase
         GeneralUtility::addInstance(RecordHistoryStore::class, $history);
         try {
             $this->writer->save($draft);
-            self::fail('Expected a failure after the real SQL write');
+            self::fail('Expected the native history failure');
         } catch (DataHandlerExecutionException $exception) {
             self::assertSame(1792340001, $exception->getPrevious()?->getCode());
             $diagnostic = $exception->diagnostics->forDraft($draft);
             self::assertSame(RecordWriteOutcome::Unknown, $diagnostic->outcome);
-            self::assertNotNull($diagnostic->identity);
-            self::assertSame('Persisted before history failure', $this->row($diagnostic->identity->physicalUid)['title']);
-            self::assertSame([], $exception->writtenRecords);
+            self::assertSame($create ? $exception->newRecordIds[$diagnostic->identifier] ?? null : 1, $diagnostic->uid);
+            self::assertSame(1, $this->getConnectionPool()->getConnectionForTable(self::TABLE)->count('*', self::TABLE, ['title' => 'Persisted before history failure']));
         }
         $this->expectException(InvalidWriteContextException::class);
         $this->writer->save($draft);
@@ -83,17 +80,35 @@ final class RecordWriteDataHandlerTest extends FunctionalTestCase
 
     #[Test]
     #[DataProvider('operations')]
-    public function sqlErrorsCannotBeAcknowledgedEvenWhenLoggingIsDisabled(bool $create): void
+    public function silentSqlFailureIsNotTurnedIntoAConfirmationError(bool $create): void
     {
         $GLOBALS['TYPO3_CONF_VARS']['SC_OPTIONS']['t3lib/class.t3lib_tcemain.php']['processDatamapClass'][] = Fixtures\WriteFailureHook::class;
-        $draft = ($create ? $this->writer->create(self::TABLE, 1) : $this->writer->editByUid(self::TABLE, 1))->set('title', 'Invalid SQL without logging');
+        $batch = $this->writer->batch();
+        $draft = ($create ? $batch->create(self::TABLE, 1) : $batch->editByUid(self::TABLE, 1))->set('title', 'Invalid SQL without logging');
+        $result = $batch->execute();
+        self::assertSame(RecordWriteOutcome::Unknown, $result->diagnostics->forDraft($draft)->outcome);
+        self::assertSame([], $result->diagnostics->forDraft($draft)->errors);
+        if ($create) {
+            self::assertNull($result->recordFor($draft));
+        } else {
+            self::assertSame('Original', $result->recordFor($draft)->get('title'));
+        }
+        self::assertSame(2, $this->getConnectionPool()->getConnectionForTable(self::TABLE)->count('*', self::TABLE, []));
+        self::assertSame('Original', $this->row(1)['title']);
+    }
+
+    #[Test]
+    #[DataProvider('operations')]
+    public function nativeSqlErrorsAreReported(bool $create): void
+    {
+        $GLOBALS['TYPO3_CONF_VARS']['SC_OPTIONS']['t3lib/class.t3lib_tcemain.php']['processDatamapClass'][] = Fixtures\WriteFailureHook::class;
+        $draft = ($create ? $this->writer->create(self::TABLE, 1) : $this->writer->editByUid(self::TABLE, 1))->set('title', 'Invalid SQL');
         try {
             $this->writer->save($draft);
-            self::fail('Expected an unconfirmed write');
-        } catch (RecordPersistenceException $exception) {
+            self::fail('Expected native SQL error');
+        } catch (DataHandlerExecutionException $exception) {
+            self::assertNotEmpty($exception->errors);
             self::assertSame(RecordWriteOutcome::Unknown, $exception->diagnostics->forDraft($draft)->outcome);
-            self::assertSame([], $exception->errors);
-            self::assertSame(2, $this->getConnectionPool()->getConnectionForTable(self::TABLE)->count('*', self::TABLE, []));
             self::assertSame('Original', $this->row(1)['title']);
         }
     }
@@ -108,42 +123,41 @@ final class RecordWriteDataHandlerTest extends FunctionalTestCase
     }
 
     #[Test]
-    public function aDataHandlerReplacementCannotBeSilentlyBypassed(): void
+    public function nativeXclassCustomizationIsUsed(): void
     {
-        $draft = $this->writer->editByUid(self::TABLE, 1)->set('title', 'Must not bypass the override');
         $GLOBALS['TYPO3_CONF_VARS']['SYS']['Objects'][DataHandler::class]['className'] = Fixtures\CustomDataHandler::class;
+        GeneralUtility::flushInternalRuntimeCaches();
         try {
-            $this->writer->save($draft);
-            self::fail('Expected explicit rejection of a DataHandler replacement');
-        } catch (UnsupportedRecordWriteException) {
-            self::assertSame('Original', $this->row(1)['title']);
-            $draft->assertEditable();
+            $record = $this->writer->save($this->writer->editByUid(self::TABLE, 1)->set('title', 'Original input'));
+            self::assertSame('Customized: Original input', $record->get('title'));
+            self::assertSame('Customized: Original input', $this->row(1)['title']);
+        } finally {
+            unset($GLOBALS['TYPO3_CONF_VARS']['SYS']['Objects'][DataHandler::class]);
+            GeneralUtility::flushInternalRuntimeCaches();
         }
     }
 
     #[Test]
-    public function aConfiguredNativeHandlerCannotBeSilentlyBypassed(): void
+    public function configuredNativeHandlerDefaultsAreUsed(): void
     {
-        $draft = $this->writer->editByUid(self::TABLE, 1)->set('title', 'Must not bypass configured defaults');
         $handler = GeneralUtility::makeInstance(DataHandler::class);
-        $handler->defaultValues = [self::TABLE => ['hidden' => 1]];
+        $handler->defaultValues = [self::TABLE => ['body' => 'Configured default body']];
         GeneralUtility::addInstance(DataHandler::class, $handler);
-        try {
-            $this->writer->save($draft);
-            self::fail('Expected explicit rejection of a preconfigured DataHandler');
-        } catch (UnsupportedRecordWriteException) {
-            self::assertSame('Original', $this->row(1)['title']);
-            $draft->assertEditable();
-        }
+        $record = $this->writer->save($this->writer->create(self::TABLE, 1)->set('title', 'Configured defaults'));
+        self::assertSame('Configured default body', $this->row($record->getUid())['body']);
+        $next = $this->writer->save($this->writer->create(self::TABLE, 1)->set('title', 'Fresh handler'));
+        self::assertNull($this->row($next->getUid())['body']);
     }
 
     #[Test]
-    public function aContainerReplacementCannotBeSilentlyBypassed(): void
+    public function containerReplacementIsUsedForRealPersistence(): void
     {
-        $draft = $this->writer->editByUid(self::TABLE, 1)->set('title', 'Must not bypass container replacement');
         $container = GeneralUtility::getContainer();
-        $replacement = $this->createMock(DataHandler::class);
-        $replacement->expects($this->never())->method('start');
+        $GLOBALS['TYPO3_CONF_VARS']['SYS']['Objects'][DataHandler::class]['className'] = Fixtures\CustomDataHandler::class;
+        GeneralUtility::flushInternalRuntimeCaches();
+        $replacement = GeneralUtility::makeInstance(DataHandler::class);
+        unset($GLOBALS['TYPO3_CONF_VARS']['SYS']['Objects'][DataHandler::class]);
+        GeneralUtility::flushInternalRuntimeCaches();
         GeneralUtility::setContainer(new class ($container, $replacement) implements ContainerInterface {
             public function __construct(private readonly ContainerInterface $container, private readonly DataHandler $handler) {}
 
@@ -158,54 +172,105 @@ final class RecordWriteDataHandlerTest extends FunctionalTestCase
             }
         });
         try {
-            $this->writer->save($draft);
-            self::fail('Expected explicit rejection of a replacement container service');
-        } catch (UnsupportedRecordWriteException) {
-            self::assertSame('Original', $this->row(1)['title']);
-            $draft->assertEditable();
+            $record = $this->writer->save($this->writer->editByUid(self::TABLE, 1)->set('title', 'Container input'));
+            self::assertSame('Customized: Container input', $record->get('title'));
+            self::assertSame('Customized: Container input', $this->row(1)['title']);
         } finally {
             GeneralUtility::setContainer($container);
         }
     }
 
     #[Test]
-    public function nativeTableAccessHooksStillRejectWritesBeforeConsumption(): void
+    public function nativeTableAccessHooksRunDuringExecutionNotPreflight(): void
     {
         $GLOBALS['TYPO3_CONF_VARS']['SC_OPTIONS']['t3lib/class.t3lib_tcemain.php']['checkModifyAccessList'][] = Fixtures\DenyTableWriteHook::class;
-        $draft = $this->writer->editByUid(self::TABLE, 1)->set('title', 'Denied by native hook');
+        $batch = $this->writer->batch();
+        $draft = $batch->editByUid(self::TABLE, 1)->set('title', 'Denied by native hook');
+        self::assertTrue($batch->validate()->isValid());
         try {
-            $this->writer->save($draft);
+            $batch->execute();
             self::fail('Expected native table hook denial');
-        } catch (RecordAccessDeniedException) {
+        } catch (DataHandlerExecutionException $exception) {
+            self::assertNotEmpty($exception->errors);
             self::assertSame('Original', $this->row(1)['title']);
-            $draft->assertEditable();
         }
+        $this->expectException(InvalidWriteContextException::class);
+        $this->writer->save($draft);
     }
 
     #[Test]
-    public function anEmptyUpdateAfterHookProcessingCannotReuseAnEarlierAcknowledgement(): void
+    public function silentlySkippedFieldsReturnTheObservedStateWithoutConfirmingPersistence(): void
     {
-        $this->writer->save($this->writer->editByUid(self::TABLE, 1)->set('title', 'First confirmed'));
         $GLOBALS['TYPO3_CONF_VARS']['SC_OPTIONS']['t3lib/class.t3lib_tcemain.php']['processDatamapClass'][] = Fixtures\WriteFailureHook::class;
-        $draft = $this->writer->editByUid(self::TABLE, 1)->set('title', 'Remove all fields');
-        try {
-            $this->writer->save($draft);
-            self::fail('Expected an unconfirmed write');
-        } catch (RecordPersistenceException $exception) {
-            self::assertSame(RecordWriteOutcome::Unknown, $exception->diagnostics->forDraft($draft)->outcome);
-            self::assertSame('First confirmed', $this->row(1)['title']);
-        }
+        $batch = $this->writer->batch();
+        $draft = $batch->editByUid(self::TABLE, 1)->set('title', 'Remove all fields');
+        $result = $batch->execute();
+        self::assertSame('Original', $result->recordFor($draft)->get('title'));
+        self::assertSame(RecordWriteOutcome::Unknown, $result->diagnostics->forDraft($draft)->outcome);
+        self::assertSame([], $result->diagnostics->forDraft($draft)->errors);
     }
 
     #[Test]
-    public function theDedicatedHandlerPreservesTheNativeLogChannelAndContainerService(): void
+    #[DataProvider('relativeCommands')]
+    public function incorrectRelativePositionIsDetectedEvenOnTheRequestedPage(string $command): void
     {
-        self::assertSame(DataHandler::class, GeneralUtility::makeInstance(DataHandler::class)::class);
-        $this->writer->save($this->writer->create(self::TABLE, 1)->set('title', 'Native logging configuration'));
-        self::assertSame(DataHandler::class, GeneralUtility::makeInstance(DataHandler::class)::class);
-        $loggerNames = $this->get(LogManager::class)->getLoggerNames();
-        self::assertContains('TYPO3.CMS.Core.DataHandling.DataHandler', $loggerNames);
-        self::assertNotContains('TYPO3.CMS.Core.Domain.Persistence.RecordWriteDataHandler', $loggerNames);
+        $source = $this->writer->save($this->writer->editByUid(self::TABLE, 1));
+        $preceding = $this->writer->save($this->writer->editByUid(self::TABLE, 2));
+        $GLOBALS['TYPO3_CONF_VARS']['SC_OPTIONS']['t3lib/class.t3lib_tcemain.php']['processCmdmapClass'][] = Fixtures\CommandPositionHook::class;
+        $this->expectException(RecordPersistenceException::class);
+        $this->expectExceptionMessage('requested relative position');
+        $this->writer->$command($source, \TYPO3\CMS\Core\Domain\Persistence\RecordPosition::after($preceding));
+    }
+
+    public static function relativeCommands(): iterable
+    {
+        yield 'suppressed move' => ['move'];
+        yield 'redirected copy' => ['copy'];
+    }
+
+    #[Test]
+    public function silentCommandSkipsAndMissingMappingsAreAccepted(): void
+    {
+        $source = $this->writer->save($this->writer->editByUid(self::TABLE, 1));
+        $GLOBALS['TYPO3_CONF_VARS']['SC_OPTIONS']['t3lib/class.t3lib_tcemain.php']['processCmdmapClass'][] = Fixtures\SuppressCommandsHook::class;
+        self::assertNull($this->writer->copy($source, \TYPO3\CMS\Core\Domain\Persistence\RecordPosition::onPage(2)));
+        self::assertNull($this->writer->localize($source, 1));
+        self::assertNull($this->writer->copyToLanguage($source, 1));
+        $this->writer->delete($source);
+        self::assertSame(0, (int)$this->row(1)['deleted']);
+        self::assertSame(2, $this->getConnectionPool()->getConnectionForTable(self::TABLE)->count('*', self::TABLE, []));
+    }
+
+    #[Test]
+    public function skippedRelationDoesNotTurnMissingConfirmationIntoAnException(): void
+    {
+        $GLOBALS['TYPO3_CONF_VARS']['SC_OPTIONS']['t3lib/class.t3lib_tcemain.php']['processDatamapClass'][] = Fixtures\WriteFailureHook::class;
+        $draft = $this->writer->editByUid(self::TABLE, 1)->set('title', 'Skip relation');
+        $draft->relations('related')->add(new \TYPO3\CMS\Core\Domain\Persistence\RecordReference(self::TABLE, 2));
+        $saved = $this->writer->save($draft);
+        self::assertSame('Skip relation', $saved->get('title'));
+        self::assertSame([], $this->writer->edit($saved)->relations('related')->toArray());
+    }
+
+    #[Test]
+    public function batchKeepsAvailableMappingsWhenAnotherMappingIsMissing(): void
+    {
+        $GLOBALS['TYPO3_CONF_VARS']['SC_OPTIONS']['t3lib/class.t3lib_tcemain.php']['processDatamapClass'][] = Fixtures\FailAfterWriteHook::class;
+        $batch = $this->writer->batch();
+        $available = $batch->create(self::TABLE, 1)->set('title', 'Available mapping');
+        $missing = $batch->create(self::TABLE, 1)->set('title', 'Lose result mapping');
+        $result = $batch->execute();
+        $record = $result->recordFor($available);
+        self::assertNotNull($record);
+        self::assertSame('Available mapping', $record->get('title'));
+        self::assertSame($record->getUid(), $result->diagnostics->forDraft($available)->uid);
+        self::assertSame(RecordWriteOutcome::Unknown, $result->diagnostics->forDraft($available)->outcome);
+        self::assertNull($result->recordFor($missing));
+        self::assertNull($result->diagnostics->forDraft($missing)->uid);
+        self::assertSame(RecordWriteOutcome::Unknown, $result->diagnostics->forDraft($missing)->outcome);
+        self::assertSame(4, $this->getConnectionPool()->getConnectionForTable(self::TABLE)->count('*', self::TABLE, []));
+        $this->expectException(InvalidWriteContextException::class);
+        $batch->execute();
     }
 
     private function row(int $uid): array

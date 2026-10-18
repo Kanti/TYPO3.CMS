@@ -19,6 +19,7 @@ namespace TYPO3Tests\RecordWriteExample\Controller;
 
 use Psr\Http\Message\ResponseInterface;
 use TYPO3\CMS\Core\Domain\Persistence\Exception\RecordAccessDeniedException;
+use TYPO3\CMS\Core\Domain\Persistence\Exception\RecordPersistenceException;
 use TYPO3\CMS\Core\Domain\Persistence\RecordWriterInterface;
 use TYPO3\CMS\Core\Http\ApplicationType;
 use TYPO3\CMS\Extbase\Mvc\Controller\ActionController;
@@ -41,9 +42,14 @@ final class BackendController extends ActionController
         try {
             $draft = $this->writer->editByUid('tx_recordwrite_item', $uid)->set('title', $title);
             $record = $this->writer->save($draft);
+            if ($record === null) {
+                return $this->jsonResponse('{"error":"No result available; check the record before retrying"}')->withStatus(409);
+            }
             $identity = $this->writer->identity($record);
         } catch (RecordAccessDeniedException) {
             return $this->jsonResponse('{"error":"Access denied"}')->withStatus(403);
+        } catch (RecordPersistenceException $exception) {
+            return $this->jsonResponse(json_encode(['error' => $exception->getMessage(), 'errors' => $exception->errors], JSON_THROW_ON_ERROR))->withStatus(409);
         }
         return $this->jsonResponse(json_encode(['uid' => $identity->logicalUid, 'physicalUid' => $identity->physicalUid, 'workspace' => $identity->workspaceId], JSON_THROW_ON_ERROR));
     }

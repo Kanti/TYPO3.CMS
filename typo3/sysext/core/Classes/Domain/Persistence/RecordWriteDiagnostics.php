@@ -19,7 +19,7 @@ namespace TYPO3\CMS\Core\Domain\Persistence;
 
 use TYPO3\CMS\Core\Domain\Persistence\Exception\InvalidRecordValueException;
 
-/** @internal Structured batch reconciliation; retains drafts to prevent object-ID reuse. */
+/** @internal Preflight errors and native execution diagnostics; retains drafts to prevent object-ID reuse. */
 final readonly class RecordWriteDiagnostics
 {
     /** @param array<int, RecordWriteDiagnostic> $entries */

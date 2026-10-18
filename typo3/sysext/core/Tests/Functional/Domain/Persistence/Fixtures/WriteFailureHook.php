@@ -21,6 +21,13 @@ use TYPO3\CMS\Core\DataHandling\DataHandler;
 
 final class WriteFailureHook
 {
+    public function processDatamap_preProcessFieldArray(array &$fields): void
+    {
+        if (($fields['title'] ?? '') === 'Skip relation') {
+            unset($fields['related']);
+        }
+    }
+
     public function processDatamap_postProcessFieldArray(string $status, string $table, int|string $id, array &$fields, DataHandler $handler): void
     {
         if (($fields['title'] ?? '') === 'Remove all fields') {
@@ -29,7 +36,7 @@ final class WriteFailureHook
         if (str_ends_with($fields['title'] ?? '', 'SQL without logging')) {
             $handler->enableLogging = false;
         }
-        if (($fields['title'] ?? '') === 'Invalid SQL without logging') {
+        if (str_starts_with($fields['title'] ?? '', 'Invalid SQL')) {
             $fields['nonexistent_record_write_column'] = 'Force a real SQL error';
         }
     }

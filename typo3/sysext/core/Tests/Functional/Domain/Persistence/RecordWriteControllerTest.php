@@ -85,6 +85,20 @@ final class RecordWriteControllerTest extends FunctionalTestCase
     }
 
     #[Test]
+    public function frontendRegistrationReportsAnUnavailableResultWithoutRetrying(): void
+    {
+        unset($GLOBALS['BE_USER']);
+        $GLOBALS['TYPO3_CONF_VARS']['SC_OPTIONS']['t3lib/class.t3lib_tcemain.php']['processDatamapClass'][] = Fixtures\FailAfterWriteHook::class;
+        $email = 'visitor@example.org';
+        $invitation = $this->get(HashService::class)->hmac($email, 'record-write-registration', HashAlgo::SHA256);
+        $response = $this->action(RegistrationController::class, 'register', ['name' => 'Lose result mapping', 'email' => $email, 'invitation' => $invitation], true);
+        self::assertSame(409, $response->getStatusCode());
+        self::assertStringContainsString('contact support before retrying', (string)$response->getBody());
+        self::assertSame(1, $this->getConnectionPool()->getConnectionForTable('tx_recordwrite_item')->count('*', 'tx_recordwrite_item', ['email' => $email]));
+        self::assertArrayNotHasKey('BE_USER', $GLOBALS);
+    }
+
+    #[Test]
     public function frontendApplicationAuthorizationRejectsInvalidInvitationsEvenForBackendAdmins(): void
     {
         $this->setUpBackendUser(1);
@@ -119,7 +133,7 @@ final class RecordWriteControllerTest extends FunctionalTestCase
         $user->user['admin'] = 0;
         $user->groupData['tables_modify'] = '';
         $response = $this->action(BackendController::class, 'update', ['uid' => 1, 'title' => 'Denied'], false);
-        self::assertSame(403, $response->getStatusCode());
+        self::assertSame(409, $response->getStatusCode());
         self::assertSame('Original', $this->getConnectionPool()->getConnectionForTable('tx_recordwrite_item')->select(['title'], 'tx_recordwrite_item', ['uid' => 1])->fetchOne());
     }
 
@@ -156,7 +170,7 @@ final class RecordWriteControllerTest extends FunctionalTestCase
             ['pid' => 1, 'header' => 'Invalid column', 'colPos' => 99],
         ]], false);
         $rows = json_decode((string)$response->getBody(), true, flags: JSON_THROW_ON_ERROR)['rows'];
-        self::assertSame(['confirmed', 'confirmed', 'confirmed', 'notAttempted'], array_column($rows, 'outcome'), json_encode($rows, JSON_THROW_ON_ERROR));
+        self::assertSame(['unknown', 'unknown', 'unknown', 'notAttempted'], array_column($rows, 'outcome'), json_encode($rows, JSON_THROW_ON_ERROR));
         self::assertSame(2, (int)$writer->editByUid('tt_content', $rows[1]['uid'])->get('pid'));
         self::assertSame('Existing updated', $writer->editByUid('tt_content', $existing->getUid())->get('header'));
         self::assertSame($category->getUid(), $writer->editByUid('tt_content', $rows[0]['uid'])->get('categories')[0]->uid);
@@ -174,7 +188,7 @@ final class RecordWriteControllerTest extends FunctionalTestCase
             ['pid' => 2, 'header' => 'Uncertain outcome'],
         ]], false);
         $rows = json_decode((string)$response->getBody(), true, flags: JSON_THROW_ON_ERROR)['rows'];
-        self::assertSame(['written', 'written', 'unknown'], array_column($rows, 'outcome'));
+        self::assertSame(['unknown', 'unknown', 'unknown'], array_column($rows, 'outcome'));
         self::assertGreaterThan(0, $rows[0]['uid']);
         self::assertGreaterThan(0, $rows[1]['uid']);
         self::assertNull($rows[2]['uid']);

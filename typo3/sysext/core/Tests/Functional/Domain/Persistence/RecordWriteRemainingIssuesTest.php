@@ -480,9 +480,9 @@ final class RecordWriteRemainingIssuesTest extends FunctionalTestCase
             self::assertSame(1, $editor->workspace);
             self::assertSame(['uid' => 456, 'username' => 'Visitor'], $visitor->user);
             self::assertSame($before, [$editor->user, $editor->groupData, $GLOBALS['LANG'] ?? null, $context->getAspect('backend.user'), $context->getAspect('language')]);
-            $identity = $exception->diagnostics->forDraft($draft)->identity;
-            self::assertNotNull($identity);
-            $historyUser = $this->getConnectionPool()->getConnectionForTable('sys_history')->select(['userid'], 'sys_history', ['tablename' => self::TABLE, 'recuid' => $identity->physicalUid])->fetchOne();
+            $uid = $exception->diagnostics->forDraft($draft)->uid;
+            self::assertNotNull($uid);
+            $historyUser = $this->getConnectionPool()->getConnectionForTable('sys_history')->select(['userid'], 'sys_history', ['tablename' => self::TABLE, 'recuid' => $uid])->fetchOne();
             self::assertSame((int)$this->cliRows()[0]['uid'], (int)$historyUser);
         }
     }

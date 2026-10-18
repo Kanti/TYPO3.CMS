@@ -17,11 +17,9 @@ declare(strict_types=1);
 
 namespace TYPO3\CMS\Core\Domain\Persistence;
 
-/** @internal Reconciliation states, not transaction guarantees. */
+/** @internal Preflight can report no execution; DataHandler cannot confirm individual writes. */
 enum RecordWriteOutcome: string
 {
-    case Confirmed = 'confirmed';
-    case Written = 'written';
     case Unknown = 'unknown';
     case NotAttempted = 'notAttempted';
 }

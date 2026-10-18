@@ -21,7 +21,6 @@ use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Test;
 use Psr\EventDispatcher\EventDispatcherInterface;
 use TYPO3\CMS\Core\Database\ConnectionPool;
-use TYPO3\CMS\Core\Domain\Persistence\DataHandlerRecordWriter;
 use TYPO3\CMS\Core\Domain\Persistence\Exception\InvalidRecordValueException;
 use TYPO3\CMS\Core\Domain\Persistence\Exception\UnsupportedRecordWriteException;
 use TYPO3\CMS\Core\Domain\Persistence\RecordFieldNormalizer;
@@ -44,8 +43,7 @@ final class RecordFieldNormalizerTest extends UnitTestCase
     {
         return new RecordFieldNormalizer(
             new TypoLinkCodecService($this->createMock(EventDispatcherInterface::class)),
-            new RecordRelationResolver(new RecordWriteTargetResolver(new ConnectionPool(), $this->createMock(TcaSchemaFactory::class)), new DataHandlerRecordWriter(), new ConnectionPool()),
-            new DataHandlerRecordWriter()
+            new RecordRelationResolver(new RecordWriteTargetResolver(new ConnectionPool(), $this->createMock(TcaSchemaFactory::class)), new ConnectionPool())
         );
     }
 

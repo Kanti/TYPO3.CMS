@@ -19,4 +19,15 @@ namespace TYPO3\CMS\Core\Tests\Functional\Domain\Persistence\Fixtures;
 
 use TYPO3\CMS\Core\DataHandling\DataHandler;
 
-final class CustomDataHandler extends DataHandler {}
+final class CustomDataHandler extends DataHandler
+{
+    public function process_datamap(): void
+    {
+        foreach ($this->datamap['tx_recordwrite_item'] ?? [] as $uid => $fields) {
+            if (isset($fields['title'])) {
+                $this->datamap['tx_recordwrite_item'][$uid]['title'] = 'Customized: ' . $fields['title'];
+            }
+        }
+        parent::process_datamap();
+    }
+}

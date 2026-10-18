@@ -17,17 +17,15 @@ declare(strict_types=1);
 
 namespace TYPO3\CMS\Core\Domain\Persistence;
 
-use TYPO3\CMS\Core\Domain\RecordInterface;
-
-/** @internal Written confirms a physical row write, not completed relations or hooks. */
+/** @internal Native identifiers and errors, without inferring whether a write succeeded. */
 final readonly class RecordWriteDiagnostic
 {
     /** @param list<string> $errors */
     public function __construct(
         public RecordDraft $draft,
         public RecordWriteOutcome $outcome,
-        public ?RecordIdentity $identity = null,
-        public ?RecordInterface $record = null,
+        public int|string|null $identifier = null,
+        public ?int $uid = null,
         public array $errors = [],
     ) {}
 }

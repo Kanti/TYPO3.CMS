@@ -31,21 +31,17 @@ Its permissions, TCA evaluation, hooks, history, reference-index updates,
 localization, workspace versioning and cache handling remain active. This API
 neither uses Extbase persistence nor introduces another persistence framework.
 
-The existing :php:`DataHandler` class remains unchanged. A dedicated, non-shared
-internal subclass, :php:`RecordWriteDataHandler`, calls its protected creation
-defaults (including Page/User-TSconfig) and table ACL with their existing hooks.
-It observes native insert/update success notifications through :php:`log()`;
-it does not parse log messages or require stored :sql:`sys_log` rows. Persistence,
-authorization, default calculation and logging stay in the parent implementation.
-The existing :php:`Channel` attribute preserves the native DataHandler log channel.
-An empty error log alone does not confirm a write.
+The adapter resolves :php:`DataHandler` through
+:php:`GeneralUtility::makeInstance(DataHandler::class)` and passes the selected
+backend identity explicitly to :php:`start()`. DataHandler is unchanged and is
+neither subclassed nor instrumented by this API. Existing XCLASSes, replacement
+services, configured instances, hooks and events participate through the normal
+Core resolution and execution paths.
 
-The adapter rejects DataHandler XCLASSes, replacement service classes and
-preconfigured public DataHandler state before executing a write. Standard
-DataHandler hooks and events remain active. Custom dependency wiring
-specifically for the base DataHandler service is not inherited by the dedicated
-service; installations using that configuration need an explicit integration
-before using this experimental API.
+DataHandler does not reliably confirm individual writes. An empty error log, a
+NEW identifier mapping or a returned method call cannot establish that every
+requested field or operation was persisted. The API accepts these limitations;
+it adds no write-success tracking or automatic reconciliation.
 
 Execution identities and dependency injection
 --------------------------------------------
@@ -133,13 +129,14 @@ Structural identity checks still reject ambiguous overlays, foreign workspace
 versions and invalid records. Extensions must enforce their own application
 read-access policy when exposing record values to visitors.
 
-:php:`save()` and batch preflight enforce write permissions. Existing-record
-checks reuse DataHandler's table/page/update checks and
-:php:`BackendUserAuthentication::checkRecordEditAccess()` for language, authMode,
-edit locks and registered hooks. Excluded-field permissions and read-only TCA
-policies are checked when normalizing changes. DataHandler remains responsible
-for complete write-time access checks; the API does not introduce another
-permission system. No-op saves still require edit permission.
+DataHandler enforces its native table, page, record, language and workspace
+permissions during execution. The API does not expose or reproduce its protected
+access-check methods. Preflight checks excluded-field permissions and read-only
+TCA policies when normalizing explicit changes. Existing inline children also
+use public backend page and record access checks before attachment, because
+foreign-field changes run as part of the parent operation. These checks are
+partial validation, not a prediction of all DataHandler authorization decisions.
+An unchanged draft does not execute a write and needs no edit permission.
 
 Create and update
 -----------------
@@ -155,11 +152,15 @@ Create and update
        'colPos' => 0, // Must exist in this page's backend layout.
    ]);
    $record = $recordWriter->save($draft);
+   if ($record === null) {
+       // No resolvable result. Reconcile this operation before creating a retry.
+       return;
+   }
 
    $edit = $recordWriter->edit($record);
    $edit->set('header', 'Updated title');
    $updated = $recordWriter->save($edit);
-   // $record is unchanged. $updated is a freshly loaded Record API object.
+   // $record is unchanged. $updated is a fresh read when available.
 
    $edit = $recordWriter->editByUid('tt_content', 123);
    $edit->set('header', 'Another title');
@@ -204,8 +205,9 @@ No-op saves also consume the draft. Saving or modifying a consumed draft raises
 diagnostics; create a fresh draft from a reloaded record to make another change.
 
 For ordinary scalar fields, equal current database values are omitted before
-execution. No-op saves still check the backend user's record write permissions. A batch containing only no-op updates does not execute DataHandler.
-Relations use their actual members, not their stored count, for post-write checks.
+execution. A batch containing only no-op updates does not execute DataHandler.
+Relation no-op detection compares actual members, not their stored count.
+The API does not verify persisted fields or relation membership afterward.
 
 Field handling
 --------------
@@ -213,8 +215,15 @@ Field handling
 Field availability and configuration come from :php:`TcaSchemaFactory`.
 Changing a type discriminator, such as :php:`CType`, validates all pending fields
 against the resulting sub-schema, including column overrides. Current stored
-types and synchronization states are rechecked before execution. Creation reuses
-DataHandler defaults, including Page/User-TSconfig, to determine the effective type.
+types and synchronization states are rechecked before execution. On creation,
+implicit defaults (including Page/User-TSconfig and configured DataHandler
+values) are left entirely to DataHandler. Without an explicit discriminator,
+preflight uses only the main schema and cannot predict type-specific defaults
+or overrides. Set the type explicitly when type-specific validation matters.
+Dynamic item processors receive the current row plus pending changes, or the
+explicit new-record values, intended page and language metadata. New-record
+processors must not depend on implicit defaults already being present; supply
+such dependent values explicitly.
 Foreign-table type discriminators are currently unsupported.
 
 Supported write-side PHP values include:
@@ -300,10 +309,9 @@ resulting membership. A merge that would exceed a single-reference field's
 cardinality fails instead of overwriting another reference.
 
 The resolved changes and observed membership are frozen for normalization,
-no-op detection, inline detachment and post-write verification. Verification does
-not reapply operations after saving. IRRE ordering can legitimately update only
-child rows; such relation-only operations are verified against actual saved
-membership and order even if the parent's count did not require an update.
+no-op detection and inline detachment. IRRE ordering can legitimately update only
+child rows even when the parent's count is unchanged. The API does not verify
+individual relation writes after DataHandler returns.
 
 Rebasing happens before DataHandler executes and is **not atomic optimistic
 locking**. Simultaneous writes between observation and persistence can still race.
@@ -319,7 +327,8 @@ Supported relations are single references, ordinary select/group relations,
 MM relations and standard category reverse-MM relations. Live foreign-field IRRE
 children can be attached, detached and reordered with ownership checks.
 Detachment submits an explicit child datamap update and does not delete the
-child. Child write permissions use existing backend/DataHandler checks.
+child. Existing-child page and record access uses public backend checks;
+DataHandler remains responsible for executing the relation write.
 Reparenting an owned child, inline cycles and multiple batch owners are rejected.
 
 Workspace IRRE writes require versioned child tables and deliberately follow
@@ -355,21 +364,37 @@ Commands
    use TYPO3\CMS\Core\Domain\Persistence\RecordPosition;
 
    $moved = $recordWriter->move($record, RecordPosition::onPage(42));
-   $moved = $recordWriter->move($moved, RecordPosition::after($otherRecord));
-   $copy = $recordWriter->copy($moved, RecordPosition::onPage(43));
-   $translation = $recordWriter->localize($moved, languageId: 1);
+   $moved = $recordWriter->move($record, RecordPosition::after($otherRecord));
+   $copy = $recordWriter->copy($record, RecordPosition::onPage(43));
+   $translation = $recordWriter->localize($record, languageId: 1);
    $independent = $recordWriter->copyToLanguage($otherRecord, languageId: 1);
-   $recordWriter->delete($copy);
-   $restored = $recordWriter->restore('tt_content', $copy->getUid());
+   if ($copy !== null) {
+       $recordWriter->delete($copy);
+       $restored = $recordWriter->restore('tt_content', $copy->getUid());
+   }
 
 Page positions require a default-language storage page. A physical version UID
 from the current workspace is resolved to its logical storage-page UID; translated
 page IDs are rejected instead of implicitly switching languages.
 Move-after requires another sortable record of the same table and language.
+Move/copy read the resulting page and compare the current sorting values for
+:php:`RecordPosition::after()`. A record on the wrong page or ordered before/equal
+to the requested predecessor raises a persistence exception. This detects a
+suppressed move or redirected copy in those cases. It does not prove immediate
+adjacency, execution of a specific command, or exclude concurrent reordering.
 Copy/localize use DataHandler's result mappings and retain its native recursive
 relation handling. Localization requires a default-language source, a positive
 language ID and an available site language; missing translations are never
 created implicitly by :php:`edit()`.
+
+:php:`save()`, :php:`move()`, :php:`copy()`, :php:`localize()`,
+:php:`copyToLanguage()`, :php:`restore()` and :php:`RecordWriteResult::recordFor()`
+return :php:`?RecordInterface`. A missing native mapping or unavailable result
+returns :php:`null`, without claiming failure and without inventing another
+lookup to recover a lost mapping. An existing record may also be returned
+unchanged if DataHandler skipped the update. A fresh read is an observation,
+not a write confirmation. Delete and discard report native errors but do not
+try to prove that the command executed.
 
 Restore is restricted to existing soft-deleted Live records. Workspace discard
 is explicit and uses DataHandler's discard command:
@@ -389,12 +414,16 @@ The resolver reads the actual row, validates overlay metadata, retains the
 translation's logical identity and lets DataHandler create workspace versions.
 Backend language permissions remain active.
 
-The existing Record API is unchanged: returned records use the **physical saved
-UID**. Use the writer's explicit identity metadata for links or a subsequent
+The existing Record API is unchanged: returned records use the **physical
+database UID of the observed row**. Use the writer's explicit identity metadata for links or a subsequent
 controller action:
 
 .. code-block:: php
 
+   if ($saved === null) {
+       // Resolve the uncertain operation in the application before redirecting.
+       return;
+   }
    $identity = $recordWriter->identity($saved);
    $uidForNextAction = $identity->logicalUid;
    $databaseUid = $identity->physicalUid;
@@ -474,15 +503,15 @@ performance. A normal create-only batch requires two full system initializations
 (first capture and execution validation), independent of its size; an additional
 explicit ``validate()`` introduces one further boundary check.
 
-Preflight and reconciliation
-----------------------------
+Preflight and execution diagnostics
+----------------------------------
 
 :php:`RecordWriteBatch::validate()` returns per-draft diagnostics without executing
-DataHandler or consuming drafts. It checks values, effective schemas, existing
-record write access, references, cycles and conflicts between otherwise valid drafts.
+DataHandler or consuming drafts. It checks values, explicit/current schemas,
+references, cycles and conflicts between otherwise valid drafts.
 An importer can correct a draft or :php:`remove()` an invalid row from the batch.
 Validation is a best-effort preflight, not a reservation, a dry-run of every hook
-or a guarantee that DataHandler will accept the write. Create permissions and all
+or a guarantee that DataHandler will accept the write. Table permissions and all
 write-time DataHandler checks still apply during execution.
 
 .. code-block:: php
@@ -497,32 +526,30 @@ write-time DataHandler checks still apply during execution.
    $result = $batch->execute();
    $entry = $result->diagnostics->forDraft($parent);
 
-Successful results and persistence exceptions expose :php:`RecordWriteDiagnostics`
-with a retained draft, outcome, optional :php:`RecordIdentity`, optional freshly
-verified record and error messages. Outcomes deliberately distinguish:
+Execution results and persistence exceptions expose :php:`RecordWriteDiagnostics`
+with a retained draft, native datamap :php:`identifier`, optional :php:`uid` and
+errors. For updates, :php:`uid` is the requested logical UID. For inserts, it is
+only the value DataHandler exposed through :php:`substNEWwithIDs`. It must not be
+interpreted as a verified physical or logical workspace identity. Use
+:php:`identity()` on an available returned record when that distinction matters.
+There are only two outcomes:
 
 * ``notAttempted``: preflight only; this validation did not persist a record.
-* ``confirmed``: a fresh record and its requested identity/relations were verified.
-* ``written``: the dedicated DataHandler received a native insert/update success
-  notification and the physical identity could be resolved, but complete
-  postconditions have not been confirmed.
-* ``unknown``: the outcome cannot be established. This also covers rows with no
-  acknowledgement after an interrupted batch; absence of acknowledgement does
-  not prove that hooks or nested DataHandlers made no persistent changes.
+* ``unknown``: DataHandler provides no reliable per-draft completion status.
+  This applies both after normal return and after an interrupted batch.
 
-For datamap inserts/updates, Core emits success notifications after SQL and
-history processing. If history or logging throws after SQL succeeds, the
-outcome is conservatively ``unknown``
-even when a physical UID can be recovered. An insert may also succeed before a
-UID mapping becomes available. Nested native DataHandlers do not contribute
-acknowledgements to the dedicated instance. These limitations reduce diagnostic
-certainty, not the native execution of writes. Successful command operations
-still require their explicit postconditions to be verified.
+Native errors are execution-wide and cannot reliably be assigned to individual
+drafts. :php:`DataHandlerExecutionException::newRecordIds` preserves available
+NEW mappings; :php:`errors` and :php:`getPrevious()` retain native error messages
+and exceptions. The API does not query records after a failure to infer which
+operations succeeded. :php:`recordFor()` returns a fresh read or :php:`null`
+after a normally returned execution, without confirming the requested changes.
 
-No outcome means an automatic rollback. Retain an application's import-row key
-alongside each draft and reconcile any ``written`` or ``unknown`` rows before
-retrying. Missing result mappings can leave a persisted record without a known
-UID; do not automatically create a replacement.
+There is no rollback or atomicity guarantee. Retain the application's source-row
+key alongside each draft and reconcile uncertain operations in the application's
+own workflow before retrying. DataHandler may partially execute a batch, silently
+skip operations or persist a record before its NEW mapping becomes available.
+Do not blindly retry a batch or create a replacement for a missing result.
 
 Real extension controllers
 --------------------------
@@ -583,6 +610,10 @@ A frontend action follows the ordinary Extbase pattern:
            $draft = $this->writer->create('tx_example_registration', 123);
            $draft->setValues(['name' => $name, 'email' => $email]);
            $record = $this->writer->save($draft);
+           if ($record === null) {
+               // Show an uncertainty response; do not automatically resubmit.
+               return $this->jsonResponse('{"error":"Contact support"}')->withStatus(409);
+           }
            return $this->jsonResponse(json_encode([
                'uid' => $record->getUid(),
            ], JSON_THROW_ON_ERROR))->withStatus(201);
@@ -598,8 +629,8 @@ The writer does not expose a web endpoint itself.
 Extbase interoperability
 -----------------------
 
-The writer returns :php:`RecordInterface`, which can be passed to another Record
-API service directly, without creating an Extbase entity. An Extbase domain
+When available, the writer returns a :php:`RecordInterface` that can be passed
+to another Record API service directly, without creating an Extbase entity. An Extbase domain
 model is not a :php:`RecordInterface`; use an explicitly chosen table and its UID
 when combining the APIs. Their persistence identity maps are **not synchronized**.
 
@@ -626,7 +657,7 @@ Errors and consistency
        // DataHandler threw or reported errors: some writes may have succeeded.
        // Inspect errors, getPrevious() and diagnostics; reconcile each source row.
    } catch (RecordPersistenceException $exception) {
-       // DataHandler returned, but the requested outcome could not be confirmed.
+       // A result read failed or a command has a clearly incorrect position.
        // Inspect $exception->diagnostics; never automatically retry this batch.
    } catch (RecordWriteException $exception) {
        // Preflight validation/context/access failure: no execution was attempted.
@@ -635,14 +666,11 @@ Errors and consistency
 Specific preflight exceptions cover invalid values, unsupported operations,
 missing records, access denial and invalid context. DataHandler errors and
 exceptions propagate through :php:`DataHandlerExecutionException`, a subclass
-of :php:`RecordPersistenceException`. Other persistence exceptions identify
-unconfirmed results after execution, such as missing mappings or a failed
-reload. An empty error log alone does not establish success. The adapter also
-checks insertion/copy mappings, acknowledged physical writes, command postconditions and saved relations.
-
-DataHandler hooks can intentionally transform values. The returned record exposes
-the actual saved values. Acknowledgement of an SQL write does not prove every
-requested scalar survived third-party hook evaluation.
+of :php:`RecordPersistenceException`. Other persistence exceptions cover result
+read errors or clearly incorrect command positions. Missing confirmation alone
+is not an exception. Returned records expose the currently observed values,
+including changes made by hooks and values left unchanged by skipped operations.
+No result status claims that individual scalar or relation writes succeeded.
 
 There is no general transaction or atomic batch guarantee. Hooks, nested
 DataHandler executions, relation updates, cache work and multiple connections can
@@ -666,9 +694,9 @@ require application-level authorization at the extension boundary.
 DataHandler, native CLI authentication, CLI provisioning, RelationHandler,
 BackendUtility and BackendLayoutView remain unchanged. All integration code is
 in the new API classes. The API manages its runtime cache invalidation and
-rejects unsupported workspace foreign-field ownership changes and incompatible
-DataHandler replacements. Regression tests cover these boundaries, SQL/history
-failures and updated backend layouts.
+rejects unsupported workspace foreign-field ownership changes. Regression tests
+cover native customization, silent skips, SQL/history failures, command ordering
+and updated backend layouts.
 
 The Forge issue is temporarily recorded as ``000000``. Replace the placeholder
 and rename this file when assigning the real review issue.

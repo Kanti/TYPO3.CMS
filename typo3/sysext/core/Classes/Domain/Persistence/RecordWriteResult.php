@@ -23,10 +23,11 @@ use TYPO3\CMS\Core\Domain\RecordInterface;
 /** @internal Results retain the draft objects, avoiding object-ID reuse. */
 final readonly class RecordWriteResult
 {
-    /** @param array<int, array{RecordDraft, RecordInterface}> $records */
+    /** @param array<int, array{RecordDraft, ?RecordInterface}> $records */
     public function __construct(private array $records, public ?RecordWriteDiagnostics $diagnostics = null) {}
 
-    public function recordFor(RecordDraft $draft): RecordInterface
+    /** A fresh read when a native identifier is available; not a write confirmation. */
+    public function recordFor(RecordDraft $draft): ?RecordInterface
     {
         $entry = $this->records[spl_object_id($draft)] ?? null;
         if ($entry === null || $entry[0] !== $draft) {

@@ -28,7 +28,8 @@ interface RecordWriterInterface
 
     public function editByUid(string $table, int $uid): RecordDraft;
 
-    public function save(RecordDraft $draft): RecordInterface;
+    /** Returns the current record when resolvable, without confirming individual writes. */
+    public function save(RecordDraft $draft): ?RecordInterface;
 
     public function identity(RecordInterface $record): RecordIdentity;
 
@@ -36,15 +37,15 @@ interface RecordWriterInterface
 
     public function delete(RecordInterface $record): void;
 
-    public function restore(string $table, int $uid): RecordInterface;
+    public function restore(string $table, int $uid): ?RecordInterface;
 
-    public function move(RecordInterface $record, RecordPosition $position): RecordInterface;
+    public function move(RecordInterface $record, RecordPosition $position): ?RecordInterface;
 
-    public function copy(RecordInterface $record, RecordPosition $position): RecordInterface;
+    public function copy(RecordInterface $record, RecordPosition $position): ?RecordInterface;
 
-    public function localize(RecordInterface $record, int $languageId): RecordInterface;
+    public function localize(RecordInterface $record, int $languageId): ?RecordInterface;
 
-    public function copyToLanguage(RecordInterface $record, int $languageId): RecordInterface;
+    public function copyToLanguage(RecordInterface $record, int $languageId): ?RecordInterface;
 
     public function discardWorkspaceVersion(RecordInterface $record): void;
 }

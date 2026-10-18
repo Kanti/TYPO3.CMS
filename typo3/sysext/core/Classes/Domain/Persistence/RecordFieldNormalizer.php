@@ -33,7 +33,7 @@ use TYPO3\CMS\Core\Schema\TcaSchema;
 /** @internal Converts write-side values; does not reverse the read transformer. */
 final readonly class RecordFieldNormalizer
 {
-    public function __construct(private TypoLinkCodecService $linkCodec, private RecordRelationResolver $relations, private DataHandlerRecordWriter $adapter, private ?RecordSelectItemResolver $selectItems = null) {}
+    public function __construct(private TypoLinkCodecService $linkCodec, private RecordRelationResolver $relations, private ?RecordSelectItemResolver $selectItems = null) {}
 
     public function changes(RecordDraft $draft, TcaSchema $schema, array $identifiers = [], ?RecordWriteTarget $currentTarget = null, ?array $changes = null): array
     {
@@ -53,18 +53,22 @@ final readonly class RecordFieldNormalizer
                 throw new UnsupportedRecordWriteException('Foreign record type discriminators are not supported for writing.', 1792305019);
             }
             $typeField = $type->getFieldName();
-            $typeValue = $changes[$typeField] ?? $currentTarget?->row[$typeField] ?? $this->adapter->defaults($draft)[$typeField] ?? $schema->getField($typeField)->getDefaultValue() ?? '0';
-            if (is_bool($typeValue) && $schema->getField($typeField)->getType() === 'check') {
-                $typeValue = (int)$typeValue;
+            // Defaults (including Page/User TSconfig) are resolved only by DataHandler.
+            // Without an explicit type, preflight can validate only the main schema.
+            $typeValue = $changes[$typeField] ?? $currentTarget?->row[$typeField] ?? null;
+            if ($typeValue !== null) {
+                if (is_bool($typeValue) && $schema->getField($typeField)->getType() === 'check') {
+                    $typeValue = (int)$typeValue;
+                }
+                if (!is_int($typeValue) && !is_string($typeValue)) {
+                    throw new InvalidRecordValueException('A record type must be a valid discriminator value.', 1792310035);
+                }
+                $typeValue = (string)$typeValue;
+                if (!$schema->hasSubSchema($typeValue)) {
+                    throw new InvalidRecordValueException('Unknown record type "' . $typeValue . '".', 1792305020);
+                }
+                $effectiveSchema = $schema->getSubSchema($typeValue);
             }
-            if (!is_int($typeValue) && !is_string($typeValue)) {
-                throw new InvalidRecordValueException('A record type must be a valid discriminator value.', 1792310035);
-            }
-            $typeValue = (string)$typeValue;
-            if (!$schema->hasSubSchema($typeValue)) {
-                throw new InvalidRecordValueException('Unknown record type "' . $typeValue . '".', 1792305020);
-            }
-            $effectiveSchema = $schema->getSubSchema($typeValue);
         }
         $protected = ['uid', 'pid', 'l10n_state'];
         $ctrl = $schema->getRawConfiguration();

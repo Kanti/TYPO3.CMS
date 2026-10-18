@@ -17,58 +17,17 @@ declare(strict_types=1);
 
 namespace TYPO3\CMS\Core\Domain\Persistence;
 
-use TYPO3\CMS\Backend\Utility\BackendUtility;
 use TYPO3\CMS\Core\Cache\CacheManager;
 use TYPO3\CMS\Core\DataHandling\DataHandler;
 use TYPO3\CMS\Core\Domain\Persistence\Exception\DataHandlerExecutionException;
-use TYPO3\CMS\Core\Domain\Persistence\Exception\RecordAccessDeniedException;
-use TYPO3\CMS\Core\Domain\Persistence\Exception\UnsupportedRecordWriteException;
-use TYPO3\CMS\Core\Type\Bitmask\Permission;
-use TYPO3\CMS\Core\Type\VirtualRecord;
 use TYPO3\CMS\Core\Utility\GeneralUtility;
 
 /** @internal Isolates mutable DataHandler instances and its result mappings. */
 final readonly class DataHandlerRecordWriter
 {
-    private function createHandler(): RecordWriteDataHandler
+    public function execute(array $data, array $commands, RecordWriteContext $context): DataHandler
     {
-        if (GeneralUtility::getClassName(DataHandler::class) !== DataHandler::class) {
-            throw new UnsupportedRecordWriteException('The Record Write API cannot safely combine its DataHandler adapter with a DataHandler XCLASS.', 1792340002);
-        }
-        // Resolve the native service too: DI may replace it without an XCLASS.
-        $nativeHandler = GeneralUtility::makeInstance(DataHandler::class);
-        $handler = GeneralUtility::makeInstance(RecordWriteDataHandler::class);
-        if ($nativeHandler::class !== DataHandler::class || get_object_vars($nativeHandler) !== get_object_vars($handler)) {
-            throw new UnsupportedRecordWriteException('The Record Write API cannot safely bypass a replaced or preconfigured DataHandler service.', 1792340003);
-        }
-        return $handler;
-    }
-
-    public function defaults(RecordDraft $draft): array
-    {
-        $handler = $this->createHandler();
-        $handler->start([], [], $draft->context->user);
-        return $handler->getDefaultsForNewRecord($draft->table, $draft->pid, $draft->getChanges());
-    }
-
-    public function assertCanChangeRecord(RecordWriteTarget $target, RecordWriteContext $context): void
-    {
-        $handler = $this->createHandler();
-        $handler->start([], [], $context->user);
-        $page = $target->table === 'pages' ? $target->row : ((int)$target->row['pid'] > 0
-            ? BackendUtility::getRecordWSOL('pages', (int)$target->row['pid'])
-            : VirtualRecord::RootPage);
-        if ($page === null || !$handler->canModifyTable($target->table)
-            || !$context->user->checkRecordEditAccess($target->table, $target->row)->isAllowed
-            || !$handler->hasPageContextPermission($target->table, Permission::PAGE_SHOW, $page)
-            || !$handler->hasPermissionToUpdate($target->table, $page)) {
-            throw new RecordAccessDeniedException('The record cannot be changed by this backend user.', 1792305072);
-        }
-    }
-
-    public function execute(array $data, array $commands, RecordWriteContext $context): RecordWriteDataHandler
-    {
-        $handler = $this->createHandler();
+        $handler = GeneralUtility::makeInstance(DataHandler::class);
         try {
             $handler->start($data, $commands, $context->user);
             if ($data !== []) {
@@ -78,13 +37,13 @@ final readonly class DataHandlerRecordWriter
                 $handler->process_cmdmap();
             }
         } catch (\Throwable $exception) {
-            throw new DataHandlerExecutionException('DataHandler execution failed; persistence may have partially succeeded.', 1792305101, array_values($handler->errorLog), $exception, $handler->getWrittenRecords(), $handler->substNEWwithIDs);
+            throw new DataHandlerExecutionException('DataHandler execution failed; persistence may have partially succeeded.', 1792305101, array_values($handler->errorLog), $exception, $handler->substNEWwithIDs);
         } finally {
             // Existing backend caches have no shared invalidation tag.
             GeneralUtility::makeInstance(CacheManager::class)->getCache('runtime')->flush();
         }
         if ($handler->errorLog !== []) {
-            throw new DataHandlerExecutionException('DataHandler reported errors; persistence may have partially succeeded.', 1792305102, array_values($handler->errorLog), null, $handler->getWrittenRecords(), $handler->substNEWwithIDs);
+            throw new DataHandlerExecutionException('DataHandler reported errors; persistence may have partially succeeded.', 1792305102, array_values($handler->errorLog), null, $handler->substNEWwithIDs);
         }
         return $handler;
     }

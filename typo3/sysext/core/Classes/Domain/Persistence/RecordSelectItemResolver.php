@@ -21,20 +21,27 @@ use TYPO3\CMS\Core\DataHandling\ItemProcessingService;
 use TYPO3\CMS\Core\DataHandling\ItemsProcessorContext;
 use TYPO3\CMS\Core\DataHandling\ItemsProcessorExecutionFailedException;
 use TYPO3\CMS\Core\Domain\Persistence\Exception\InvalidRecordValueException;
+use TYPO3\CMS\Core\Schema\Capability\TcaSchemaCapability;
 use TYPO3\CMS\Core\Schema\Field\FieldTypeInterface;
 use TYPO3\CMS\Core\Schema\Struct\SelectItem;
 use TYPO3\CMS\Core\Schema\Struct\SelectItemCollection;
+use TYPO3\CMS\Core\Schema\TcaSchemaFactory;
 
 /** @internal Runs the same item processors used by FormEngine with the prospective record. */
 final readonly class RecordSelectItemResolver
 {
-    public function __construct(private ItemProcessingService $processing, private DataHandlerRecordWriter $adapter) {}
+    public function __construct(private ItemProcessingService $processing, private TcaSchemaFactory $schemas) {}
 
     public function items(FieldTypeInterface $field, RecordDraft $draft, ?RecordWriteTarget $target): array
     {
         $configuration = $field->getConfiguration();
         $pid = $target !== null ? (int)$target->row['pid'] : $draft->pid;
-        $row = array_replace($target->row ?? $this->adapter->defaults($draft), $draft->getChanges(), ['pid' => $pid, 'uid' => $target->row['uid'] ?? 'NEWrecordwrite']);
+        $row = $target->row ?? [];
+        $schema = $this->schemas->get($draft->table);
+        if ($target === null && $schema->isLanguageAware()) {
+            $row[$schema->getCapability(TcaSchemaCapability::Language)->getLanguageField()->getName()] = 0;
+        }
+        $row = array_replace($row, $draft->getChanges(), ['pid' => $pid, 'uid' => $target->row['uid'] ?? 'NEWrecordwrite']);
         $context = new ItemsProcessorContext(
             table: $draft->table,
             field: $field->getName(),

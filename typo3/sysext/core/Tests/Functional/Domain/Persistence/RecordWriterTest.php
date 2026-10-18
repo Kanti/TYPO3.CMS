@@ -24,7 +24,6 @@ use TYPO3\CMS\Core\Context\WorkspaceAspect;
 use TYPO3\CMS\Core\Domain\Persistence\Exception\DataHandlerExecutionException;
 use TYPO3\CMS\Core\Domain\Persistence\Exception\InvalidRecordValueException;
 use TYPO3\CMS\Core\Domain\Persistence\Exception\InvalidWriteContextException;
-use TYPO3\CMS\Core\Domain\Persistence\Exception\RecordAccessDeniedException;
 use TYPO3\CMS\Core\Domain\Persistence\Exception\RecordPersistenceException;
 use TYPO3\CMS\Core\Domain\Persistence\Exception\UnsupportedRecordWriteException;
 use TYPO3\CMS\Core\Domain\Persistence\RecordWriter;
@@ -186,19 +185,13 @@ final class RecordWriterTest extends FunctionalTestCase
     }
 
     #[Test]
-    public function noOpUpdateStillRequiresRecordWritePermissions(): void
+    public function unchangedDraftDoesNotNeedWritePermissionOrExecuteDataHandler(): void
     {
-        $draft = $this->writer->editByUid(self::TABLE, 1);
         $GLOBALS['BE_USER']->user['admin'] = 0;
         $GLOBALS['BE_USER']->groupData['tables_modify'] = '';
-        try {
-            $this->writer->save($draft);
-            self::fail('Expected no-op permission denial');
-        } catch (RecordAccessDeniedException) {
-            self::assertFalse($draft->hasChanges());
-        }
-        $draft->set('title', 'Still editable after preflight rejection');
-        self::assertSame('Original', $this->row(1)['title']);
+        $draft = $this->writer->editByUid(self::TABLE, 1);
+        self::assertSame('Original', $this->writer->save($draft)->get('title'));
+        self::assertSame(0, $this->getConnectionPool()->getConnectionForTable('sys_history')->count('*', 'sys_history', []));
     }
 
     #[Test]
@@ -216,6 +209,41 @@ final class RecordWriterTest extends FunctionalTestCase
         self::assertSame(1, (int)$this->row(1)['deleted']);
         $restored = $this->writer->restore(self::TABLE, 1);
         self::assertSame(0, (int)$restored->getRawRecord()->get('deleted'));
+    }
+
+    #[Test]
+    #[DataProvider('positionContexts')]
+    public function relativeMoveAndCopyReadTheCurrentOrdering(bool $workspace, bool $translated): void
+    {
+        $source = $this->writer->save($this->writer->editByUid(self::TABLE, 1));
+        $preceding = $this->writer->save($this->writer->editByUid(self::TABLE, 2));
+        if ($translated) {
+            $source = $this->writer->copyToLanguage($source, 1);
+            $preceding = $this->writer->copyToLanguage($preceding, 1);
+        }
+        if ($workspace) {
+            $GLOBALS['BE_USER']->workspace = 1;
+            $this->get(Context::class)->setAspect('workspace', new WorkspaceAspect(1));
+        }
+        $position = \TYPO3\CMS\Core\Domain\Persistence\RecordPosition::after($preceding);
+        $moved = $this->writer->move($source, $position);
+        self::assertNotNull($moved);
+        self::assertGreaterThan((int)$preceding->getRawRecord()->get('sorting'), (int)$moved->getRawRecord()->get('sorting'));
+        self::assertSame((int)$workspace, $this->writer->identity($moved)->workspaceId);
+        self::assertSame((int)$translated, $this->writer->identity($moved)->languageId);
+        $copy = $this->writer->copy($source, $position);
+        self::assertNotNull($copy);
+        self::assertGreaterThan((int)$preceding->getRawRecord()->get('sorting'), (int)$copy->getRawRecord()->get('sorting'));
+        self::assertSame((int)$workspace, $this->writer->identity($copy)->workspaceId);
+        self::assertSame((int)$translated, $this->writer->identity($copy)->languageId);
+    }
+
+    public static function positionContexts(): iterable
+    {
+        yield 'Live' => [false, false];
+        yield 'workspace' => [true, false];
+        yield 'independent translation' => [false, true];
+        yield 'workspace translation' => [true, true];
     }
 
     #[Test]
@@ -409,8 +437,8 @@ final class RecordWriterTest extends FunctionalTestCase
             self::fail('Expected post-write hook failure');
         } catch (DataHandlerExecutionException $exception) {
             self::assertInstanceOf(\RuntimeException::class, $exception->getPrevious());
-            self::assertSame(\TYPO3\CMS\Core\Domain\Persistence\RecordWriteOutcome::Written, $exception->diagnostics->forDraft($first)->outcome);
-            self::assertNotNull($exception->diagnostics->forDraft($first)->identity);
+            self::assertSame(\TYPO3\CMS\Core\Domain\Persistence\RecordWriteOutcome::Unknown, $exception->diagnostics->forDraft($first)->outcome);
+            self::assertNotNull($exception->diagnostics->forDraft($first)->uid);
             self::assertSame(4, $this->getConnectionPool()->getConnectionForTable(self::TABLE)->count('*', self::TABLE, []));
         }
         $this->expectException(InvalidWriteContextException::class);
@@ -422,16 +450,8 @@ final class RecordWriterTest extends FunctionalTestCase
     {
         $GLOBALS['TYPO3_CONF_VARS']['SC_OPTIONS']['t3lib/class.t3lib_tcemain.php']['processDatamapClass'][] = Fixtures\FailAfterWriteHook::class;
         $draft = $this->writer->create(self::TABLE, 1)->set('title', 'Lose result mapping');
-        try {
-            $this->writer->save($draft);
-            self::fail('Expected an unknown result');
-        } catch (RecordPersistenceException $exception) {
-            self::assertNotInstanceOf(DataHandlerExecutionException::class, $exception);
-            self::assertSame([], $exception->errors);
-            self::assertSame(\TYPO3\CMS\Core\Domain\Persistence\RecordWriteOutcome::Unknown, $exception->diagnostics->forDraft($draft)->outcome);
-            self::assertNull($exception->diagnostics->forDraft($draft)->identity);
-            self::assertSame(3, $this->getConnectionPool()->getConnectionForTable(self::TABLE)->count('*', self::TABLE, []));
-        }
+        self::assertNull($this->writer->save($draft));
+        self::assertSame(3, $this->getConnectionPool()->getConnectionForTable(self::TABLE)->count('*', self::TABLE, []));
         $this->expectException(InvalidWriteContextException::class);
         $this->writer->save($draft);
     }
@@ -779,24 +799,22 @@ final class RecordWriterTest extends FunctionalTestCase
     }
 
     #[Test]
-    public function pageTsDefaultTypeIsUsedWhenValidatingNewRecords(): void
+    public function dataHandlerResolvesPageTsDefaultTypeDuringExecution(): void
     {
         $this->writer->save($this->writer->editByUid('pages', 1)->set('TSconfig', 'TCAdefaults.tt_content.CType = header'));
         $record = $this->writer->save($this->writer->create('tt_content', 1)->set('header', 'Page default header'));
         self::assertSame('header', $record->getRecordType());
-        $this->expectException(InvalidRecordValueException::class);
-        $this->writer->save($this->writer->create('tt_content', 1)->set('bodytext', 'Not allowed for page default header type'));
+
     }
 
     #[Test]
-    public function userTsDefaultTypeIsUsedWhenValidatingNewRecords(): void
+    public function dataHandlerResolvesUserTsDefaultTypeDuringExecution(): void
     {
         $this->importCSVDataSet(__DIR__ . '/Fixtures/type-default.csv');
         $this->setUpBackendUser(3);
         $record = $this->writer->save($this->writer->create('tt_content', 1)->set('header', 'Default header'));
         self::assertSame('header', $record->getRecordType());
-        $this->expectException(InvalidRecordValueException::class);
-        $this->writer->save($this->writer->create('tt_content', 1)->set('bodytext', 'Not allowed for header'));
+
     }
 
     #[Test]
@@ -863,7 +881,7 @@ final class RecordWriterTest extends FunctionalTestCase
         $invalid->set('email', 'corrected@example.org');
         self::assertTrue($batch->validate()->isValid());
         $result = $batch->execute();
-        self::assertSame(\TYPO3\CMS\Core\Domain\Persistence\RecordWriteOutcome::Confirmed, $result->diagnostics->forDraft($valid)->outcome);
+        self::assertSame(\TYPO3\CMS\Core\Domain\Persistence\RecordWriteOutcome::Unknown, $result->diagnostics->forDraft($valid)->outcome);
         self::assertSame('corrected@example.org', $result->recordFor($invalid)->get('email'));
     }
 

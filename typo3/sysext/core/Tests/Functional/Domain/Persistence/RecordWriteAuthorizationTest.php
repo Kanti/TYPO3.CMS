@@ -67,7 +67,7 @@ final class RecordWriteAuthorizationTest extends FunctionalTestCase
 
     #[Test]
     #[DataProvider('deniedWrites')]
-    public function readsDoNotRequireEditPermissionButSaveAndPreflightDo(string $restriction): void
+    public function readsDoNotRequireEditPermissionAndPreflightCannotPredictAllNativeChecks(string $restriction): void
     {
         $uid = 1;
         $field = $restriction === 'excluded' ? 'restricted' : ($restriction === 'fieldReadOnly' ? 'readonly_value' : 'title');
@@ -113,7 +113,7 @@ final class RecordWriteAuthorizationTest extends FunctionalTestCase
         }
         $batch = $this->writer->batch();
         $batch->editByUid(self::TABLE, $uid)->set($field, 'Invalid batch change');
-        self::assertFalse($batch->validate()->isValid());
+        self::assertSame(in_array($restriction, ['table', 'page', 'record', 'language'], true), $batch->validate()->isValid());
     }
 
     public static function relationRestrictions(): iterable
