@@ -98,7 +98,8 @@ final class RecordDraft
             $this->relationSets[$field] = new RecordRelationSet(
                 array_map($resolve, $values),
                 $resolve,
-                fn(RecordRelationSet $set): self => $this->set($field, $set)
+                fn(RecordRelationSet $set): self => $this->set($field, $set),
+                array_key_exists($field, $this->changes),
             );
         }
         return $this->relationSets[$field];

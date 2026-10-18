@@ -11,6 +11,8 @@ CREATE TABLE tx_recordwrite_item (
 	parent int unsigned DEFAULT 0 NOT NULL,
 	children int unsigned DEFAULT 0 NOT NULL,
 	related int unsigned DEFAULT 0 NOT NULL,
+	references text DEFAULT '' NOT NULL,
+	selected text DEFAULT '' NOT NULL,
 	reference varchar(255) DEFAULT '' NOT NULL
 );
 CREATE TABLE tx_recordwrite_item_mm (

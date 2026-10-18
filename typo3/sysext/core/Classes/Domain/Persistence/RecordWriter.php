@@ -45,23 +45,40 @@ final readonly class RecordWriter implements RecordWriterInterface
         private RecordFactory $recordFactory,
         private RecordRelationResolver $relations,
         private RecordDraftValueResolver $draftValues,
+        private RecordWriteContextFactory $contexts,
     ) {}
 
     public function create(string $table, int $pid): RecordDraft
     {
-        $context = RecordWriteContext::capture($this->context);
-        return $context->run(function () use ($context, $table, $pid) {
-            $this->targets->schema($table, $context);
-            if ($pid < 0) {
-                throw new InvalidRecordValueException('Creation requires a non-negative page ID.', 1792305035);
-            }
-            return new RecordDraft($table, $this->storagePageId($pid, $context), $context, null, $this->relations, $this->draftValues);
-        });
+        return $this->createInContext($table, $pid, $this->contexts->capture($this->context));
+    }
+
+    /** @internal A batch owns one context and resolves identical storage positions once. */
+    public function createInContext(string $table, int $pid, RecordWriteContext $context, ?int $resolvedPid = null): RecordDraft
+    {
+        $context->assertCurrent($this->context);
+        $this->targets->schema($table, $context);
+        if ($pid < 0) {
+            throw new InvalidRecordValueException('Creation requires a non-negative page ID.', 1792305035);
+        }
+        return new RecordDraft($table, $resolvedPid ?? $this->storagePageId($pid, $context), $context, null, $this->relations, $this->draftValues);
+    }
+
+    /** @internal A fresh boundary snapshot; no global identity remains bound. */
+    public function batchContext(): RecordWriteContext
+    {
+        return $this->contexts->capture($this->context, true);
     }
 
     public function edit(RecordInterface $record): RecordDraft
     {
-        $context = RecordWriteContext::capture($this->context);
+        return $this->editInContext($record, $this->contexts->capture($this->context, true));
+    }
+
+    /** @internal */
+    public function editInContext(RecordInterface $record, RecordWriteContext $context): RecordDraft
+    {
+        $context->assertCurrent($this->context);
         return $context->run(function () use ($context, $record) {
             $target = $this->targets->fromRecord($record, $context);
             $this->adapter->assertCanChangeRecord($target, $context);
@@ -71,7 +88,13 @@ final readonly class RecordWriter implements RecordWriterInterface
 
     public function editByUid(string $table, int $uid): RecordDraft
     {
-        $context = RecordWriteContext::capture($this->context);
+        return $this->editByUidInContext($table, $uid, $this->contexts->capture($this->context, true));
+    }
+
+    /** @internal */
+    public function editByUidInContext(string $table, int $uid, RecordWriteContext $context): RecordDraft
+    {
+        $context->assertCurrent($this->context);
         return $context->run(function () use ($context, $table, $uid) {
             $target = $this->targets->byUid($table, $uid, $context);
             $this->adapter->assertCanChangeRecord($target, $context);
@@ -86,7 +109,7 @@ final readonly class RecordWriter implements RecordWriterInterface
 
     public function identity(RecordInterface $record): RecordIdentity
     {
-        $context = RecordWriteContext::capture($this->context);
+        $context = $this->contexts->capture($this->context, true);
         return $context->run(function () use ($record, $context) {
             $target = $this->targets->fromRecord($record, $context);
             $this->adapter->assertCanChangeRecord($target, $context);
@@ -116,20 +139,20 @@ final readonly class RecordWriter implements RecordWriterInterface
         if ($drafts === []) {
             return new RecordWriteResult([]);
         }
-        foreach ($drafts as $draft) {
-            $draft->assertEditable();
-            $draft->context->assertCurrent($this->context);
-        }
+        $this->contexts->validate($drafts, $this->context);
         return $drafts[0]->context->run(fn() => $this->executeDrafts($drafts));
     }
 
-    /** @return array{array<int, int|string>, array<int, array>, array} */
+    /** @return array{array<int, int|string>, array<int, array>, array, array<int, array>} */
     private function prepareDrafts(array $drafts): array
     {
         $identifiers = [];
         $targets = [];
         $values = [];
         $data = [];
+        $changesByDraft = [];
+        $observedByDraft = [];
+        $checkedPages = [];
         foreach ($drafts as $draft) {
             $draft->assertEditable();
             $key = spl_object_id($draft);
@@ -149,7 +172,8 @@ final readonly class RecordWriter implements RecordWriterInterface
             $key = spl_object_id($draft);
             $schema = $this->targets->schema($draft->table, $draft->context);
             $currentTarget = $draft->target !== null ? $this->targets->byUid($draft->table, $draft->target->uid, $draft->context) : null;
-            $values[$key] = $this->normalizer->changes($draft, $schema, $identifiers, $currentTarget);
+            [$changesByDraft[$key], $observedByDraft[$key]] = $this->relations->prepareChanges($draft);
+            $values[$key] = $this->normalizer->changes($draft, $schema, $identifiers, $currentTarget, $changesByDraft[$key]);
             if ($currentTarget !== null) {
                 if ($currentTarget->languageId !== $draft->target->languageId) {
                     throw new InvalidRecordValueException('The record language changed since draft creation.', 1792305036);
@@ -157,7 +181,7 @@ final readonly class RecordWriter implements RecordWriterInterface
                 // Best-effort no-op detection, not atomic optimistic locking.
                 foreach ($values[$key] as $name => $value) {
                     if ($schema->getField($name) instanceof RelationalFieldTypeInterface) {
-                        if ($this->relations->unchanged($draft, $name, $currentTarget)) {
+                        if ($this->relations->unchanged($draft, $name, $changesByDraft[$key][$name], $observedByDraft[$key][$name])) {
                             unset($values[$key][$name]);
                         }
                         continue;
@@ -171,8 +195,9 @@ final readonly class RecordWriter implements RecordWriterInterface
                     $this->adapter->assertCanChangeRecord($currentTarget, $draft->context);
                 }
             } else {
-                if ($draft->pid > 0) {
+                if ($draft->pid > 0 && !isset($checkedPages[$draft->pid])) {
                     $this->targets->byUid('pages', $draft->pid, $draft->context);
+                    $checkedPages[$draft->pid] = true;
                 }
                 $systemValues = ['pid' => $draft->pid];
                 if ($schema->isLanguageAware()) {
@@ -184,9 +209,9 @@ final readonly class RecordWriter implements RecordWriterInterface
                 $data[$draft->table][$identifiers[$key]] = $values[$key];
             }
         }
-        $this->relations->assertNoInlineCycles($drafts);
+        $this->relations->assertNoInlineCycles($drafts, $changesByDraft);
         foreach ($drafts as $draft) {
-            foreach ($this->relations->detachments($draft) as $table => $rows) {
+            foreach ($this->relations->detachments($draft, $changesByDraft[spl_object_id($draft)], $observedByDraft[spl_object_id($draft)]) as $table => $rows) {
                 foreach ($rows as $uid => $fields) {
                     if (isset($data[$table][$uid]) || isset($targets[$table . ':' . $uid])) {
                         throw new InvalidRecordValueException('Inline detachment conflicts with another draft.', 1792305059);
@@ -195,12 +220,12 @@ final readonly class RecordWriter implements RecordWriterInterface
                 }
             }
         }
-        return [$identifiers, $values, $data];
+        return [$identifiers, $values, $data, $changesByDraft];
     }
 
     private function executeDrafts(array $drafts): RecordWriteResult
     {
-        [$identifiers, $values, $data] = $this->prepareDrafts($drafts);
+        [$identifiers, $values, $data, $changesByDraft] = $this->prepareDrafts($drafts);
         foreach ($drafts as $draft) {
             $draft->consume();
         }
@@ -227,13 +252,22 @@ final readonly class RecordWriter implements RecordWriterInterface
                     throw new RecordPersistenceException('The saved record does not belong to the requested language and workspace.', 1792305105);
                 }
                 if ($values[$key] !== [] && !$handler?->hasWrittenRecord($draft->table, (int)$saved[$key]->row['uid'])) {
-                    throw new RecordPersistenceException('DataHandler did not confirm a write to the requested record.', 1792305106);
+                    // IRRE reordering can update only child rows while the parent count stays equal.
+                    // Such relation-only operations still require exact post-write verification below.
+                    $schema = $this->targets->schema($draft->table, $draft->context);
+                    $relationsOnly = $draft->target !== null;
+                    foreach (array_keys($values[$key]) as $field) {
+                        $relationsOnly = $relationsOnly && $schema->hasField($field) && $schema->getField($field) instanceof RelationalFieldTypeInterface;
+                    }
+                    if (!$relationsOnly) {
+                        throw new RecordPersistenceException('DataHandler did not confirm a write to the requested record.', 1792305106);
+                    }
                 }
             }
             $records = [];
             foreach ($drafts as $draft) {
                 $key = spl_object_id($draft);
-                $this->relations->verify($draft, $saved[$key], $newUids);
+                $this->relations->verify($draft, $saved[$key], $newUids, $changesByDraft[$key]);
                 $records[$key] = [$draft, $this->record($saved[$key], $draft->context)];
             }
             return new RecordWriteResult($records, $this->diagnostics($drafts, $identifiers, $handler->substNEWwithIDs ?? [], $handler?->getWrittenRecords() ?? [], $records, $saved));
@@ -255,17 +289,26 @@ final readonly class RecordWriter implements RecordWriterInterface
             $identifiers[spl_object_id($draft)] = $draft->target->uid ?? 'NEW' . spl_object_id($draft);
         }
         $entries = [];
+        $contextError = null;
+        try {
+            $this->contexts->validate($drafts, $this->context);
+        } catch (RecordWriteException $exception) {
+            $contextError = $exception;
+        }
         foreach ($drafts as $draft) {
             $errors = [];
             try {
+                if ($contextError !== null) {
+                    throw $contextError;
+                }
                 $draft->assertEditable();
-                $draft->context->assertCurrent($this->context);
                 $draft->context->run(function () use ($draft, $identifiers) {
                     $target = $draft->target !== null ? $this->targets->byUid($draft->table, $draft->target->uid, $draft->context) : null;
                     if ($target !== null) {
                         $this->adapter->assertCanChangeRecord($target, $draft->context);
                     }
-                    $this->normalizer->changes($draft, $this->targets->schema($draft->table, $draft->context), $identifiers, $target);
+                    [$changes] = $this->relations->prepareChanges($draft);
+                    $this->normalizer->changes($draft, $this->targets->schema($draft->table, $draft->context), $identifiers, $target, $changes);
                 });
             } catch (RecordWriteException $exception) {
                 $errors[] = $exception->getMessage();
@@ -317,7 +360,7 @@ final readonly class RecordWriter implements RecordWriterInterface
 
     public function delete(RecordInterface $record): void
     {
-        $context = RecordWriteContext::capture($this->context);
+        $context = $this->contexts->capture($this->context, true);
         $context->run(function () use ($context, $record) {
             $target = $this->targets->fromRecord($record, $context);
             $this->adapter->execute([], [$target->table => [$target->uid => ['delete' => 1]]], $context);
@@ -332,7 +375,7 @@ final readonly class RecordWriter implements RecordWriterInterface
 
     public function restore(string $table, int $uid): RecordInterface
     {
-        $context = RecordWriteContext::capture($this->context);
+        $context = $this->contexts->capture($this->context, true);
         return $context->run(function () use ($context, $table, $uid) {
             $target = $this->targets->byUid($table, $uid, $context, true);
             if ($context->workspaceId !== 0) {
@@ -350,7 +393,7 @@ final readonly class RecordWriter implements RecordWriterInterface
 
     public function move(RecordInterface $record, RecordPosition $position): RecordInterface
     {
-        $context = RecordWriteContext::capture($this->context);
+        $context = $this->contexts->capture($this->context, true);
         return $context->run(function () use ($context, $record, $position) {
             $target = $this->targets->fromRecord($record, $context);
             [$destination, $pid] = $this->destination($position, $target, $context);
@@ -365,7 +408,7 @@ final readonly class RecordWriter implements RecordWriterInterface
 
     public function copy(RecordInterface $record, RecordPosition $position): RecordInterface
     {
-        $context = RecordWriteContext::capture($this->context);
+        $context = $this->contexts->capture($this->context, true);
         return $context->run(function () use ($context, $record, $position) {
             $target = $this->targets->fromRecord($record, $context);
             [$destination, $pid] = $this->destination($position, $target, $context);
@@ -394,7 +437,7 @@ final readonly class RecordWriter implements RecordWriterInterface
 
     public function discardWorkspaceVersion(RecordInterface $record): void
     {
-        $context = RecordWriteContext::capture($this->context);
+        $context = $this->contexts->capture($this->context, true);
         $context->run(function () use ($context, $record) {
             $target = $this->targets->fromRecord($record, $context);
             if ($context->workspaceId <= 0 || (int)($target->row['t3ver_wsid'] ?? 0) !== $context->workspaceId) {
@@ -409,7 +452,7 @@ final readonly class RecordWriter implements RecordWriterInterface
 
     private function languageCommand(RecordInterface $record, int $languageId, string $command): RecordInterface
     {
-        $context = RecordWriteContext::capture($this->context);
+        $context = $this->contexts->capture($this->context, true);
         return $context->run(function () use ($context, $record, $languageId, $command) {
             $target = $this->targets->fromRecord($record, $context);
             if ($languageId <= 0 || $target->languageId !== 0 || !$this->targets->schema($target->table, $context)->isLanguageAware()) {

@@ -20,6 +20,7 @@ namespace TYPO3\CMS\Core\Authentication;
 use TYPO3\CMS\Core\Database\Query\Restriction\EndTimeRestriction;
 use TYPO3\CMS\Core\Database\Query\Restriction\QueryRestrictionContainerInterface;
 use TYPO3\CMS\Core\Database\Query\Restriction\StartTimeRestriction;
+use TYPO3\CMS\Core\Utility\GeneralUtility;
 
 /**
  * Sessionless server-side identity using the installed CLI user's actual permissions.
@@ -35,7 +36,11 @@ final class SystemUserAuthentication extends BackendUserAuthentication
         $this->dontSetCookie = true;
         $this->setBeUserByName(CommandLineUserCreation::CLI_USERNAME);
         if (!$this->getUserId()) {
-            throw new \RuntimeException('The enabled _cli_ user must exist before system writes can run.', 1792310002);
+            GeneralUtility::makeInstance(CommandLineUserCreation::class)->ensureCliUserExists();
+            $this->setBeUserByName(CommandLineUserCreation::CLI_USERNAME);
+        }
+        if (!$this->getUserId()) {
+            throw new \RuntimeException('The reserved _cli_ identity exists but is unavailable for system writes.', 1792310002);
         }
         $this->unpack_uc();
     }

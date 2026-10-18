@@ -25,26 +25,35 @@ final class RecordWriteBatch
     /** @var list<RecordDraft> */
     private array $drafts = [];
 
+    private ?RecordWriteContext $context = null;
+    private array $storagePids = [];
+
     /** @internal Use RecordWriter::batch(). */
     public function __construct(private readonly RecordWriter $writer) {}
 
+    private function context(): RecordWriteContext
+    {
+        return $this->context ??= $this->writer->batchContext();
+    }
+
     public function create(string $table, int $pid): RecordDraft
     {
-        $draft = $this->writer->create($table, $pid);
+        $draft = $this->writer->createInContext($table, $pid, $this->context(), $this->storagePids[$pid] ?? null);
+        $this->storagePids[$pid] = $draft->pid;
         $this->drafts[] = $draft;
         return $draft;
     }
 
     public function edit(RecordInterface $record): RecordDraft
     {
-        $draft = $this->writer->edit($record);
+        $draft = $this->writer->editInContext($record, $this->context());
         $this->drafts[] = $draft;
         return $draft;
     }
 
     public function editByUid(string $table, int $uid): RecordDraft
     {
-        $draft = $this->writer->editByUid($table, $uid);
+        $draft = $this->writer->editByUidInContext($table, $uid, $this->context());
         $this->drafts[] = $draft;
         return $draft;
     }

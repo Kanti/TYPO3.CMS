@@ -43,25 +43,32 @@ final readonly class RecordWriteContext
         private LanguageAspect $languageAspect,
         private string $mode,
         private array $systemState,
+        private ?\WeakReference $request = null,
     ) {}
 
-    public static function capture(Context $context): self
+    public static function capture(Context $context, ?SystemUserAuthentication $systemUser = null): self
     {
         $request = $GLOBALS['TYPO3_REQUEST'] ?? null;
         $application = $request instanceof ServerRequestInterface ? ApplicationType::fromRequest($request) : null;
+        $requestReference = $request instanceof ServerRequestInterface ? \WeakReference::create($request) : null;
         $frontend = $application === ApplicationType::FRONTEND;
         $current = $GLOBALS['BE_USER'] ?? null;
         $useSystem = $frontend || ($application === null && Environment::isCli() && !$current instanceof CommandLineUserAuthentication);
         if ($useSystem) {
             try {
-                $user = GeneralUtility::makeInstance(SystemUserAuthentication::class);
-                $user->initialize();
-                $result = new self($user, (int)$user->getUserId(), 0, $context->getAspect('language'), $frontend ? 'frontend' : 'system', []);
-                $result->run(fn() => $user->fetchGroupData());
+                $user = $systemUser ?? GeneralUtility::makeInstance(SystemUserAuthentication::class);
+                if ($systemUser === null) {
+                    $user->initialize();
+                    $result = new self($user, (int)$user->getUserId(), 0, $context->getAspect('language'), $frontend ? 'frontend' : 'system', [], $requestReference);
+                    $result->run(fn() => $user->fetchGroupData());
+                }
+                if ($user->workspace !== 0 || !in_array((int)$GLOBALS['TYPO3_CONF_VARS']['BE']['adminOnly'], [0, 2], true)) {
+                    throw new InvalidWriteContextException('The system identity is not available in this execution context.', 1792320002);
+                }
                 if (!$frontend && (int)$context->getPropertyFromAspect('workspace', 'id', 0) !== 0) {
                     throw new InvalidWriteContextException('A system CLI write requires an explicit Live context or an established CLI workspace identity.', 1792310004);
                 }
-                return new self($user, (int)$user->getUserId(), 0, $context->getAspect('language'), $frontend ? 'frontend' : 'system', [$user->user, $user->groupData]);
+                return new self($user, (int)$user->getUserId(), 0, $context->getAspect('language'), $frontend ? 'frontend' : 'system', [$user->user, $user->groupData], $requestReference);
             } catch (InvalidWriteContextException $exception) {
                 throw $exception;
             } catch (\Throwable $exception) {
@@ -74,17 +81,21 @@ final readonly class RecordWriteContext
         if ($current->workspace !== (int)$context->getPropertyFromAspect('workspace', 'id', 0)) {
             throw new InvalidWriteContextException('Backend user and Context must select the same workspace.', 1792305003);
         }
-        return new self($current, (int)$current->user['uid'], $current->workspace, $context->getAspect('language'), $application->value ?? 'cli', []);
+        return new self($current, (int)$current->user['uid'], $current->workspace, $context->getAspect('language'), $application->value ?? 'cli', [], $requestReference);
     }
 
     public function assertCurrent(Context $context): void
     {
-        $current = self::capture($context);
-        if ($current->mode !== $this->mode || $current->userId !== $this->userId
+        $this->assertCompatible(self::capture($context, $this->user instanceof SystemUserAuthentication ? $this->user : null));
+    }
+
+    public function assertCompatible(self $current): void
+    {
+        if ($this->request?->get() !== $current->request?->get() || $current->mode !== $this->mode || $current->userId !== $this->userId
             || ($this->systemState === [] && $current->user !== $this->user)
             || $current->systemState !== $this->systemState
             || $current->workspaceId !== $this->workspaceId || $current->languageAspect != $this->languageAspect) {
-            throw new InvalidWriteContextException('The draft execution identity, language or workspace context has changed.', 1792305004);
+            throw new InvalidWriteContextException('The draft request, execution identity, language or workspace context has changed.', 1792305004);
         }
     }
 
@@ -104,6 +115,9 @@ final readonly class RecordWriteContext
     public function run(\Closure $operation): mixed
     {
         $context = GeneralUtility::makeInstance(Context::class);
+        $alreadyBound = ($GLOBALS['BE_USER'] ?? null) === $this->user
+            && (int)$context->getPropertyFromAspect('workspace', 'id', 0) === $this->workspaceId
+            && $context->getAspect('language') == $this->languageAspect && isset($GLOBALS['LANG']);
         $aspects = ['workspace' => $context->getAspect('workspace'), 'backend.user' => $context->getAspect('backend.user'), 'language' => $context->getAspect('language')];
         $globals = [];
         foreach (['BE_USER', 'LANG'] as $key) {
@@ -116,12 +130,14 @@ final readonly class RecordWriteContext
             $runtimeCache->flushByTag(BackendUtility::RUNTIME_CACHE_TAG);
         }
         try {
-            $GLOBALS['BE_USER'] = $this->user;
-            $context->setAspect('workspace', new WorkspaceAspect($this->workspaceId));
-            $context->setAspect('backend.user', new UserAspect($this->user));
-            $context->setAspect('language', $this->languageAspect);
-            if ($this->user instanceof SystemUserAuthentication || !isset($GLOBALS['LANG'])) {
-                $GLOBALS['LANG'] = GeneralUtility::makeInstance(LanguageServiceFactory::class)->createFromUserPreferences($this->user);
+            if (!$alreadyBound) {
+                $GLOBALS['BE_USER'] = $this->user;
+                $context->setAspect('workspace', new WorkspaceAspect($this->workspaceId));
+                $context->setAspect('backend.user', new UserAspect($this->user));
+                $context->setAspect('language', $this->languageAspect);
+                if ($this->user instanceof SystemUserAuthentication || !isset($GLOBALS['LANG'])) {
+                    $GLOBALS['LANG'] = GeneralUtility::makeInstance(LanguageServiceFactory::class)->createFromUserPreferences($this->user);
+                }
             }
             return $operation();
         } finally {

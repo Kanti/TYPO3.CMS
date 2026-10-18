@@ -65,15 +65,34 @@ final readonly class RecordRelationResolver
             $this->adapter->assertCanChangeRecord($target, $draft->context);
             $handler = GeneralUtility::makeInstance(RelationHandler::class);
             $handler->setWorkspaceId($draft->context->workspaceId);
-            $handler->initializeForField($draft->table, $field, $draft->target->row, $draft->target->row[$name] ?? null);
+            $handler->initializeForField($draft->table, $field, $target->row, $target->row[$name] ?? null);
             $handler->processDeletePlaceholder();
             return array_values(array_map(static fn(array $item): RecordReference => new RecordReference($item['table'], (int)$item['id']), $handler->itemArray));
         });
     }
 
-    public function encode(FieldTypeInterface $field, mixed $value, RecordDraft $draft, array $identifiers = []): string
+    /** @return array{array, array<string, list<RecordReference>>} */
+    public function prepareChanges(RecordDraft $draft): array
+    {
+        $changes = $draft->getChanges();
+        $observed = [];
+        $schema = $this->targets->schema($draft->table, $draft->context);
+        foreach ($changes as $name => $value) {
+            if (!$schema->hasField($name) || !$schema->getField($name) instanceof RelationalFieldTypeInterface) {
+                continue;
+            }
+            $observed[$name] = $this->load($draft, $name);
+            if ($value instanceof RecordRelationSet) {
+                $changes[$name] = $value->resolveAgainst($observed[$name]);
+            }
+        }
+        return [$changes, $observed];
+    }
+
+    public function encode(FieldTypeInterface $field, mixed $value, RecordDraft $draft, array $identifiers = [], ?RecordWriteTarget $currentTarget = null): string
     {
         $field = $this->supportedField($field);
+        $currentTarget ??= $draft->target;
         $records = $value instanceof RecordRelationSet ? $value->toArray() : $value;
         if (!is_array($records) || !array_is_list($records)) {
             throw new InvalidRecordValueException('Relations require an explicit list of records or RecordReference objects.', 1792305045);
@@ -101,11 +120,11 @@ final readonly class RecordRelationResolver
             if ($field->getType() === 'inline' && !empty($config['foreign_field'])) {
                 $child = $this->targets->byUid($reference->table, $reference->uid, $draft->context);
                 $this->adapter->assertCanChangeRecord($child, $draft->context);
-                if ($reference->table === $draft->table && $reference->uid === $draft->target?->uid) {
+                if ($reference->table === $draft->table && $reference->uid === $currentTarget?->uid) {
                     throw new InvalidRecordValueException('A record cannot be its own inline child.', 1792305055);
                 }
-                if ($reference->table === $draft->table && $draft->target !== null) {
-                    $ancestor = $draft->target;
+                if ($reference->table === $draft->table && $currentTarget !== null) {
+                    $ancestor = $currentTarget;
                     $seen = [];
                     while ($ancestor !== null) {
                         if ($ancestor->uid === $reference->uid || isset($seen[$ancestor->uid])) {
@@ -119,16 +138,16 @@ final readonly class RecordRelationResolver
                 $owner = (int)($child->row[$config['foreign_field']] ?? 0);
                 if ($draft->context->workspaceId > 0) {
                     $childWorkspace = (int)($child->row['t3ver_wsid'] ?? 0);
-                    $parentWorkspace = (int)($draft->target?->row['t3ver_wsid'] ?? 0);
+                    $parentWorkspace = (int)($currentTarget?->row['t3ver_wsid'] ?? 0);
                     if ($childWorkspace === 0 && ($owner === 0 || $parentWorkspace > 0)) {
                         throw new UnsupportedRecordWriteException('An unversioned inline child cannot be attached to this workspace parent. Create the child in the batch or edit its workspace version first.', 1792305054);
                     }
                     $encodedUid = (int)$child->row['uid'];
                 }
-                if ($owner !== 0 && !in_array($owner, [$draft->target?->uid, $draft->target?->row['uid']], true)) {
+                if ($owner !== 0 && !in_array($owner, [$currentTarget?->uid, $currentTarget?->row['uid']], true)) {
                     throw new InvalidRecordValueException('The inline child already belongs to another parent.', 1792305048);
                 }
-                $parentTarget = $draft->target;
+                $parentTarget = $currentTarget;
                 $parentLanguage = $parentTarget !== null ? $parentTarget->languageId : 0;
                 if ($child->languageId !== $parentLanguage) {
                     throw new InvalidRecordValueException('Inline child and parent must have the same language.', 1792305049);
@@ -144,13 +163,13 @@ final readonly class RecordRelationResolver
     }
 
     /** @param list<RecordDraft> $drafts */
-    public function assertNoInlineCycles(array $drafts): void
+    public function assertNoInlineCycles(array $drafts, array $changesByDraft = []): void
     {
         $edges = [];
         $owners = [];
         foreach ($drafts as $draft) {
             $key = $draft->target !== null ? $draft->table . ':' . $draft->target->uid : 'new:' . spl_object_id($draft);
-            foreach ($draft->getChanges() as $name => $value) {
+            foreach (($changesByDraft[spl_object_id($draft)] ?? $draft->getChanges()) as $name => $value) {
                 $field = $this->targets->schema($draft->table, $draft->context)->getField($name);
                 if ($field->getType() !== 'inline') {
                     continue;
@@ -191,10 +210,10 @@ final readonly class RecordRelationResolver
      * DataHandler does not detach missing foreign_field children merely by replacing the parent list.
      * Detachment is an explicit child datamap update, retaining DataHandler access checks and history.
      */
-    public function detachments(RecordDraft $draft): array
+    public function detachments(RecordDraft $draft, ?array $changes = null, array $observed = []): array
     {
         $data = [];
-        foreach ($draft->getChanges() as $name => $value) {
+        foreach (($changes ?? $draft->getChanges()) as $name => $value) {
             $field = $this->targets->schema($draft->table, $draft->context)->getField($name);
             $config = $field->getConfiguration();
             if ($draft->target === null || $field->getType() !== 'inline' || empty($config['foreign_field'])) {
@@ -205,7 +224,7 @@ final readonly class RecordRelationResolver
             foreach ($records as $record) {
                 $retained[] = $record instanceof RecordDraft && $record->target === null ? 'new:' . spl_object_id($record) : $this->reference($record, $draft->context)->key();
             }
-            foreach ($this->load($draft, $name) as $reference) {
+            foreach (($observed[$name] ?? $this->load($draft, $name)) as $reference) {
                 $reference = $this->reference($reference, $draft->context);
                 if (!in_array($reference->key(), $retained, true)) {
                     $this->adapter->assertCanChangeRecord($this->targets->byUid($reference->table, $reference->uid, $draft->context), $draft->context);
@@ -216,9 +235,8 @@ final readonly class RecordRelationResolver
         return $data;
     }
 
-    public function unchanged(RecordDraft $draft, string $name, RecordWriteTarget $current): bool
+    public function unchanged(RecordDraft $draft, string $name, mixed $value, array $observed): bool
     {
-        $value = $draft->getChanges()[$name];
         $records = $value instanceof RecordRelationSet ? $value->toArray() : $value;
         $expected = [];
         foreach ($records as $record) {
@@ -227,15 +245,14 @@ final readonly class RecordRelationResolver
             }
             $expected[] = $this->reference($record, $draft->context)->key();
         }
-        $fresh = new RecordDraft($current->table, (int)$current->row['pid'], $draft->context, $current);
-        $actual = array_map(fn(RecordReference $reference): string => $this->reference($reference, $draft->context)->key(), $this->load($fresh, $name));
+        $actual = array_map(fn(RecordReference $reference): string => $this->reference($reference, $draft->context)->key(), $observed);
         return array_values(array_unique($expected)) === $actual;
     }
 
-    public function verify(RecordDraft $draft, RecordWriteTarget $saved, array $newUids = []): void
+    public function verify(RecordDraft $draft, RecordWriteTarget $saved, array $newUids = [], ?array $changes = null): void
     {
         $fresh = new RecordDraft($saved->table, (int)$saved->row['pid'], $draft->context, $saved);
-        foreach ($draft->getChanges() as $name => $value) {
+        foreach (($changes ?? $draft->getChanges()) as $name => $value) {
             $field = $this->targets->schema($draft->table, $draft->context)->getField($name);
             if (!$field instanceof RelationalFieldTypeInterface) {
                 continue;

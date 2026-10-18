@@ -19,6 +19,15 @@ namespace TYPO3\CMS\Core\Tests\Functional\Domain\Persistence\Fixtures;
 
 final class SelectItemsHook
 {
+    public static array $contexts = [];
+
+    public function position(array &$parameters): void
+    {
+        self::$contexts[] = ['pid' => $parameters['row']['pid'], 'effectivePid' => $parameters['effectivePid'], 'language' => $parameters['row']['sys_language_uid'] ?? 0, 'site' => $parameters['site']->getIdentifier()];
+        $value = (int)$parameters['row']['pid'] * 10 + (int)($parameters['row']['sys_language_uid'] ?? 0);
+        $parameters['items'] = [['label' => 'Default', 'value' => 0], ['label' => 'Position', 'value' => $value]];
+    }
+
     public function populate(array &$parameters): void
     {
         $parameters['items'] = [['label' => 'Only other record', 'value' => 2]];

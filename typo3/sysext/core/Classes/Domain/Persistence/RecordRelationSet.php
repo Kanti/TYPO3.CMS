@@ -26,41 +26,34 @@ use TYPO3\CMS\Core\Domain\RecordInterface;
  */
 final class RecordRelationSet
 {
+    /** @var list<array{string, list<RecordReference|RecordDraft>}> */
+    private array $operations = [];
+
     /** @param list<RecordReference|RecordDraft> $references */
-    public function __construct(private array $references, private readonly \Closure $resolve, private readonly \Closure $changed) {}
+    public function __construct(private array $references, private readonly \Closure $resolve, private readonly \Closure $changed, bool $replacement = false)
+    {
+        if ($replacement) {
+            $this->operations[] = ['set', $references];
+        }
+    }
 
     public function add(RecordInterface|RecordReference|RecordDraft $record): self
     {
-        $reference = ($this->resolve)($record);
-        foreach ($this->references as $existing) {
-            if ($this->key($existing) === $this->key($reference)) {
-                return $this;
-            }
-        }
-        return $this->setMembers([...$this->references, $reference]);
+        return $this->change('add', [($this->resolve)($record)]);
     }
 
     public function remove(RecordInterface|RecordReference|RecordDraft $record): self
     {
-        $key = $this->key(($this->resolve)($record));
-        return $this->setMembers(array_values(array_filter($this->references, fn(RecordReference|RecordDraft $reference): bool => $this->key($reference) !== $key)));
+        return $this->change('remove', [($this->resolve)($record)]);
     }
 
     /**
-     * Set the complete ordered membership, explicitly detaching omitted records.
+     * Intentionally specify complete membership, including removal of omitted records.
      * @param iterable<RecordInterface|RecordReference|RecordDraft> $records
      */
     public function setMembers(iterable $records): self
     {
-        $references = [];
-        foreach ($records as $record) {
-            $reference = ($this->resolve)($record);
-            $references[$this->key($reference)] = $reference;
-        }
-        // Validate the owning draft before mutating the set, including retained handles after save.
-        ($this->changed)($this);
-        $this->references = array_values($references);
-        return $this;
+        return $this->change('set', $this->resolveList($records));
     }
 
     public function clear(): self
@@ -69,24 +62,71 @@ final class RecordRelationSet
     }
 
     /**
-     * Change order only; an incomplete or different member set is rejected.
+     * Order-only operation; changed membership is rejected again before execution.
      * @param iterable<RecordInterface|RecordReference|RecordDraft> $records
      */
     public function reorder(iterable $records): self
+    {
+        return $this->change('reorder', $this->resolveList($records));
+    }
+
+    private function resolveList(iterable $records): array
     {
         $references = [];
         foreach ($records as $record) {
             $reference = ($this->resolve)($record);
             $references[$this->key($reference)] = $reference;
         }
-        $oldKeys = array_map(fn(RecordReference|RecordDraft $reference): string => $this->key($reference), $this->references);
-        $newKeys = array_keys($references);
-        sort($oldKeys);
-        sort($newKeys);
-        if ($oldKeys !== $newKeys) {
-            throw new InvalidRecordValueException('Reordering must contain exactly the existing relation members.', 1792305044);
+        return array_values($references);
+    }
+
+    private function change(string $operation, array $references): self
+    {
+        $preview = $this->apply($this->references, $operation, $references);
+        ($this->changed)($this);
+        if ($operation === 'set') {
+            $this->operations = [];
         }
-        return $this->setMembers($references);
+        $this->operations[] = [$operation, $references];
+        $this->references = $preview;
+        return $this;
+    }
+
+    /** @internal Rebase intent once against current, unfiltered backend membership. */
+    public function resolveAgainst(array $current): array
+    {
+        foreach ($this->operations as [$operation, $references]) {
+            $current = $this->apply($current, $operation, $references);
+        }
+        return $current;
+    }
+
+    private function apply(array $current, string $operation, array $references): array
+    {
+        $members = [];
+        foreach ($current as $reference) {
+            $members[$this->key($reference)] = $reference;
+        }
+        if ($operation === 'reorder') {
+            $oldKeys = array_keys($members);
+            $newKeys = array_map(fn($reference): string => $this->key($reference), $references);
+            sort($oldKeys);
+            sort($newKeys);
+            if ($oldKeys !== $newKeys) {
+                throw new InvalidRecordValueException('Reordering cannot change relation membership; reload the changed relation.', 1792305044);
+            }
+        }
+        if ($operation === 'set' || $operation === 'reorder') {
+            return $references;
+        }
+        foreach ($references as $reference) {
+            if ($operation === 'remove') {
+                unset($members[$this->key($reference)]);
+            } else {
+                $members[$this->key($reference)] = $reference;
+            }
+        }
+        return array_values($members);
     }
 
     private function key(RecordReference|RecordDraft $reference): string

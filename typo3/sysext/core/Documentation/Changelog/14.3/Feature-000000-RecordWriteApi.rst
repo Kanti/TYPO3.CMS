@@ -60,22 +60,36 @@ The requesting visitor and the write execution identity are separate:
      - Current authenticated Backend User, with their actual permissions
      - Backend User and Context must agree
    * - Frontend request, including BE preview or an authenticated FE User
-     - Installed ``_cli_`` system user; any editor session is ignored
+     - ``_cli_`` system user, provisioned on first use; any editor session is ignored
      - Live, independent of an editor's preview workspace
    * - CLI or Scheduler with established CommandLineUserAuthentication
      - Existing CLI identity
      - Its workspace and Context must agree
    * - CLI without an established CLI identity
-     - Installed ``_cli_`` system user
+     - ``_cli_`` system user, provisioned on first use
      - Live; a conflicting Context is rejected
 
 The sessionless system identity loads the enabled ``_cli_`` user's real record,
-groups, permissions and TSconfig using :php:`BackendUserAuthentication`. It
-neither changes an editor's permissions nor creates users. Missing, disabled or
-expired system users and disallowed maintenance modes fail explicitly with
-:php:`InvalidWriteContextException`; there is no fallback to an editor session.
-Provision the CLI user during TYPO3 installation/bootstrap before using frontend
-writes. An established CLI authentication retains its normal Core bootstrap.
+groups, permissions and TSconfig using :php:`BackendUserAuthentication`. When the
+reserved identity does not exist, it is provisioned automatically through the
+existing :php:`CommandLineUserCreation::ensureCliUserExists()` mechanism, using
+the same default administrator configuration and random password as native CLI
+authentication. No prior CLI command or manual setup is required.
+
+The Core provisioner serializes its existence check and insertion with
+:php:`LockFactory`. All provisioning callers, including native CLI bootstrap,
+share that lock. Native CLI authentication reloads the identity after
+provisioning, including when a concurrent caller created it. Multi-node installations must configure an appropriate shared
+locking strategy/domain, as for other Core locks. The ``_cli_`` account is the
+only special bootstrap write here; ordinary record and relation mutations remain
+inside DataHandler.
+
+Existing reserved identities are never reactivated, replaced or elevated. A
+soft-deleted account still reserves the name. Disabled, expired, deleted or
+otherwise unavailable identities and disallowed maintenance modes fail explicitly
+with :php:`InvalidWriteContextException`; there is no fallback to an editor
+session. Operators must review such accounts explicitly. Authentication of an
+established CLI user retains its normal Core behavior.
 
 Each execution passes its identity explicitly to a fresh DataHandler. Legacy
 Core dependencies and hooks also require a temporary global backend context;
@@ -190,7 +204,10 @@ Supported write-side PHP values include:
   select requires exactly one value. Declared items are validated. Dynamic ``itemsProcFunc`` and ``itemsProcessors``
   use the Core ItemProcessingService with the prospective row, effective schema,
   storage page, TSconfig and site. In particular, ``tt_content.colPos`` follows
-  the selected backend layout; absent columns are rejected. This does not
+  the selected backend layout; absent columns are rejected. Existing drafts
+  use the record's current effective PID, row identity, language and site, even
+  when another operation moved the record after draft creation. New drafts use
+  their intended logical storage page. This does not
   reproduce every FormEngine UI constraint or authorize arbitrary item callbacks.
 * Nullable fields: explicit :php:`null`, only where the schema allows it.
 
@@ -232,13 +249,38 @@ The field must be a compatible TCA relation. A :php:`RecordInterface` must carry
 sufficient raw identity information. :php:`RecordReference` provides an explicit
 existing table/UID reference; untyped integer relation IDs are rejected.
 
-:php:`add()` preserves other members and avoids duplicates. :php:`remove()`
-removes only the selected member. :php:`setMembers()` supplies the complete ordered
-membership; :php:`clear()` is an empty replacement. :php:`reorder()` requires
-exactly the same member set, so a drag-and-drop ordering request cannot
-accidentally detach a relation when an item is omitted. For example,
-``reorder([$categoryB])`` fails if A and B are current members, whereas
-``setMembers([$categoryB])`` explicitly removes A. TCA cardinality limits apply.
+:php:`add()` and :php:`remove()` preserve operation intent. Immediately before
+execution they are applied, in order, to the current unfiltered backend
+membership. An addition does not discard unrelated additions by another draft;
+a removal only removes its requested member. This also applies when the relation
+set was already loaded before another write. Idempotent calls retain their
+intent: ``add($member)`` still requests membership even when its preview already
+contains that member.
+
+:php:`setMembers()` intentionally supplies the **complete** ordered membership,
+including removal of members added after the draft was created. This is an
+explicit replacement, not a safe merge; :php:`clear()` is an empty replacement.
+A new ``setMembers()`` cancels earlier pending relation operations.
+:php:`setRelation()` and directly assigned relation lists also express replacement.
+
+:php:`reorder()` requires exactly the same membership both when called and again
+when compiled against current data. A changed member set causes a preflight
+error and leaves the draft editable. For example, ``reorder([$categoryB])`` fails
+if A and B are current members, whereas ``setMembers([$categoryB])`` explicitly
+removes A. TCA cardinality, ownership, language and workspace rules apply to the
+resulting membership. A merge that would exceed a single-reference field's
+cardinality fails instead of overwriting another reference.
+
+The resolved changes and observed membership are frozen for normalization,
+no-op detection, inline detachment and post-write verification. Verification does
+not reapply operations after saving. IRRE ordering can legitimately update only
+child rows; such relation-only operations are verified against actual saved
+membership and order even if the parent's count did not require an update.
+
+Rebasing happens before DataHandler executes and is **not atomic optimistic
+locking**. Simultaneous writes between observation and persistence can still race.
+Applications requiring serialized writes need suitable application-level
+coordination; hooks and other writers are not automatically locked by this API.
 
 Existing members are loaded through :php:`RelationHandler` in backend context,
 without frontend enable-column filtering. An incomplete frontend collection is
@@ -364,6 +406,35 @@ All drafts are normalized before execution; conflicting logical targets and
 conflicting child detachments are rejected. Commands are intentionally separate
 from draft batches because a cmdmap cannot represent an arbitrary sequence of
 commands on one record.
+
+Execution context and batch cost
+--------------------------------
+
+A batch resolves its write context when its first draft is created. It shares
+that captured identity and storage-position resolutions across compatible drafts,
+then reloads and checks system permissions once per validation/execution boundary.
+An empty batch neither initializes nor provisions a system identity.
+
+The writer caches authentication prototypes with weak request-object keys and
+clones them for independent drafts/batches. It does not retain a global system
+user across requests. CLI operations without a request do not use that cache.
+Backend identity handling remains native. Request, identity, language and
+workspace changes are checked without repeatedly initializing authentication;
+relevant system permission changes are revalidated before execution. Drafts from
+another request are rejected, including reads of their original values.
+
+Nested operations reuse an already-bound context while retaining ``finally``
+restoration. Context-dependent backend read caches are invalidated on actual
+identity switches and after DataHandler execution. New-record construction avoids
+unnecessary global context switches; batch storage pages are resolved once per
+position and checked again at execution.
+
+Functional benchmarks cover 1, 100, 500 and 1,000 records and record initialization
+counts, user/all SQL query counts, single-context initialization time, construction
+time and total duration. CI asserts bounded authentication counts, not wall-clock
+performance. A normal create-only batch requires two full system initializations
+(first capture and execution validation), independent of its size; an additional
+explicit ``validate()`` introduces one further boundary check.
 
 Preflight and reconciliation
 ----------------------------

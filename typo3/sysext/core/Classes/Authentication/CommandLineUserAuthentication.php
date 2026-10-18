@@ -86,10 +86,12 @@ class CommandLineUserAuthentication extends BackendUserAuthentication
         if (empty($this->user['uid'])) {
             $userCreation = GeneralUtility::makeInstance(CommandLineUserCreation::class);
             // create a new BE user in the database
-            if (!$userCreation->ensureCliUserExists()) {
+            $created = $userCreation->ensureCliUserExists();
+            // Another process may have provisioned the identity after our first lookup.
+            $this->setBeUserByName(CommandLineUserCreation::CLI_USERNAME);
+            if (!$created && empty($this->user['uid'])) {
                 throw new \RuntimeException('No backend user named "_cli_" could be authenticated, maybe this user is "hidden"?', 1484050401);
             }
-            $this->setBeUserByName(CommandLineUserCreation::CLI_USERNAME);
         }
         if (empty($this->user['uid'])) {
             throw new \RuntimeException('No backend user named "_cli_" could be created.', 1476107195);

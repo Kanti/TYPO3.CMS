@@ -55,4 +55,25 @@ final class RecordRelationSetTest extends UnitTestCase
         $this->expectException(InvalidRecordValueException::class);
         new RecordReference('example', 0);
     }
+
+    #[Test]
+    public function explicitReplacementDiscardsPreviouslyPendingOrderingIntent(): void
+    {
+        $one = new RecordReference('example', 1);
+        $two = new RecordReference('example', 2);
+        $set = new RecordRelationSet([$one], static fn($reference) => $reference, static fn() => null);
+        $set->reorder([$one])->setMembers([$two]);
+        self::assertSame([$two], $set->resolveAgainst([]));
+    }
+
+    #[Test]
+    public function incrementsRebaseWithoutRemovingUnrelatedMembers(): void
+    {
+        $one = new RecordReference('example', 1);
+        $two = new RecordReference('example', 2);
+        $three = new RecordReference('example', 3);
+        $set = new RecordRelationSet([$one], static fn($reference) => $reference, static fn() => null);
+        $set->add($three)->remove($one);
+        self::assertSame([$two, $three], $set->resolveAgainst([$one, $two]));
+    }
 }

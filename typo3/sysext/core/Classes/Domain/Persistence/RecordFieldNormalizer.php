@@ -33,9 +33,9 @@ final readonly class RecordFieldNormalizer
 {
     public function __construct(private TypoLinkCodecService $linkCodec, private RecordRelationResolver $relations, private DataHandlerRecordWriter $adapter, private ?RecordSelectItemResolver $selectItems = null) {}
 
-    public function changes(RecordDraft $draft, TcaSchema $schema, array $identifiers = [], ?RecordWriteTarget $currentTarget = null): array
+    public function changes(RecordDraft $draft, TcaSchema $schema, array $identifiers = [], ?RecordWriteTarget $currentTarget = null, ?array $changes = null): array
     {
-        $changes = $draft->getChanges();
+        $changes ??= $draft->getChanges();
         $currentTarget ??= $draft->target;
         $effectiveSchema = $schema;
         $typeField = null;
@@ -96,7 +96,7 @@ final readonly class RecordFieldNormalizer
                 }
                 $items = $this->selectItems?->items($field, $draft, $currentTarget);
             }
-            $result[$name] = $field instanceof RelationalFieldTypeInterface ? $this->relations->encode($field, $value, $draft, $identifiers) : $this->normalize($field, $value, $items);
+            $result[$name] = $field instanceof RelationalFieldTypeInterface ? $this->relations->encode($field, $value, $draft, $identifiers, $currentTarget) : $this->normalize($field, $value, $items);
         }
         return $result;
     }

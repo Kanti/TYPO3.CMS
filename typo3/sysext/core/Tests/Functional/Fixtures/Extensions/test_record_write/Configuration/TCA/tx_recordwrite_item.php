@@ -27,6 +27,7 @@ return [
         'enablecolumns' => ['disabled' => 'hidden', 'starttime' => 'starttime'],
     ],
     'columns' => [
+        'placement' => ['config' => ['type' => 'select', 'renderType' => 'selectSingle', 'itemsProcFunc' => \TYPO3\CMS\Core\Tests\Functional\Domain\Persistence\Fixtures\SelectItemsHook::class . '->position']],
         'title' => ['config' => ['type' => 'input']],
         'body' => ['config' => ['type' => 'text', 'nullable' => true]],
         'amount' => ['config' => ['type' => 'number']],
@@ -45,7 +46,9 @@ return [
         'matched_children' => ['config' => ['type' => 'inline', 'foreign_table' => 'tx_recordwrite_item', 'foreign_field' => 'parent', 'foreign_match_fields' => ['amount' => 1]]],
         'related' => ['config' => ['type' => 'select', 'renderType' => 'selectMultipleSideBySide', 'foreign_table' => 'tx_recordwrite_item', 'MM' => 'tx_recordwrite_item_mm']],
         'dynamic_reference' => ['config' => ['type' => 'select', 'renderType' => 'selectSingle', 'foreign_table' => 'tx_recordwrite_item', 'itemsProcFunc' => \TYPO3\CMS\Core\Tests\Functional\Domain\Persistence\Fixtures\SelectItemsHook::class . '->populate']],
+        'references' => ['config' => ['type' => 'group', 'allowed' => 'tx_recordwrite_item', 'maxitems' => 100]],
+        'selected' => ['config' => ['type' => 'select', 'renderType' => 'selectMultipleSideBySide', 'foreign_table' => 'tx_recordwrite_item', 'maxitems' => 100]],
         'reference' => ['config' => ['type' => 'group', 'allowed' => 'tx_recordwrite_item', 'maxitems' => 1]],
     ],
-    'types' => ['0' => ['showitem' => 'title,body,amount,email,link,flags,syncable,synchronized,payload,hidden,starttime,readonly_value,restricted,parent,children,matched_children,related,dynamic_reference,reference']],
+    'types' => ['0' => ['showitem' => 'placement,title,body,amount,email,link,flags,syncable,synchronized,payload,hidden,starttime,readonly_value,restricted,parent,children,matched_children,related,dynamic_reference,references,selected,reference']],
 ];

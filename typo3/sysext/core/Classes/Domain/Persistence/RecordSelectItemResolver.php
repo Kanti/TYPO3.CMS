@@ -33,15 +33,16 @@ final readonly class RecordSelectItemResolver
     public function items(FieldTypeInterface $field, RecordDraft $draft, ?RecordWriteTarget $target): array
     {
         $configuration = $field->getConfiguration();
-        $row = array_replace($target->row ?? $this->adapter->defaults($draft), $draft->getChanges(), ['pid' => $draft->pid, 'uid' => $target->row['uid'] ?? 'NEWrecordwrite']);
+        $pid = $target !== null ? (int)$target->row['pid'] : $draft->pid;
+        $row = array_replace($target->row ?? $this->adapter->defaults($draft), $draft->getChanges(), ['pid' => $pid, 'uid' => $target->row['uid'] ?? 'NEWrecordwrite']);
         $context = new ItemsProcessorContext(
             table: $draft->table,
             field: $field->getName(),
             row: $row,
             fieldConfiguration: $configuration,
             processorParameters: [],
-            realPid: $draft->pid,
-            site: $this->processing->resolveSite($draft->pid),
+            realPid: $pid,
+            site: $this->processing->resolveSite($pid),
         );
         try {
             return array_map(static fn(SelectItem $item): array => $item->toArray(), $this->processing->processItems(SelectItemCollection::createFromArray($configuration['items'] ?? [], $field->getType()), $context)->toArray());
