@@ -1,0 +1,315 @@
+<?php
+
+declare(strict_types=1);
+
+/*
+ * This file is part of the TYPO3 CMS project.
+ *
+ * It is free software; you can redistribute it and/or modify it under
+ * the terms of the GNU General Public License, either version 2
+ * of the License, or any later version.
+ *
+ * For the full copyright and license information, please read the
+ * LICENSE.txt file that was distributed with this source code.
+ *
+ * The TYPO3 project - inspiring people to share!
+ */
+
+namespace TYPO3\CMS\Core\Domain\Persistence;
+
+use TYPO3\CMS\Backend\Utility\BackendUtility;
+use TYPO3\CMS\Core\Context\Context;
+use TYPO3\CMS\Core\Database\Connection;
+use TYPO3\CMS\Core\Database\ConnectionPool;
+use TYPO3\CMS\Core\Database\Query\Restriction\DeletedRestriction;
+use TYPO3\CMS\Core\Database\Query\Restriction\WorkspaceRestriction;
+use TYPO3\CMS\Core\Database\RelationHandler;
+use TYPO3\CMS\Core\Domain\Persistence\Exception\InvalidRecordValueException;
+use TYPO3\CMS\Core\Domain\Persistence\Exception\RecordAccessDeniedException;
+use TYPO3\CMS\Core\Domain\Persistence\Exception\UnsupportedRecordWriteException;
+use TYPO3\CMS\Core\Domain\RecordInterface;
+use TYPO3\CMS\Core\Schema\Field\FieldTypeInterface;
+use TYPO3\CMS\Core\Schema\Field\RelationalFieldTypeInterface;
+use TYPO3\CMS\Core\Type\Bitmask\Permission;
+use TYPO3\CMS\Core\Utility\GeneralUtility;
+
+/** @internal Owns backend relation reads and DataHandler reference encoding. */
+final readonly class RecordRelationResolver
+{
+    public function __construct(private RecordWriteTargetResolver $targets, private ConnectionPool $connectionPool) {}
+
+    public function reference(RecordInterface|RecordReference|RecordDraft $record, RecordWriteContext $context): RecordReference
+    {
+        return $context->run(function () use ($record, $context) {
+            if ($record instanceof RecordDraft) {
+                if ($record->target === null) {
+                    throw new InvalidRecordValueException('A new draft has no persisted reference.', 1792305068);
+                }
+                $record = new RecordReference($record->table, $record->target->uid);
+            }
+            $target = $record instanceof RecordInterface ? $this->targets->fromRecord($record, $context)
+                : $this->targets->byUid($record->table, $record->uid, $context);
+            return new RecordReference($target->table, $target->uid);
+        });
+    }
+
+    /** @return list<RecordReference> */
+    public function load(RecordDraft $draft, string $name): array
+    {
+        $draft->context->assertCurrent(GeneralUtility::makeInstance(Context::class));
+        return $draft->context->run(function () use ($draft, $name) {
+            $field = $this->targets->schema($draft->table, $draft->context)->getField($name);
+            $field = $this->supportedField($field);
+            if ($draft->target === null) {
+                return [];
+            }
+            $target = $this->targets->byUid($draft->table, $draft->target->uid, $draft->context);
+            $handler = GeneralUtility::makeInstance(RelationHandler::class);
+            $handler->setWorkspaceId($draft->context->workspaceId);
+            $handler->initializeForField($draft->table, $field, $target->row, $target->row[$name] ?? null);
+            $handler->processDeletePlaceholder();
+            $references = array_values(array_map(static fn(array $item): RecordReference => new RecordReference($item['table'], (int)$item['id']), $handler->itemArray));
+            $this->assertWorkspaceInlineMembership($draft, $field, $target, $references);
+            return $references;
+        });
+    }
+
+    /** Reject inconsistent Core IRRE resolution rather than repairing global RelationHandler behavior. */
+    private function assertWorkspaceInlineMembership(RecordDraft $draft, FieldTypeInterface $field, RecordWriteTarget $parent, array $references): void
+    {
+        if ($draft->context->workspaceId === 0 || $field->getType() !== 'inline') {
+            return;
+        }
+        $config = $field->getConfiguration();
+        if (!$this->targets->schema($config['foreign_table'], $draft->context)->isWorkspaceAware()) {
+            return;
+        }
+        $parents = array_values(array_unique([$parent->uid, (int)$parent->row['uid']]));
+        $members = [];
+        foreach ($references as $reference) {
+            $child = $this->targets->byUid($reference->table, $reference->uid, $draft->context);
+            if (!in_array((int)$child->row[$config['foreign_field']], $parents, true)) {
+                throw new UnsupportedRecordWriteException('Core RelationHandler cannot reliably resolve this workspace inline ownership change.', 1792330001);
+            }
+            $members[] = $child->uid;
+        }
+        $query = $this->connectionPool->getQueryBuilderForTable($config['foreign_table']);
+        $query->getRestrictions()->removeAll()->add(new DeletedRestriction())->add(new WorkspaceRestriction($draft->context->workspaceId, true));
+        $versionedMembers = $query->select('t3ver_oid')->from($config['foreign_table'])->where(
+            $query->expr()->eq('t3ver_wsid', $query->createNamedParameter($draft->context->workspaceId, Connection::PARAM_INT)),
+            $query->expr()->gt('t3ver_oid', 0),
+            $query->expr()->in($config['foreign_field'], $query->createNamedParameter($parents, Connection::PARAM_INT_ARRAY)),
+        )->executeQuery()->fetchFirstColumn();
+        if (array_diff(array_map('intval', $versionedMembers), $members) !== []) {
+            throw new UnsupportedRecordWriteException('Core RelationHandler omits attached workspace versions from this inline relation.', 1792330002);
+        }
+    }
+
+    /** @return array{array, array<string, list<RecordReference>>} */
+    public function prepareChanges(RecordDraft $draft): array
+    {
+        $changes = $draft->getChanges();
+        $observed = [];
+        $schema = $this->targets->schema($draft->table, $draft->context);
+        foreach ($changes as $name => $value) {
+            if (!$schema->hasField($name) || !$schema->getField($name) instanceof RelationalFieldTypeInterface) {
+                continue;
+            }
+            $observed[$name] = $this->load($draft, $name);
+            if ($value instanceof RecordRelationSet) {
+                $changes[$name] = $value->resolveAgainst($observed[$name]);
+            }
+        }
+        return [$changes, $observed];
+    }
+
+    public function encode(FieldTypeInterface $field, mixed $value, RecordDraft $draft, array $identifiers = [], ?RecordWriteTarget $currentTarget = null): string
+    {
+        $field = $this->supportedField($field);
+        $currentTarget ??= $draft->target;
+        $records = $value instanceof RecordRelationSet ? $value->toArray() : $value;
+        if (!is_array($records) || !array_is_list($records)) {
+            throw new InvalidRecordValueException('Relations require an explicit list of records or RecordReference objects.', 1792305045);
+        }
+        $config = $field->getConfiguration();
+        $allowed = array_map(static fn($relation): string => $relation->toTable(), $field->getRelations());
+        $encoded = [];
+        foreach ($records as $record) {
+            if ($record instanceof RecordDraft && $record->target === null) {
+                $identifier = $identifiers[spl_object_id($record)] ?? null;
+                if (!is_string($identifier) || !in_array($record->table, $allowed, true)) {
+                    throw new InvalidRecordValueException('New related records must belong to the same batch and an allowed table.', 1792305060);
+                }
+                $encoded['new:' . spl_object_id($record)] = $field->getType() === 'group' ? $record->table . '_' . $identifier : $identifier;
+                continue;
+            }
+            if (!$record instanceof RecordInterface && !$record instanceof RecordReference && !$record instanceof RecordDraft) {
+                throw new InvalidRecordValueException('Untyped relation identifiers are not accepted.', 1792305046);
+            }
+            $reference = $this->reference($record, $draft->context);
+            if (!in_array($reference->table, $allowed, true)) {
+                throw new InvalidRecordValueException('Reference table is not allowed for "' . $field->getName() . '".', 1792305047);
+            }
+            $encodedUid = $reference->uid;
+            if ($field->getType() === 'inline' && !empty($config['foreign_field'])) {
+                $child = $this->targets->byUid($reference->table, $reference->uid, $draft->context);
+                $this->assertInlineChildAccess($child, $draft->context);
+                if ($draft->context->workspaceId > 0 && !$this->targets->schema($reference->table, $draft->context)->isWorkspaceAware()) {
+                    throw new UnsupportedRecordWriteException('Workspace inline writes require a versioned child table.', 1792330005);
+                }
+                if ($reference->table === $draft->table && $reference->uid === $currentTarget?->uid) {
+                    throw new InvalidRecordValueException('A record cannot be its own inline child.', 1792305055);
+                }
+                if ($reference->table === $draft->table && $currentTarget !== null) {
+                    $ancestor = $currentTarget;
+                    $seen = [];
+                    while ($ancestor !== null) {
+                        if ($ancestor->uid === $reference->uid || isset($seen[$ancestor->uid])) {
+                            throw new InvalidRecordValueException('An inline relation must not create an ancestor cycle.', 1792305069);
+                        }
+                        $seen[$ancestor->uid] = true;
+                        $parent = (int)($ancestor->row[$config['foreign_field']] ?? 0);
+                        $ancestor = $parent > 0 ? $this->targets->byUid($draft->table, $parent, $draft->context) : null;
+                    }
+                }
+                $owner = (int)($child->row[$config['foreign_field']] ?? 0);
+                if ($draft->context->workspaceId > 0) {
+                    $childWorkspace = (int)($child->row['t3ver_wsid'] ?? 0);
+                    $parentWorkspace = (int)($currentTarget?->row['t3ver_wsid'] ?? 0);
+                    if (($childWorkspace === 0 && ($owner === 0 || $parentWorkspace > 0))
+                        || ((int)($child->row['t3ver_oid'] ?? 0) > 0 && !in_array($owner, [$currentTarget?->uid, $currentTarget?->row['uid']], true))) {
+                        throw new UnsupportedRecordWriteException('This Live child cannot be attached to the workspace inline parent. Create a new workspace-owned child in the batch instead.', 1792305054);
+                    }
+                    $encodedUid = (int)$child->row['uid'];
+                }
+                if ($owner !== 0 && !in_array($owner, [$currentTarget?->uid, $currentTarget?->row['uid']], true)) {
+                    throw new InvalidRecordValueException('The inline child already belongs to another parent.', 1792305048);
+                }
+                $parentTarget = $currentTarget;
+                $parentLanguage = $parentTarget !== null ? $parentTarget->languageId : 0;
+                if ($child->languageId !== $parentLanguage) {
+                    throw new InvalidRecordValueException('Inline child and parent must have the same language.', 1792305049);
+                }
+            }
+            $encoded[$reference->key()] = $field->getType() === 'group' ? $reference->table . '_' . $reference->uid : (string)$encodedUid;
+        }
+        $maximum = (int)($config['maxitems'] ?? 0);
+        if (count($encoded) < (int)($config['minitems'] ?? 0) || ($maximum > 0 && count($encoded) > $maximum)) {
+            throw new InvalidRecordValueException('Relation cardinality is outside the configured limits.', 1792305050);
+        }
+        return implode(',', $encoded);
+    }
+
+    /** @param list<RecordDraft> $drafts */
+    public function assertNoInlineCycles(array $drafts, array $changesByDraft = []): void
+    {
+        $edges = [];
+        $owners = [];
+        foreach ($drafts as $draft) {
+            $key = $draft->target !== null ? $draft->table . ':' . $draft->target->uid : 'new:' . spl_object_id($draft);
+            foreach (($changesByDraft[spl_object_id($draft)] ?? $draft->getChanges()) as $name => $value) {
+                $field = $this->targets->schema($draft->table, $draft->context)->getField($name);
+                if ($field->getType() !== 'inline') {
+                    continue;
+                }
+                foreach ($value instanceof RecordRelationSet ? $value->toArray() : $value as $record) {
+                    $childKey = $record instanceof RecordDraft && $record->target === null
+                        ? 'new:' . spl_object_id($record) : $this->reference($record, $draft->context)->key();
+                    if (isset($owners[$childKey]) && $owners[$childKey] !== $key) {
+                        throw new InvalidRecordValueException('An inline child cannot have two batch parents.', 1792305071);
+                    }
+                    $owners[$childKey] = $key;
+                    $edges[$key][] = $childKey;
+                }
+            }
+        }
+        $visited = [];
+        $visiting = [];
+        $visit = function (string $node) use (&$visit, &$visited, &$visiting, $edges): void {
+            if (isset($visiting[$node])) {
+                throw new InvalidRecordValueException('The batch contains an inline relation cycle.', 1792305070);
+            }
+            if (isset($visited[$node])) {
+                return;
+            }
+            $visiting[$node] = true;
+            foreach ($edges[$node] ?? [] as $child) {
+                $visit($child);
+            }
+            unset($visiting[$node]);
+            $visited[$node] = true;
+        };
+        foreach (array_keys($edges) as $node) {
+            $visit($node);
+        }
+    }
+
+    /**
+     * DataHandler does not detach missing foreign_field children merely by replacing the parent list.
+     * Detachment is an explicit child datamap update, retaining DataHandler access checks and history.
+     */
+    public function detachments(RecordDraft $draft, ?array $changes = null, array $observed = []): array
+    {
+        $data = [];
+        foreach (($changes ?? $draft->getChanges()) as $name => $value) {
+            $field = $this->targets->schema($draft->table, $draft->context)->getField($name);
+            $config = $field->getConfiguration();
+            if ($draft->target === null || $field->getType() !== 'inline' || empty($config['foreign_field'])) {
+                continue;
+            }
+            $records = $value instanceof RecordRelationSet ? $value->toArray() : $value;
+            $retained = [];
+            foreach ($records as $record) {
+                $retained[] = $record instanceof RecordDraft && $record->target === null ? 'new:' . spl_object_id($record) : $this->reference($record, $draft->context)->key();
+            }
+            foreach (($observed[$name] ?? $this->load($draft, $name)) as $reference) {
+                $reference = $this->reference($reference, $draft->context);
+                if (!in_array($reference->key(), $retained, true)) {
+                    $child = $this->targets->byUid($reference->table, $reference->uid, $draft->context);
+                    if ($draft->context->workspaceId > 0 && ((int)($child->row['t3ver_wsid'] ?? 0) === 0 || (int)($child->row['t3ver_oid'] ?? 0) > 0)) {
+                        throw new UnsupportedRecordWriteException('Detaching a Live inline child in a workspace requires a separate Core RelationHandler fix.', 1792330003);
+                    }
+                    $data[$reference->table][$reference->uid][$config['foreign_field']] = 0;
+                }
+            }
+        }
+        return $data;
+    }
+
+    public function unchanged(RecordDraft $draft, string $name, mixed $value, array $observed): bool
+    {
+        $records = $value instanceof RecordRelationSet ? $value->toArray() : $value;
+        $expected = [];
+        foreach ($records as $record) {
+            if ($record instanceof RecordDraft && $record->target === null) {
+                return false;
+            }
+            $expected[] = $this->reference($record, $draft->context)->key();
+        }
+        $actual = array_map(fn(RecordReference $reference): string => $this->reference($reference, $draft->context)->key(), $observed);
+        return array_values(array_unique($expected)) === $actual;
+    }
+
+    private function assertInlineChildAccess(RecordWriteTarget $child, RecordWriteContext $context): void
+    {
+        // RelationHandler updates foreign fields as part of the parent operation.
+        // Check existing children through public backend APIs before attaching them.
+        $permission = $child->table === 'pages' ? Permission::PAGE_EDIT : Permission::CONTENT_EDIT;
+        $pageId = $child->table === 'pages' ? $child->uid : (int)$child->row['pid'];
+        $page = BackendUtility::readPageAccess($pageId, $context->user->getPagePermsClause(Permission::PAGE_SHOW | $permission));
+        if ($page === false || !$context->user->checkRecordEditAccess($child->table, $child->row)->isAllowed
+            || ($pageId > 0 && !$context->user->checkRecordEditAccess('pages', $page)->isAllowed)) {
+            throw new RecordAccessDeniedException('The inline child cannot be changed by this backend user.', 1792350002);
+        }
+    }
+
+    private function supportedField(FieldTypeInterface $field): FieldTypeInterface&RelationalFieldTypeInterface
+    {
+        $conf = $field->getConfiguration();
+        if (!$field instanceof RelationalFieldTypeInterface || $field->getType() === 'file'
+            || (!empty($conf['MM_opposite_field']) && $field->getType() !== 'category') || ($field->getType() === 'inline' && empty($conf['foreign_field'])) || !empty($conf['symmetric_field']) || !empty($conf['foreign_selector']) || !empty($conf['foreign_table_field']) || !empty($conf['foreign_match_fields']) || !empty($conf['multiple'])) {
+            throw new UnsupportedRecordWriteException('This relation requires unsupported file, inverse-MM, discriminator or duplicate-member semantics.', 1792305051);
+        }
+        return $field;
+    }
+}

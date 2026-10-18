@@ -1,0 +1,14 @@
+"pages"
+,"uid","pid","title","is_siteroot","perms_everybody"
+,1,0,"Root",1,31
+,2,1,"Target",0,31
+,3,1,"Restricted page",0,0
+
+"sys_workspace"
+,"uid","pid","title"
+,1,0,"Editorial"
+
+"tx_recordwrite_item"
+,"uid","pid","title","body","sorting"
+,1,1,"Original","Original body",256
+,2,1,"Other","Other body",512

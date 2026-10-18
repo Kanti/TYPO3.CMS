@@ -1,0 +1,3 @@
+"be_users"
+,"uid","pid","username","admin","TSconfig"
+,3,0,"type-default-user",1,"TCAdefaults.tt_content.CType = header"

@@ -1,0 +1,38 @@
+backend_layout
+,uid,pid,title,config
+,1,1,Layout 1,"backend_layout {
+ colCount = 2
+ rowCount = 1
+ rows {
+  1 {
+   columns {
+    1 {
+     name = Column 0
+     colPos = 0
+    }
+    2 {
+     name = Column 2
+     colPos = 2
+    }
+   }
+  }
+ }
+}"
+,2,1,Layout 2,"backend_layout {
+ colCount = 2
+ rowCount = 1
+ rows {
+  1 {
+   columns {
+    1 {
+     name = Column 1
+     colPos = 1
+    }
+    2 {
+     name = Column 4
+     colPos = 4
+    }
+   }
+  }
+ }
+}"
