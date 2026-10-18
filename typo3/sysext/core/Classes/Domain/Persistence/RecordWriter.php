@@ -17,6 +17,7 @@ declare(strict_types=1);
 
 namespace TYPO3\CMS\Core\Domain\Persistence;
 
+use Symfony\Component\DependencyInjection\Attribute\AsAlias;
 use Symfony\Component\DependencyInjection\Attribute\Autoconfigure;
 use TYPO3\CMS\Core\Context\Context;
 use TYPO3\CMS\Core\Domain\Persistence\Exception\DataHandlerExecutionException;
@@ -34,7 +35,7 @@ use TYPO3\CMS\Core\Schema\Field\RelationalFieldTypeInterface;
  * TCA record writes through DataHandler, without mutating read-side records.
  * @internal Experimental, matching the stability of the Core Record API.
  */
-#[Autoconfigure(public: true)]
+#[Autoconfigure(public: true), AsAlias(RecordWriterInterface::class, public: true)]
 final readonly class RecordWriter implements RecordWriterInterface
 {
     public function __construct(

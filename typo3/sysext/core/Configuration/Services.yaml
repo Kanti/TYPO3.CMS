@@ -168,10 +168,6 @@ services:
     alias: TYPO3\CMS\Core\RateLimiter\RateLimiterFactory
     public: true
 
-  TYPO3\CMS\Core\Domain\Persistence\RecordWriterInterface:
-    alias: TYPO3\CMS\Core\Domain\Persistence\RecordWriter
-    public: true
-
   # External dependencies
 
   GuzzleHttp\Client:
