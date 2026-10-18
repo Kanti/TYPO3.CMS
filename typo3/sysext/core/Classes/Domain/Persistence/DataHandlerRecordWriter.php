@@ -22,6 +22,7 @@ use TYPO3\CMS\Core\Cache\CacheManager;
 use TYPO3\CMS\Core\DataHandling\DataHandler;
 use TYPO3\CMS\Core\Domain\Persistence\Exception\DataHandlerExecutionException;
 use TYPO3\CMS\Core\Domain\Persistence\Exception\RecordAccessDeniedException;
+use TYPO3\CMS\Core\Domain\Persistence\Exception\UnsupportedRecordWriteException;
 use TYPO3\CMS\Core\Type\Bitmask\Permission;
 use TYPO3\CMS\Core\Type\VirtualRecord;
 use TYPO3\CMS\Core\Utility\GeneralUtility;
@@ -29,16 +30,30 @@ use TYPO3\CMS\Core\Utility\GeneralUtility;
 /** @internal Isolates mutable DataHandler instances and its result mappings. */
 final readonly class DataHandlerRecordWriter
 {
+    private function createHandler(): RecordWriteDataHandler
+    {
+        if (GeneralUtility::getClassName(DataHandler::class) !== DataHandler::class) {
+            throw new UnsupportedRecordWriteException('The Record Write API cannot safely combine its DataHandler adapter with a DataHandler XCLASS.', 1792340002);
+        }
+        // Resolve the native service too: DI may replace it without an XCLASS.
+        $nativeHandler = GeneralUtility::makeInstance(DataHandler::class);
+        $handler = GeneralUtility::makeInstance(RecordWriteDataHandler::class);
+        if ($nativeHandler::class !== DataHandler::class || get_object_vars($nativeHandler) !== get_object_vars($handler)) {
+            throw new UnsupportedRecordWriteException('The Record Write API cannot safely bypass a replaced or preconfigured DataHandler service.', 1792340003);
+        }
+        return $handler;
+    }
+
     public function defaults(RecordDraft $draft): array
     {
-        $handler = GeneralUtility::makeInstance(DataHandler::class);
+        $handler = $this->createHandler();
         $handler->start([], [], $draft->context->user);
         return $handler->getDefaultsForNewRecord($draft->table, $draft->pid, $draft->getChanges());
     }
 
     public function assertCanChangeRecord(RecordWriteTarget $target, RecordWriteContext $context): void
     {
-        $handler = GeneralUtility::makeInstance(DataHandler::class);
+        $handler = $this->createHandler();
         $handler->start([], [], $context->user);
         $page = $target->table === 'pages' ? $target->row : ((int)$target->row['pid'] > 0
             ? BackendUtility::getRecordWSOL('pages', (int)$target->row['pid'])
@@ -51,9 +66,9 @@ final readonly class DataHandlerRecordWriter
         }
     }
 
-    public function execute(array $data, array $commands, RecordWriteContext $context): DataHandler
+    public function execute(array $data, array $commands, RecordWriteContext $context): RecordWriteDataHandler
     {
-        $handler = GeneralUtility::makeInstance(DataHandler::class);
+        $handler = $this->createHandler();
         try {
             $handler->start($data, $commands, $context->user);
             if ($data !== []) {

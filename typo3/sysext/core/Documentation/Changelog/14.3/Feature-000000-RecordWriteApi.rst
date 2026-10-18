@@ -31,11 +31,21 @@ Its permissions, TCA evaluation, hooks, history, reference-index updates,
 localization, workspace versioning and cache handling remain active. This API
 neither uses Extbase persistence nor introduces another persistence framework.
 
-The only DataHandler integration additions are internal accessors for creation
-defaults (including Page/User-TSconfig), the existing table ACL with its hooks,
-and physical insert/update acknowledgements for partial-write reconciliation.
-They expose existing processing without replacing authorization/default logic or
-changing execution order. An empty error log alone does not confirm a write.
+The existing :php:`DataHandler` class remains unchanged. A dedicated, non-shared
+internal subclass, :php:`RecordWriteDataHandler`, calls its protected creation
+defaults (including Page/User-TSconfig) and table ACL with their existing hooks.
+It observes native insert/update success notifications through :php:`log()`;
+it does not parse log messages or require stored :sql:`sys_log` rows. Persistence,
+authorization, default calculation and logging stay in the parent implementation.
+The existing :php:`Channel` attribute preserves the native DataHandler log channel.
+An empty error log alone does not confirm a write.
+
+The adapter rejects DataHandler XCLASSes, replacement service classes and
+preconfigured public DataHandler state before executing a write. Standard
+DataHandler hooks and events remain active. Custom dependency wiring
+specifically for the base DataHandler service is not inherited by the dedicated
+service; installations using that configuration need an explicit integration
+before using this experimental API.
 
 Execution identities and dependency injection
 --------------------------------------------
@@ -493,11 +503,21 @@ verified record and error messages. Outcomes deliberately distinguish:
 
 * ``notAttempted``: preflight only; this validation did not persist a record.
 * ``confirmed``: a fresh record and its requested identity/relations were verified.
-* ``written``: DataHandler acknowledged a physical write and its identity could
-  be resolved, but complete postconditions have not been confirmed.
+* ``written``: the dedicated DataHandler received a native insert/update success
+  notification and the physical identity could be resolved, but complete
+  postconditions have not been confirmed.
 * ``unknown``: the outcome cannot be established. This also covers rows with no
   acknowledgement after an interrupted batch; absence of acknowledgement does
   not prove that hooks or nested DataHandlers made no persistent changes.
+
+For datamap inserts/updates, Core emits success notifications after SQL and
+history processing. If history or logging throws after SQL succeeds, the
+outcome is conservatively ``unknown``
+even when a physical UID can be recovered. An insert may also succeed before a
+UID mapping becomes available. Nested native DataHandlers do not contribute
+acknowledgements to the dedicated instance. These limitations reduce diagnostic
+certainty, not the native execution of writes. Successful command operations
+still require their explicit postconditions to be verified.
 
 No outcome means an automatic rollback. Retain an application's import-row key
 alongside each draft and reconcile any ``written`` or ``unknown`` rows before
@@ -643,12 +663,12 @@ All writes retain native permission checks, versioning, localization, hooks,
 history and cache handling. Frontend writes use a trusted system identity and
 require application-level authorization at the extension boundary.
 
-Narrow internal DataHandler integration points expose defaults, table ACLs and
-physical write acknowledgements. Native CLI authentication, CLI provisioning,
-RelationHandler, BackendUtility and BackendLayoutView remain unchanged. The new
-API manages its runtime cache invalidation and rejects unsupported workspace
-foreign-field ownership changes. Regression tests cover these boundaries and
-updated backend layouts.
+DataHandler, native CLI authentication, CLI provisioning, RelationHandler,
+BackendUtility and BackendLayoutView remain unchanged. All integration code is
+in the new API classes. The API manages its runtime cache invalidation and
+rejects unsupported workspace foreign-field ownership changes and incompatible
+DataHandler replacements. Regression tests cover these boundaries, SQL/history
+failures and updated backend layouts.
 
 The Forge issue is temporarily recorded as ``000000``. Replace the placeholder
 and rename this file when assigning the real review issue.
