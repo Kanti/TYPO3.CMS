@@ -1,0 +1,21 @@
+{
+	"name": "typo3tests/record-write-example",
+	"type": "typo3-cms-extension",
+	"description": "Real Extbase Record Write API examples",
+	"version": "1.0.0",
+	"license": "GPL-2.0-or-later",
+	"require": {
+		"typo3/cms-core": "14.3.*@dev",
+		"typo3/cms-extbase": "14.3.*@dev"
+	},
+	"extra": {
+		"typo3/cms": {
+			"extension-key": "record_write_example"
+		}
+	},
+	"autoload": {
+		"psr-4": {
+			"TYPO3Tests\\RecordWriteExample\\": "Classes/"
+		}
+	}
+}

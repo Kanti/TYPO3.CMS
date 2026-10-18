@@ -42,6 +42,7 @@ final class RecordWriterTest extends FunctionalTestCase
     protected function setUp(): void
     {
         parent::setUp();
+        $GLOBALS['TYPO3_REQUEST'] = (new \TYPO3\CMS\Core\Http\ServerRequest())->withAttribute('applicationType', \TYPO3\CMS\Core\Core\SystemEnvironmentBuilder::REQUESTTYPE_BE);
         $this->importCSVDataSet(__DIR__ . '/../../Fixtures/be_users_admin.csv');
         $this->importCSVDataSet(__DIR__ . '/Fixtures/base.csv');
         $user = $this->setUpBackendUser(1);
@@ -187,9 +188,9 @@ final class RecordWriterTest extends FunctionalTestCase
     #[Test]
     public function noOpUpdateStillRequiresRecordWritePermissions(): void
     {
+        $draft = $this->writer->editByUid(self::TABLE, 1);
         $GLOBALS['BE_USER']->user['admin'] = 0;
         $GLOBALS['BE_USER']->groupData['tables_modify'] = '';
-        $draft = $this->writer->editByUid(self::TABLE, 1);
         try {
             $this->writer->save($draft);
             self::fail('Expected no-op permission denial');
@@ -288,7 +289,7 @@ final class RecordWriterTest extends FunctionalTestCase
         $third = $this->writer->save($this->writer->create(self::TABLE, 1)->set('title', 'Third'));
         $draft = $this->writer->editByUid(self::TABLE, 1);
         $draft->setRelation('reference', $other);
-        $draft->relations('related')->replace([$other, $third]);
+        $draft->relations('related')->setMembers([$other, $third]);
         $saved = $this->writer->save($draft);
         self::assertSame('2', (string)$saved->getRawRecord()->get('reference'));
         $edit = $this->writer->edit($saved);
@@ -408,6 +409,8 @@ final class RecordWriterTest extends FunctionalTestCase
             self::fail('Expected post-write hook failure');
         } catch (DataHandlerExecutionException $exception) {
             self::assertInstanceOf(\RuntimeException::class, $exception->getPrevious());
+            self::assertSame(\TYPO3\CMS\Core\Domain\Persistence\RecordWriteOutcome::Written, $exception->diagnostics->forDraft($first)->outcome);
+            self::assertNotNull($exception->diagnostics->forDraft($first)->identity);
             self::assertSame(4, $this->getConnectionPool()->getConnectionForTable(self::TABLE)->count('*', self::TABLE, []));
         }
         $this->expectException(InvalidWriteContextException::class);
@@ -425,6 +428,8 @@ final class RecordWriterTest extends FunctionalTestCase
         } catch (RecordPersistenceException $exception) {
             self::assertNotInstanceOf(DataHandlerExecutionException::class, $exception);
             self::assertSame([], $exception->errors);
+            self::assertSame(\TYPO3\CMS\Core\Domain\Persistence\RecordWriteOutcome::Unknown, $exception->diagnostics->forDraft($draft)->outcome);
+            self::assertNull($exception->diagnostics->forDraft($draft)->identity);
             self::assertSame(3, $this->getConnectionPool()->getConnectionForTable(self::TABLE)->count('*', self::TABLE, []));
         }
         $this->expectException(InvalidWriteContextException::class);
@@ -666,10 +671,10 @@ final class RecordWriterTest extends FunctionalTestCase
         $GLOBALS['BE_USER']->workspace = 1;
         $this->get(Context::class)->setAspect('workspace', new WorkspaceAspect(1));
         $draft = $this->writer->editByUid(self::TABLE, 1)->set('title', 'Version parent');
-        $draft->relations('children')->replace([new \TYPO3\CMS\Core\Domain\Persistence\RecordReference(self::TABLE, 2)]);
+        $draft->relations('children')->setMembers([new \TYPO3\CMS\Core\Domain\Persistence\RecordReference(self::TABLE, 2)]);
         $version = $this->writer->save($draft);
         $draft = $this->writer->edit($version);
-        $draft->relations('children')->replace([new \TYPO3\CMS\Core\Domain\Persistence\RecordReference(self::TABLE, 2)]);
+        $draft->relations('children')->setMembers([new \TYPO3\CMS\Core\Domain\Persistence\RecordReference(self::TABLE, 2)]);
         $this->writer->save($draft);
         self::assertSame(1, (int)$this->row(2)['parent']);
         self::assertSame(0, (int)$this->row(2)['t3ver_wsid']);
@@ -779,6 +784,82 @@ final class RecordWriterTest extends FunctionalTestCase
         self::assertSame($version->getUid(), $saved->getUid());
         self::assertSame('Original', $this->row(1)['title']);
         self::assertSame('Original', $this->row($translation->getUid())['title']);
+    }
+
+    #[Test]
+    public function batchPreflightIdentifiesInvalidRowsWithoutConsumingOrPersistingDrafts(): void
+    {
+        $batch = $this->writer->batch();
+        $valid = $batch->create(self::TABLE, 1)->set('title', 'Valid row');
+        $invalid = $batch->create(self::TABLE, 1)->set('email', 'invalid');
+        $validation = $batch->validate();
+        self::assertFalse($validation->isValid());
+        self::assertSame([], $validation->forDraft($valid)->errors);
+        self::assertNotEmpty($validation->forDraft($invalid)->errors);
+        self::assertSame(\TYPO3\CMS\Core\Domain\Persistence\RecordWriteOutcome::NotAttempted, $validation->forDraft($invalid)->outcome);
+        self::assertSame(2, $this->getConnectionPool()->getConnectionForTable(self::TABLE)->count('*', self::TABLE, []));
+        $invalid->set('email', 'corrected@example.org');
+        self::assertTrue($batch->validate()->isValid());
+        $result = $batch->execute();
+        self::assertSame(\TYPO3\CMS\Core\Domain\Persistence\RecordWriteOutcome::Confirmed, $result->diagnostics->forDraft($valid)->outcome);
+        self::assertSame('corrected@example.org', $result->recordFor($invalid)->get('email'));
+    }
+
+    #[Test]
+    public function batchPreflightIncludesConflictsBetweenOtherwiseValidDrafts(): void
+    {
+        $batch = $this->writer->batch();
+        $one = $batch->editByUid(self::TABLE, 1)->set('title', 'First');
+        $two = $batch->editByUid(self::TABLE, 1)->set('title', 'Conflicting');
+        $validation = $batch->validate();
+        self::assertFalse($validation->isValid());
+        self::assertNotEmpty($validation->forDraft($one)->errors);
+        self::assertNotEmpty($validation->forDraft($two)->errors);
+        $batch->remove($two);
+        self::assertTrue($batch->validate()->isValid());
+        self::assertSame('First', $batch->execute()->recordFor($one)->get('title'));
+    }
+
+    #[Test]
+    public function batchPreflightSupportsNewReferencesAndRejectsInlineCycles(): void
+    {
+        $batch = $this->writer->batch();
+        $parent = $batch->create(self::TABLE, 1)->set('title', 'Parent');
+        $child = $batch->create(self::TABLE, 1)->set('title', 'Child');
+        $parent->relations('children')->add($child);
+        self::assertTrue($batch->validate()->isValid());
+        $child->relations('children')->add($parent);
+        self::assertFalse($batch->validate()->isValid());
+        self::assertSame(2, $this->getConnectionPool()->getConnectionForTable(self::TABLE)->count('*', self::TABLE, []));
+    }
+
+    #[Test]
+    public function reorderProtectsMmMembershipWhileSetMembersCanExplicitlyRemoveAMember(): void
+    {
+        $one = new \TYPO3\CMS\Core\Domain\Persistence\RecordReference(self::TABLE, 1);
+        $two = new \TYPO3\CMS\Core\Domain\Persistence\RecordReference(self::TABLE, 2);
+        $draft = $this->writer->create(self::TABLE, 1)->set('title', 'Related');
+        $draft->relations('related')->setMembers([$one, $two]);
+        $record = $this->writer->save($draft);
+        $edit = $this->writer->edit($record);
+        try {
+            $edit->relations('related')->reorder([$two]);
+            self::fail('An ordering request must not detach an omitted member.');
+        } catch (InvalidRecordValueException) {
+            self::assertSame([1, 2], $this->relationIds($record->getUid()));
+            self::assertFalse($edit->hasChanges());
+        }
+        $edit->relations('related')->setMembers([$two]);
+        $this->writer->save($edit);
+        self::assertSame([2], $this->relationIds($record->getUid()));
+    }
+
+    #[Test]
+    public function dynamicForeignItemFiltersAreNotSilentlyIgnoredByRelationEncoding(): void
+    {
+        $draft = $this->writer->editByUid(self::TABLE, 1)->setRelation('dynamic_reference', new \TYPO3\CMS\Core\Domain\Persistence\RecordReference(self::TABLE, 1));
+        $this->expectException(UnsupportedRecordWriteException::class);
+        $this->writer->save($draft);
     }
 
     /** @return list<int> */

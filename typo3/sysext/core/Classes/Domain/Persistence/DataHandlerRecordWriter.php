@@ -18,9 +18,11 @@ declare(strict_types=1);
 namespace TYPO3\CMS\Core\Domain\Persistence;
 
 use TYPO3\CMS\Backend\Utility\BackendUtility;
+use TYPO3\CMS\Core\Cache\CacheManager;
 use TYPO3\CMS\Core\DataHandling\DataHandler;
 use TYPO3\CMS\Core\Domain\Persistence\Exception\DataHandlerExecutionException;
 use TYPO3\CMS\Core\Domain\Persistence\Exception\RecordAccessDeniedException;
+use TYPO3\CMS\Core\Type\Bitmask\Permission;
 use TYPO3\CMS\Core\Type\VirtualRecord;
 use TYPO3\CMS\Core\Utility\GeneralUtility;
 
@@ -43,6 +45,7 @@ final readonly class DataHandlerRecordWriter
             : VirtualRecord::RootPage);
         if ($page === null || !$handler->canModifyTable($target->table)
             || !$context->user->checkRecordEditAccess($target->table, $target->row)->isAllowed
+            || !$handler->hasPageContextPermission($target->table, Permission::PAGE_SHOW, $page)
             || !$handler->hasPermissionToUpdate($target->table, $page)) {
             throw new RecordAccessDeniedException('The record cannot be changed by this backend user.', 1792305072);
         }
@@ -60,10 +63,12 @@ final readonly class DataHandlerRecordWriter
                 $handler->process_cmdmap();
             }
         } catch (\Throwable $exception) {
-            throw new DataHandlerExecutionException('DataHandler execution failed; persistence may have partially succeeded.', 1792305101, array_values($handler->errorLog), $exception);
+            throw new DataHandlerExecutionException('DataHandler execution failed; persistence may have partially succeeded.', 1792305101, array_values($handler->errorLog), $exception, $handler->getWrittenRecords(), $handler->substNEWwithIDs);
+        } finally {
+            GeneralUtility::makeInstance(CacheManager::class)->getCache('runtime')->flushByTag(BackendUtility::RUNTIME_CACHE_TAG);
         }
         if ($handler->errorLog !== []) {
-            throw new DataHandlerExecutionException('DataHandler reported errors; persistence may have partially succeeded.', 1792305102, array_values($handler->errorLog));
+            throw new DataHandlerExecutionException('DataHandler reported errors; persistence may have partially succeeded.', 1792305102, array_values($handler->errorLog), null, $handler->getWrittenRecords(), $handler->substNEWwithIDs);
         }
         return $handler;
     }

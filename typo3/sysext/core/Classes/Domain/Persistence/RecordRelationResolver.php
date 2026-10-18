@@ -17,8 +17,10 @@ declare(strict_types=1);
 
 namespace TYPO3\CMS\Core\Domain\Persistence;
 
+use TYPO3\CMS\Core\Context\Context;
 use TYPO3\CMS\Core\Database\RelationHandler;
 use TYPO3\CMS\Core\Domain\Persistence\Exception\InvalidRecordValueException;
+use TYPO3\CMS\Core\Domain\Persistence\Exception\RecordAccessDeniedException;
 use TYPO3\CMS\Core\Domain\Persistence\Exception\RecordPersistenceException;
 use TYPO3\CMS\Core\Domain\Persistence\Exception\UnsupportedRecordWriteException;
 use TYPO3\CMS\Core\Domain\RecordInterface;
@@ -33,30 +35,40 @@ final readonly class RecordRelationResolver
 
     public function reference(RecordInterface|RecordReference|RecordDraft $record, RecordWriteContext $context): RecordReference
     {
-        if ($record instanceof RecordDraft) {
-            if ($record->target === null) {
-                throw new InvalidRecordValueException('A new draft has no persisted reference.', 1792305068);
+        return $context->run(function () use ($record, $context) {
+            if ($record instanceof RecordDraft) {
+                if ($record->target === null) {
+                    throw new InvalidRecordValueException('A new draft has no persisted reference.', 1792305068);
+                }
+                $record = new RecordReference($record->table, $record->target->uid);
             }
-            $record = new RecordReference($record->table, $record->target->uid);
-        }
-        $target = $record instanceof RecordInterface ? $this->targets->fromRecord($record, $context)
-            : $this->targets->byUid($record->table, $record->uid, $context);
-        return new RecordReference($target->table, $target->uid);
+            $target = $record instanceof RecordInterface ? $this->targets->fromRecord($record, $context)
+                : $this->targets->byUid($record->table, $record->uid, $context);
+            return new RecordReference($target->table, $target->uid);
+        });
     }
 
     /** @return list<RecordReference> */
     public function load(RecordDraft $draft, string $name): array
     {
-        $field = $this->targets->schema($draft->table, $draft->context)->getField($name);
-        $field = $this->supportedField($field);
-        if ($draft->target === null) {
-            return [];
-        }
-        $handler = GeneralUtility::makeInstance(RelationHandler::class);
-        $handler->setWorkspaceId($draft->context->workspaceId);
-        $handler->initializeForField($draft->table, $field, $draft->target->row, $draft->target->row[$name] ?? null);
-        $handler->processDeletePlaceholder();
-        return array_values(array_map(static fn(array $item): RecordReference => new RecordReference($item['table'], (int)$item['id']), $handler->itemArray));
+        $draft->context->assertCurrent(GeneralUtility::makeInstance(Context::class));
+        return $draft->context->run(function () use ($draft, $name) {
+            $field = $this->targets->schema($draft->table, $draft->context)->getField($name);
+            $field = $this->supportedField($field);
+            if ($field->supportsAccessControl() && !$draft->context->user->check('non_exclude_fields', $draft->table . ':' . $name)) {
+                throw new RecordAccessDeniedException('The relation field is not accessible to this write identity.', 1792310014);
+            }
+            if ($draft->target === null) {
+                return [];
+            }
+            $target = $this->targets->byUid($draft->table, $draft->target->uid, $draft->context);
+            $this->adapter->assertCanChangeRecord($target, $draft->context);
+            $handler = GeneralUtility::makeInstance(RelationHandler::class);
+            $handler->setWorkspaceId($draft->context->workspaceId);
+            $handler->initializeForField($draft->table, $field, $draft->target->row, $draft->target->row[$name] ?? null);
+            $handler->processDeletePlaceholder();
+            return array_values(array_map(static fn(array $item): RecordReference => new RecordReference($item['table'], (int)$item['id']), $handler->itemArray));
+        });
     }
 
     public function encode(FieldTypeInterface $field, mixed $value, RecordDraft $draft, array $identifiers = []): string

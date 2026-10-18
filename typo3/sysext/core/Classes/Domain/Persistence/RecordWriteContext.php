@@ -17,12 +17,23 @@ declare(strict_types=1);
 
 namespace TYPO3\CMS\Core\Domain\Persistence;
 
+use Psr\Http\Message\ServerRequestInterface;
+use TYPO3\CMS\Backend\Utility\BackendUtility;
 use TYPO3\CMS\Core\Authentication\BackendUserAuthentication;
+use TYPO3\CMS\Core\Authentication\CommandLineUserAuthentication;
+use TYPO3\CMS\Core\Authentication\SystemUserAuthentication;
+use TYPO3\CMS\Core\Cache\CacheManager;
 use TYPO3\CMS\Core\Context\Context;
 use TYPO3\CMS\Core\Context\LanguageAspect;
+use TYPO3\CMS\Core\Context\UserAspect;
+use TYPO3\CMS\Core\Context\WorkspaceAspect;
+use TYPO3\CMS\Core\Core\Environment;
 use TYPO3\CMS\Core\Domain\Persistence\Exception\InvalidWriteContextException;
+use TYPO3\CMS\Core\Http\ApplicationType;
+use TYPO3\CMS\Core\Localization\LanguageServiceFactory;
+use TYPO3\CMS\Core\Utility\GeneralUtility;
 
-/** @internal Captures authentication and ambient context, never credentials. */
+/** @internal Captures execution identity separately from the requesting visitor. */
 final readonly class RecordWriteContext
 {
     private function __construct(
@@ -30,31 +41,103 @@ final readonly class RecordWriteContext
         public int $userId,
         public int $workspaceId,
         private LanguageAspect $languageAspect,
+        private string $mode,
+        private array $systemState,
     ) {}
 
     public static function capture(Context $context): self
     {
-        $user = $GLOBALS['BE_USER'] ?? null;
-        if (!$user instanceof BackendUserAuthentication || (int)($user->user['uid'] ?? 0) <= 0) {
-            throw new InvalidWriteContextException('Record writes require an authenticated backend user.', 1792305002);
+        $request = $GLOBALS['TYPO3_REQUEST'] ?? null;
+        $application = $request instanceof ServerRequestInterface ? ApplicationType::fromRequest($request) : null;
+        $frontend = $application === ApplicationType::FRONTEND;
+        $current = $GLOBALS['BE_USER'] ?? null;
+        $useSystem = $frontend || ($application === null && Environment::isCli() && !$current instanceof CommandLineUserAuthentication);
+        if ($useSystem) {
+            try {
+                $user = GeneralUtility::makeInstance(SystemUserAuthentication::class);
+                $user->initialize();
+                $result = new self($user, (int)$user->getUserId(), 0, $context->getAspect('language'), $frontend ? 'frontend' : 'system', []);
+                $result->run(fn() => $user->fetchGroupData());
+                if (!$frontend && (int)$context->getPropertyFromAspect('workspace', 'id', 0) !== 0) {
+                    throw new InvalidWriteContextException('A system CLI write requires an explicit Live context or an established CLI workspace identity.', 1792310004);
+                }
+                return new self($user, (int)$user->getUserId(), 0, $context->getAspect('language'), $frontend ? 'frontend' : 'system', [$user->user, $user->groupData]);
+            } catch (InvalidWriteContextException $exception) {
+                throw $exception;
+            } catch (\Throwable $exception) {
+                throw new InvalidWriteContextException('The system write identity is unavailable.', 1792310005, $exception);
+            }
         }
-        if ($user->workspace !== (int)$context->getPropertyFromAspect('workspace', 'id', 0)) {
+        if (!$current instanceof BackendUserAuthentication || (int)($current->user['uid'] ?? 0) <= 0 || $application === ApplicationType::INSTALL) {
+            throw new InvalidWriteContextException('Backend writes require an authenticated backend user.', 1792305002);
+        }
+        if ($current->workspace !== (int)$context->getPropertyFromAspect('workspace', 'id', 0)) {
             throw new InvalidWriteContextException('Backend user and Context must select the same workspace.', 1792305003);
         }
-        return new self(
-            $user,
-            (int)$user->user['uid'],
-            $user->workspace,
-            $context->getAspect('language')
-        );
+        return new self($current, (int)$current->user['uid'], $current->workspace, $context->getAspect('language'), $application->value ?? 'cli', []);
     }
 
     public function assertCurrent(Context $context): void
     {
         $current = self::capture($context);
-        if ($current->user !== $this->user || $current->userId !== $this->userId
+        if ($current->mode !== $this->mode || $current->userId !== $this->userId
+            || ($this->systemState === [] && $current->user !== $this->user)
+            || $current->systemState !== $this->systemState
             || $current->workspaceId !== $this->workspaceId || $current->languageAspect != $this->languageAspect) {
-            throw new InvalidWriteContextException('The draft authentication, language or workspace context has changed.', 1792305004);
+            throw new InvalidWriteContextException('The draft execution identity, language or workspace context has changed.', 1792305004);
+        }
+    }
+
+    public function readingContext(): Context
+    {
+        $context = clone GeneralUtility::makeInstance(Context::class);
+        $context->setAspect('workspace', new WorkspaceAspect($this->workspaceId));
+        $context->setAspect('backend.user', new UserAspect($this->user));
+        $context->setAspect('language', $this->languageAspect);
+        return $context;
+    }
+
+    /**
+     * Legacy DataHandler dependencies and hooks still consult globals. Scope those dependencies
+     * to the explicit identity and restore them even after exceptions or nested executions.
+     */
+    public function run(\Closure $operation): mixed
+    {
+        $context = GeneralUtility::makeInstance(Context::class);
+        $aspects = ['workspace' => $context->getAspect('workspace'), 'backend.user' => $context->getAspect('backend.user'), 'language' => $context->getAspect('language')];
+        $globals = [];
+        foreach (['BE_USER', 'LANG'] as $key) {
+            $globals[$key] = [array_key_exists($key, $GLOBALS), $GLOBALS[$key] ?? null];
+        }
+        $switchingIdentity = ($GLOBALS['BE_USER'] ?? null) !== $this->user
+            || (int)$context->getPropertyFromAspect('workspace', 'id', 0) !== $this->workspaceId;
+        $runtimeCache = GeneralUtility::makeInstance(CacheManager::class)->getCache('runtime');
+        if ($switchingIdentity) {
+            $runtimeCache->flushByTag(BackendUtility::RUNTIME_CACHE_TAG);
+        }
+        try {
+            $GLOBALS['BE_USER'] = $this->user;
+            $context->setAspect('workspace', new WorkspaceAspect($this->workspaceId));
+            $context->setAspect('backend.user', new UserAspect($this->user));
+            $context->setAspect('language', $this->languageAspect);
+            if ($this->user instanceof SystemUserAuthentication || !isset($GLOBALS['LANG'])) {
+                $GLOBALS['LANG'] = GeneralUtility::makeInstance(LanguageServiceFactory::class)->createFromUserPreferences($this->user);
+            }
+            return $operation();
+        } finally {
+            if ($switchingIdentity) {
+                $runtimeCache->flushByTag(BackendUtility::RUNTIME_CACHE_TAG);
+            }
+            foreach ($aspects as $key => $aspect) {
+                $context->setAspect($key, $aspect);
+            }
+            foreach ($globals as $key => [$existed, $value]) {
+                if ($existed) {
+                    $GLOBALS[$key] = $value;
+                } else {
+                    unset($GLOBALS[$key]);
+                }
+            }
         }
     }
 }

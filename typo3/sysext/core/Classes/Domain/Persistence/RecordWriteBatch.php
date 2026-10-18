@@ -49,6 +49,17 @@ final class RecordWriteBatch
         return $draft;
     }
 
+    public function validate(): RecordWriteDiagnostics
+    {
+        return $this->writer->validateAll($this->drafts);
+    }
+
+    public function remove(RecordDraft $draft): void
+    {
+        $draft->assertEditable();
+        $this->drafts = array_values(array_filter($this->drafts, static fn(RecordDraft $candidate): bool => $candidate !== $draft));
+    }
+
     public function execute(): RecordWriteResult
     {
         return $this->writer->saveAll($this->drafts);

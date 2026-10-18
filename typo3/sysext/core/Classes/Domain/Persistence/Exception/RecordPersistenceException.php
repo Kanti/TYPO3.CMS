@@ -23,6 +23,8 @@ namespace TYPO3\CMS\Core\Domain\Persistence\Exception;
  */
 class RecordPersistenceException extends RecordWriteException
 {
+    public ?\TYPO3\CMS\Core\Domain\Persistence\RecordWriteDiagnostics $diagnostics = null;
+
     /** @param list<string> $errors */
     public function __construct(string $message, int $code, public readonly array $errors = [], ?\Throwable $previous = null)
     {

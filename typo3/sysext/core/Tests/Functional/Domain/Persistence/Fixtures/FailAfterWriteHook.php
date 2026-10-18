@@ -23,10 +23,10 @@ final class FailAfterWriteHook
 {
     public function processDatamap_afterDatabaseOperations(string $status, string $table, int|string $id, array $fields, DataHandler $handler): void
     {
-        if (($fields['title'] ?? '') === 'Lose result mapping') {
+        if (($fields['title'] ?? $fields['header'] ?? '') === 'Lose result mapping') {
             unset($handler->substNEWwithIDs[$id]);
         }
-        if (($fields['title'] ?? '') === 'Fail after persistence') {
+        if (($fields['title'] ?? $fields['header'] ?? '') === 'Fail after persistence') {
             throw new \RuntimeException('Failure after a real database write.', 1792305061);
         }
     }

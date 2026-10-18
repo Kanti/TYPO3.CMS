@@ -30,12 +30,14 @@ use TYPO3\TestingFramework\Core\Unit\UnitTestCase;
 
 final class RecordDraftTest extends UnitTestCase
 {
+    private mixed $previousRequest;
     private bool $hadBackendUser;
     private mixed $previousBackendUser;
 
     protected function setUp(): void
     {
         parent::setUp();
+        $this->previousRequest = $GLOBALS['TYPO3_REQUEST'] ?? null;
         $this->hadBackendUser = array_key_exists('BE_USER', $GLOBALS);
         $this->previousBackendUser = $GLOBALS['BE_USER'] ?? null;
     }
@@ -47,6 +49,11 @@ final class RecordDraftTest extends UnitTestCase
         } else {
             unset($GLOBALS['BE_USER']);
         }
+        if ($this->previousRequest !== null) {
+            $GLOBALS['TYPO3_REQUEST'] = $this->previousRequest;
+        } else {
+            unset($GLOBALS['TYPO3_REQUEST']);
+        }
         parent::tearDown();
     }
 
@@ -56,6 +63,7 @@ final class RecordDraftTest extends UnitTestCase
         $user->user['uid'] = 1;
         $user->workspace = 0;
         $GLOBALS['BE_USER'] = $user;
+        $GLOBALS['TYPO3_REQUEST'] = (new \TYPO3\CMS\Core\Http\ServerRequest())->withAttribute('applicationType', \TYPO3\CMS\Core\Core\SystemEnvironmentBuilder::REQUESTTYPE_BE);
         $context = new Context();
         $context->setAspect('workspace', new WorkspaceAspect(0));
         return new RecordDraft(

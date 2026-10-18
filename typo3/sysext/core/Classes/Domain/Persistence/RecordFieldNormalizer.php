@@ -31,7 +31,7 @@ use TYPO3\CMS\Core\Schema\TcaSchema;
 /** @internal Converts write-side values; does not reverse the read transformer. */
 final readonly class RecordFieldNormalizer
 {
-    public function __construct(private TypoLinkCodecService $linkCodec, private RecordRelationResolver $relations, private DataHandlerRecordWriter $adapter) {}
+    public function __construct(private TypoLinkCodecService $linkCodec, private RecordRelationResolver $relations, private DataHandlerRecordWriter $adapter, private ?RecordSelectItemResolver $selectItems = null) {}
 
     public function changes(RecordDraft $draft, TcaSchema $schema, array $identifiers = [], ?RecordWriteTarget $currentTarget = null): array
     {
@@ -45,7 +45,14 @@ final readonly class RecordFieldNormalizer
                 throw new UnsupportedRecordWriteException('Foreign record type discriminators are not supported for writing.', 1792305019);
             }
             $typeField = $type->getFieldName();
-            $typeValue = (string)($changes[$typeField] ?? $currentTarget?->row[$typeField] ?? $this->adapter->defaults($draft)[$typeField] ?? $schema->getField($typeField)->getDefaultValue() ?? '0');
+            $typeValue = $changes[$typeField] ?? $currentTarget?->row[$typeField] ?? $this->adapter->defaults($draft)[$typeField] ?? $schema->getField($typeField)->getDefaultValue() ?? '0';
+            if (is_bool($typeValue) && $schema->getField($typeField)->getType() === 'check') {
+                $typeValue = (int)$typeValue;
+            }
+            if (!is_int($typeValue) && !is_string($typeValue)) {
+                throw new InvalidRecordValueException('A record type must be a valid discriminator value.', 1792310035);
+            }
+            $typeValue = (string)$typeValue;
             if (!$schema->hasSubSchema($typeValue)) {
                 throw new InvalidRecordValueException('Unknown record type "' . $typeValue . '".', 1792305020);
             }
@@ -82,12 +89,19 @@ final readonly class RecordFieldNormalizer
                     throw new InvalidRecordValueException('Field "' . $name . '" is synchronized with another language.', 1792305025);
                 }
             }
-            $result[$name] = $field instanceof RelationalFieldTypeInterface ? $this->relations->encode($field, $value, $draft, $identifiers) : $this->normalize($field, $value);
+            $items = null;
+            if (in_array($field->getType(), ['select', 'radio'], true) && (!empty($conf['itemsProcFunc']) || !empty($conf['itemsProcessors']))) {
+                if ($field instanceof RelationalFieldTypeInterface) {
+                    throw new UnsupportedRecordWriteException('Dynamic foreign-record item filters are not supported for relation writes.', 1792310036);
+                }
+                $items = $this->selectItems?->items($field, $draft, $currentTarget);
+            }
+            $result[$name] = $field instanceof RelationalFieldTypeInterface ? $this->relations->encode($field, $value, $draft, $identifiers) : $this->normalize($field, $value, $items);
         }
         return $result;
     }
 
-    public function normalize(FieldTypeInterface $field, mixed $value): mixed
+    public function normalize(FieldTypeInterface $field, mixed $value, ?array $items = null): mixed
     {
         if ($value === null) {
             if (!$field->isNullable() || $field->isRequired()) {
@@ -141,15 +155,16 @@ final readonly class RecordFieldNormalizer
             }
         }
         if (in_array($field->getType(), ['select', 'radio'], true)) {
-            if (!empty($conf['itemsProcFunc'])) {
-                throw new UnsupportedRecordWriteException('Dynamic select/radio items require FormEngine item processing and are not supported by this API.', 1792305073);
+            if ($items === null && (!empty($conf['itemsProcFunc']) || !empty($conf['itemsProcessors']))) {
+                throw new UnsupportedRecordWriteException('Dynamic select/radio items require the complete draft context.', 1792305073);
             }
+            $items ??= $conf['items'] ?? null;
             $values = is_array($value) ? $value : [$value];
             foreach ($values as $item) {
                 if (!is_string($item) && !is_int($item)) {
                     throw new InvalidRecordValueException('Select values must be strings or integers.', 1792305032);
                 }
-                if (!empty($conf['items']) && empty($conf['itemsProcFunc']) && !in_array((string)$item, array_map(static fn(array $entry): string => (string)($entry['value'] ?? ''), $conf['items']), true)) {
+                if ($items !== null && !in_array((string)$item, array_map(static fn(array $entry): string => (string)($entry['value'] ?? ''), array_filter($items, static fn(array $entry): bool => ($entry['value'] ?? '') !== '--div--')), true)) {
                     throw new InvalidRecordValueException('Select value is not among the configured items.', 1792305064);
                 }
                 if (str_contains((string)$item, ',')) {

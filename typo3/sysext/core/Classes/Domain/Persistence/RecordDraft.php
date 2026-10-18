@@ -22,8 +22,8 @@ use TYPO3\CMS\Core\Domain\Persistence\Exception\InvalidWriteContextException;
 use TYPO3\CMS\Core\Domain\RecordInterface;
 
 /**
- * Mutable, unpersisted changes to a record. get() returns pending values, then raw original
- * database values; it never reads transformed relations or supplies TCA defaults.
+ * Mutable, unpersisted changes to a record. get() returns consistent PHP values,
+ * using pending changes first and the original snapshot otherwise. Missing values stay missing.
  * @internal Experimental record write API, matching the stability of RecordFactory.
  */
 final class RecordDraft
@@ -39,6 +39,7 @@ final class RecordDraft
         public readonly RecordWriteContext $context,
         public readonly ?RecordWriteTarget $target = null,
         private readonly ?RecordRelationResolver $relationResolver = null,
+        private readonly ?RecordDraftValueResolver $valueResolver = null,
     ) {}
 
     public function set(string $field, mixed $value): self
@@ -62,10 +63,10 @@ final class RecordDraft
     public function get(string $field): mixed
     {
         if (array_key_exists($field, $this->changes)) {
-            return $this->changes[$field];
+            return $this->valueResolver !== null ? $this->valueResolver->get($this, $field, $this->changes[$field], true) : $this->changes[$field];
         }
         if ($this->target !== null && array_key_exists($field, $this->target->row)) {
-            return $this->target->row[$field];
+            return $this->valueResolver !== null ? $this->valueResolver->get($this, $field, $this->target->row[$field], false) : $this->target->row[$field];
         }
         throw new InvalidRecordValueException('No original or pending value for field "' . $field . '".', 1792305005);
     }

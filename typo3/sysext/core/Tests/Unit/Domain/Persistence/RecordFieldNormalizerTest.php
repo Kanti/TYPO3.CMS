@@ -90,7 +90,7 @@ final class RecordFieldNormalizerTest extends UnitTestCase
     }
 
     #[Test]
-    public function dynamicItemsAreRejectedInsteadOfAssumingStaticItemsAreComplete(): void
+    public function dynamicItemsRequireTheCompleteDraftContext(): void
     {
         $this->expectException(UnsupportedRecordWriteException::class);
         $this->normalizer()->normalize(new StaticSelectFieldType('choices', ['itemsProcFunc' => 'Vendor\\Items->populate']), 'value');

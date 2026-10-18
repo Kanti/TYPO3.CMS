@@ -477,6 +477,12 @@ class DataHandler
         return isset($this->writtenRecords[$table][$uid]);
     }
 
+    /** @internal Physical write acknowledgements for reconciliation after failed execution. */
+    public function getWrittenRecords(): array
+    {
+        return $this->writtenRecords;
+    }
+
     /**
      * Initializing.
      * For details, see 'TYPO3 Core API' document.

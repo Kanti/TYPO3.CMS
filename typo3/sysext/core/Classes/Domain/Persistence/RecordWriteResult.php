@@ -24,7 +24,7 @@ use TYPO3\CMS\Core\Domain\RecordInterface;
 final readonly class RecordWriteResult
 {
     /** @param array<int, array{RecordDraft, RecordInterface}> $records */
-    public function __construct(private array $records) {}
+    public function __construct(private array $records, public ?RecordWriteDiagnostics $diagnostics = null) {}
 
     public function recordFor(RecordDraft $draft): RecordInterface
     {

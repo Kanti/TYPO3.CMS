@@ -33,7 +33,7 @@ final class RecordRelationSetTest extends UnitTestCase
         $set = new RecordRelationSet([$one], static fn($reference) => $reference, static fn() => null);
         $set->add($two)->add($one)->remove($one);
         self::assertSame([$two], $set->toArray());
-        $set->replace([$one, $two])->reorder([$two, $one]);
+        $set->setMembers([$one, $two])->reorder([$two, $one]);
         self::assertSame([$two, $one], $set->toArray());
         $set->clear();
         self::assertSame([], $set->toArray());

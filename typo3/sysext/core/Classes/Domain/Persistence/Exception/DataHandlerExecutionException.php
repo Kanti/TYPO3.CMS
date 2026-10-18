@@ -21,4 +21,17 @@ namespace TYPO3\CMS\Core\Domain\Persistence\Exception;
  * DataHandler threw or reported errors. Earlier writes may already have succeeded.
  * @internal Experimental record write API.
  */
-final class DataHandlerExecutionException extends RecordPersistenceException {}
+final class DataHandlerExecutionException extends RecordPersistenceException
+{
+    /** @internal DataHandler execution snapshots; application code uses diagnostics instead. */
+    public function __construct(
+        string $message,
+        int $code,
+        array $errors = [],
+        ?\Throwable $previous = null,
+        public readonly array $writtenRecords = [],
+        public readonly array $newRecordIds = [],
+    ) {
+        parent::__construct($message, $code, $errors, $previous);
+    }
+}

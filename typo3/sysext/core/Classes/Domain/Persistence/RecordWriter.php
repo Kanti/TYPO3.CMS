@@ -19,9 +19,11 @@ namespace TYPO3\CMS\Core\Domain\Persistence;
 
 use Symfony\Component\DependencyInjection\Attribute\Autoconfigure;
 use TYPO3\CMS\Core\Context\Context;
+use TYPO3\CMS\Core\Domain\Persistence\Exception\DataHandlerExecutionException;
 use TYPO3\CMS\Core\Domain\Persistence\Exception\InvalidRecordValueException;
 use TYPO3\CMS\Core\Domain\Persistence\Exception\RecordNotFoundException;
 use TYPO3\CMS\Core\Domain\Persistence\Exception\RecordPersistenceException;
+use TYPO3\CMS\Core\Domain\Persistence\Exception\RecordWriteException;
 use TYPO3\CMS\Core\Domain\Persistence\Exception\UnsupportedRecordWriteException;
 use TYPO3\CMS\Core\Domain\RecordFactory;
 use TYPO3\CMS\Core\Domain\RecordInterface;
@@ -29,11 +31,11 @@ use TYPO3\CMS\Core\Schema\Capability\TcaSchemaCapability;
 use TYPO3\CMS\Core\Schema\Field\RelationalFieldTypeInterface;
 
 /**
- * Backend record writes through DataHandler, without mutating read-side records.
+ * TCA record writes through DataHandler, without mutating read-side records.
  * @internal Experimental, matching the stability of the Core Record API.
  */
 #[Autoconfigure(public: true)]
-final readonly class RecordWriter
+final readonly class RecordWriter implements RecordWriterInterface
 {
     public function __construct(
         private Context $context,
@@ -42,35 +44,65 @@ final readonly class RecordWriter
         private DataHandlerRecordWriter $adapter,
         private RecordFactory $recordFactory,
         private RecordRelationResolver $relations,
+        private RecordDraftValueResolver $draftValues,
     ) {}
 
     public function create(string $table, int $pid): RecordDraft
     {
         $context = RecordWriteContext::capture($this->context);
-        $this->targets->schema($table, $context);
-        if ($pid < 0) {
-            throw new InvalidRecordValueException('Creation requires a non-negative page ID.', 1792305035);
-        }
-        return new RecordDraft($table, $this->storagePageId($pid, $context), $context, null, $this->relations);
+        return $context->run(function () use ($context, $table, $pid) {
+            $this->targets->schema($table, $context);
+            if ($pid < 0) {
+                throw new InvalidRecordValueException('Creation requires a non-negative page ID.', 1792305035);
+            }
+            return new RecordDraft($table, $this->storagePageId($pid, $context), $context, null, $this->relations, $this->draftValues);
+        });
     }
 
     public function edit(RecordInterface $record): RecordDraft
     {
         $context = RecordWriteContext::capture($this->context);
-        $target = $this->targets->fromRecord($record, $context);
-        return new RecordDraft($target->table, (int)$target->row['pid'], $context, $target, $this->relations);
+        return $context->run(function () use ($context, $record) {
+            $target = $this->targets->fromRecord($record, $context);
+            $this->adapter->assertCanChangeRecord($target, $context);
+            return new RecordDraft($target->table, (int)$target->row['pid'], $context, $target, $this->relations, $this->draftValues);
+        });
     }
 
     public function editByUid(string $table, int $uid): RecordDraft
     {
         $context = RecordWriteContext::capture($this->context);
-        $target = $this->targets->byUid($table, $uid, $context);
-        return new RecordDraft($table, (int)$target->row['pid'], $context, $target, $this->relations);
+        return $context->run(function () use ($context, $table, $uid) {
+            $target = $this->targets->byUid($table, $uid, $context);
+            $this->adapter->assertCanChangeRecord($target, $context);
+            return new RecordDraft($table, (int)$target->row['pid'], $context, $target, $this->relations, $this->draftValues);
+        });
     }
 
     public function save(RecordDraft $draft): RecordInterface
     {
         return $this->saveAll([$draft])->recordFor($draft);
+    }
+
+    public function identity(RecordInterface $record): RecordIdentity
+    {
+        $context = RecordWriteContext::capture($this->context);
+        return $context->run(function () use ($record, $context) {
+            $target = $this->targets->fromRecord($record, $context);
+            $this->adapter->assertCanChangeRecord($target, $context);
+            return $this->targetIdentity($target, $context);
+        });
+    }
+
+    private function targetIdentity(RecordWriteTarget $target, RecordWriteContext $context): RecordIdentity
+    {
+        $schema = $this->targets->schema($target->table, $context);
+        $origin = null;
+        if ($schema->isLanguageAware()) {
+            $originField = $schema->getCapability(TcaSchemaCapability::Language)->getTranslationOriginPointerField()->getName();
+            $origin = (int)($target->row[$originField] ?? 0) ?: null;
+        }
+        return new RecordIdentity($target->table, $target->uid, (int)$target->row['uid'], $target->languageId, (int)($target->row['t3ver_wsid'] ?? 0), $origin);
     }
 
     public function batch(): RecordWriteBatch
@@ -81,13 +113,25 @@ final readonly class RecordWriter
     /** @internal @param list<RecordDraft> $drafts */
     public function saveAll(array $drafts): RecordWriteResult
     {
+        if ($drafts === []) {
+            return new RecordWriteResult([]);
+        }
+        foreach ($drafts as $draft) {
+            $draft->assertEditable();
+            $draft->context->assertCurrent($this->context);
+        }
+        return $drafts[0]->context->run(fn() => $this->executeDrafts($drafts));
+    }
+
+    /** @return array{array<int, int|string>, array<int, array>, array} */
+    private function prepareDrafts(array $drafts): array
+    {
         $identifiers = [];
         $targets = [];
         $values = [];
         $data = [];
         foreach ($drafts as $draft) {
             $draft->assertEditable();
-            $draft->context->assertCurrent($this->context);
             $key = spl_object_id($draft);
             if (isset($identifiers[$key])) {
                 throw new InvalidRecordValueException('A draft must occur only once in a batch.', 1792305057);
@@ -151,16 +195,28 @@ final readonly class RecordWriter
                 }
             }
         }
+        return [$identifiers, $values, $data];
+    }
+
+    private function executeDrafts(array $drafts): RecordWriteResult
+    {
+        [$identifiers, $values, $data] = $this->prepareDrafts($drafts);
         foreach ($drafts as $draft) {
             $draft->consume();
         }
-        $handler = $data !== [] ? $this->adapter->execute($data, [], $drafts[0]->context) : null;
+        try {
+            $handler = $data !== [] ? $this->adapter->execute($data, [], $drafts[0]->context) : null;
+        } catch (DataHandlerExecutionException $exception) {
+            $exception->diagnostics = $this->diagnostics($drafts, $identifiers, $exception->newRecordIds, $exception->writtenRecords, [], [], $exception);
+            throw $exception;
+        }
         $saved = [];
+        $records = [];
         $newUids = [];
         try {
             foreach ($drafts as $draft) {
                 $key = spl_object_id($draft);
-                $uid = $draft->target !== null ? $draft->target->uid : ($handler?->substNEWwithIDs[$identifiers[$key]] ?? 0);
+                $uid = $draft->target !== null ? $draft->target->uid : ($handler->substNEWwithIDs[$identifiers[$key]] ?? 0);
                 if (!$uid) {
                     throw new RecordPersistenceException('DataHandler did not resolve a new record identifier.', 1792305104);
                 }
@@ -178,73 +234,152 @@ final readonly class RecordWriter
             foreach ($drafts as $draft) {
                 $key = spl_object_id($draft);
                 $this->relations->verify($draft, $saved[$key], $newUids);
-                $records[$key] = [$draft, $this->record($saved[$key])];
+                $records[$key] = [$draft, $this->record($saved[$key], $draft->context)];
             }
-            return new RecordWriteResult($records);
+            return new RecordWriteResult($records, $this->diagnostics($drafts, $identifiers, $handler->substNEWwithIDs ?? [], $handler?->getWrittenRecords() ?? [], $records, $saved));
         } catch (RecordPersistenceException $exception) {
+            $exception->diagnostics = $this->diagnostics($drafts, $identifiers, $handler->substNEWwithIDs ?? [], $handler?->getWrittenRecords() ?? [], $records, $saved, $exception);
             throw $exception;
         } catch (\Throwable $exception) {
-            throw new RecordPersistenceException('The write completed but its results could not be reloaded.', 1792305107, [], $exception);
+            $failure = new RecordPersistenceException('The write completed but its results could not be reloaded.', 1792305107, [], $exception);
+            $failure->diagnostics = $this->diagnostics($drafts, $identifiers, $handler->substNEWwithIDs ?? [], $handler?->getWrittenRecords() ?? [], $records, $saved, $failure);
+            throw $failure;
         }
+    }
+
+    /** @internal Preflight validation does not consume drafts or execute DataHandler. */
+    public function validateAll(array $drafts): RecordWriteDiagnostics
+    {
+        $identifiers = [];
+        foreach ($drafts as $draft) {
+            $identifiers[spl_object_id($draft)] = $draft->target->uid ?? 'NEW' . spl_object_id($draft);
+        }
+        $entries = [];
+        foreach ($drafts as $draft) {
+            $errors = [];
+            try {
+                $draft->assertEditable();
+                $draft->context->assertCurrent($this->context);
+                $draft->context->run(function () use ($draft, $identifiers) {
+                    $target = $draft->target !== null ? $this->targets->byUid($draft->table, $draft->target->uid, $draft->context) : null;
+                    if ($target !== null) {
+                        $this->adapter->assertCanChangeRecord($target, $draft->context);
+                    }
+                    $this->normalizer->changes($draft, $this->targets->schema($draft->table, $draft->context), $identifiers, $target);
+                });
+            } catch (RecordWriteException $exception) {
+                $errors[] = $exception->getMessage();
+            }
+            $entries[spl_object_id($draft)] = new RecordWriteDiagnostic($draft, RecordWriteOutcome::NotAttempted, errors: $errors);
+        }
+        $diagnostics = new RecordWriteDiagnostics($entries);
+        if ($drafts !== [] && $diagnostics->isValid()) {
+            try {
+                $drafts[0]->context->run(fn() => $this->prepareDrafts($drafts));
+            } catch (RecordWriteException $exception) {
+                foreach ($drafts as $draft) {
+                    $entries[spl_object_id($draft)] = new RecordWriteDiagnostic($draft, RecordWriteOutcome::NotAttempted, errors: [$exception->getMessage()]);
+                }
+                $diagnostics = new RecordWriteDiagnostics($entries);
+            }
+        }
+        return $diagnostics;
+    }
+
+    private function diagnostics(array $drafts, array $identifiers, array $newIds, array $written, array $confirmed, array $saved, ?RecordWriteException $failure = null): RecordWriteDiagnostics
+    {
+        $entries = [];
+        foreach ($drafts as $draft) {
+            $key = spl_object_id($draft);
+            $identity = null;
+            $target = $saved[$key] ?? null;
+            $uid = $draft->target->uid ?? ($newIds[$identifiers[$key]] ?? 0);
+            if ($target === null && $uid) {
+                try {
+                    $target = $this->targets->byUid($draft->table, $uid, $draft->context, true);
+                } catch (\Throwable) {
+                    // Reconciliation must preserve the primary failure when metadata is unavailable.
+                }
+            }
+            if ($target !== null) {
+                try {
+                    $identity = $this->targetIdentity($target, $draft->context);
+                } catch (\Throwable) {
+                    // Keep the original execution failure if reconciliation metadata cannot be read.
+                }
+            }
+            $outcome = isset($confirmed[$key]) ? RecordWriteOutcome::Confirmed
+                : ($identity !== null && isset($written[$draft->table][$identity->physicalUid]) ? RecordWriteOutcome::Written : RecordWriteOutcome::Unknown);
+            $entries[$key] = new RecordWriteDiagnostic($draft, $outcome, $identity, $confirmed[$key][1] ?? null, $failure !== null ? [$failure->getMessage()] : []);
+        }
+        return new RecordWriteDiagnostics($entries);
     }
 
     public function delete(RecordInterface $record): void
     {
         $context = RecordWriteContext::capture($this->context);
-        $target = $this->targets->fromRecord($record, $context);
-        $this->adapter->execute([], [$target->table => [$target->uid => ['delete' => 1]]], $context);
-        try {
-            $this->targets->byUid($target->table, $target->uid, $context);
-        } catch (RecordNotFoundException) {
-            return;
-        }
-        throw new RecordPersistenceException('DataHandler did not confirm deletion of the record.', 1792305108);
+        $context->run(function () use ($context, $record) {
+            $target = $this->targets->fromRecord($record, $context);
+            $this->adapter->execute([], [$target->table => [$target->uid => ['delete' => 1]]], $context);
+            try {
+                $this->targets->byUid($target->table, $target->uid, $context);
+            } catch (RecordNotFoundException) {
+                return;
+            }
+            throw new RecordPersistenceException('DataHandler did not confirm deletion of the record.', 1792305108);
+        });
     }
 
     public function restore(string $table, int $uid): RecordInterface
     {
         $context = RecordWriteContext::capture($this->context);
-        $target = $this->targets->byUid($table, $uid, $context, true);
-        if ($context->workspaceId !== 0) {
-            throw new UnsupportedRecordWriteException('Restore is currently supported only in Live.', 1792305038);
-        }
-        $schema = $this->targets->schema($table, $context);
-        if (!$schema->hasCapability(TcaSchemaCapability::SoftDelete)
-            || empty($target->row[$schema->getCapability(TcaSchemaCapability::SoftDelete)->getFieldName()])) {
-            throw new InvalidRecordValueException('Restore requires a soft-deleted record.', 1792305039);
-        }
-        $this->adapter->execute([], [$table => [$target->uid => ['undelete' => 1]]], $context);
-        return $this->reloadAfterCommand($table, $target->uid, $context);
+        return $context->run(function () use ($context, $table, $uid) {
+            $target = $this->targets->byUid($table, $uid, $context, true);
+            if ($context->workspaceId !== 0) {
+                throw new UnsupportedRecordWriteException('Restore is currently supported only in Live.', 1792305038);
+            }
+            $schema = $this->targets->schema($table, $context);
+            if (!$schema->hasCapability(TcaSchemaCapability::SoftDelete)
+                || empty($target->row[$schema->getCapability(TcaSchemaCapability::SoftDelete)->getFieldName()])) {
+                throw new InvalidRecordValueException('Restore requires a soft-deleted record.', 1792305039);
+            }
+            $this->adapter->execute([], [$table => [$target->uid => ['undelete' => 1]]], $context);
+            return $this->reloadAfterCommand($table, $target->uid, $context);
+        });
     }
 
     public function move(RecordInterface $record, RecordPosition $position): RecordInterface
     {
         $context = RecordWriteContext::capture($this->context);
-        $target = $this->targets->fromRecord($record, $context);
-        [$destination, $pid] = $this->destination($position, $target, $context);
-        $this->adapter->execute([], [$target->table => [$target->uid => ['move' => $destination]]], $context);
-        $saved = $this->reloadAfterCommand($target->table, $target->uid, $context);
-        if ($saved->getPid() !== $pid) {
-            throw new RecordPersistenceException('DataHandler did not move the record to the requested page.', 1792305109);
-        }
-        return $saved;
+        return $context->run(function () use ($context, $record, $position) {
+            $target = $this->targets->fromRecord($record, $context);
+            [$destination, $pid] = $this->destination($position, $target, $context);
+            $this->adapter->execute([], [$target->table => [$target->uid => ['move' => $destination]]], $context);
+            $saved = $this->reloadAfterCommand($target->table, $target->uid, $context);
+            if ($saved->getPid() !== $pid) {
+                throw new RecordPersistenceException('DataHandler did not move the record to the requested page.', 1792305109);
+            }
+            return $saved;
+        });
     }
 
     public function copy(RecordInterface $record, RecordPosition $position): RecordInterface
     {
         $context = RecordWriteContext::capture($this->context);
-        $target = $this->targets->fromRecord($record, $context);
-        [$destination, $pid] = $this->destination($position, $target, $context);
-        $handler = $this->adapter->execute([], [$target->table => [$target->uid => ['copy' => $destination]]], $context);
-        $uid = (int)($handler->copyMappingArray_merged[$target->table][$target->uid] ?? 0);
-        if ($uid <= 0 || $uid === $target->uid) {
-            throw new RecordPersistenceException('DataHandler did not resolve the copied record.', 1792305110);
-        }
-        $saved = $this->reloadAfterCommand($target->table, $uid, $context);
-        if ($saved->getPid() !== $pid) {
-            throw new RecordPersistenceException('The copy was not created on the requested page.', 1792305111);
-        }
-        return $saved;
+        return $context->run(function () use ($context, $record, $position) {
+            $target = $this->targets->fromRecord($record, $context);
+            [$destination, $pid] = $this->destination($position, $target, $context);
+            $handler = $this->adapter->execute([], [$target->table => [$target->uid => ['copy' => $destination]]], $context);
+            $uid = (int)($handler->copyMappingArray_merged[$target->table][$target->uid] ?? 0);
+            if ($uid <= 0 || $uid === $target->uid) {
+                throw new RecordPersistenceException('DataHandler did not resolve the copied record.', 1792305110);
+            }
+            $saved = $this->reloadAfterCommand($target->table, $uid, $context);
+            if ($saved->getPid() !== $pid) {
+                throw new RecordPersistenceException('The copy was not created on the requested page.', 1792305111);
+            }
+            return $saved;
+        });
     }
 
     public function localize(RecordInterface $record, int $languageId): RecordInterface
@@ -260,35 +395,39 @@ final readonly class RecordWriter
     public function discardWorkspaceVersion(RecordInterface $record): void
     {
         $context = RecordWriteContext::capture($this->context);
-        $target = $this->targets->fromRecord($record, $context);
-        if ($context->workspaceId <= 0 || (int)($target->row['t3ver_wsid'] ?? 0) !== $context->workspaceId) {
-            throw new InvalidRecordValueException('Discard requires a version in the current workspace.', 1792305040);
-        }
-        $this->adapter->execute([], [$target->table => [$target->uid => ['discard' => 1]]], $context);
-        if ($this->targets->row($target->table, (int)$target->row['uid']) !== null) {
-            throw new RecordPersistenceException('DataHandler did not discard the workspace version.', 1792305112);
-        }
+        $context->run(function () use ($context, $record) {
+            $target = $this->targets->fromRecord($record, $context);
+            if ($context->workspaceId <= 0 || (int)($target->row['t3ver_wsid'] ?? 0) !== $context->workspaceId) {
+                throw new InvalidRecordValueException('Discard requires a version in the current workspace.', 1792305040);
+            }
+            $this->adapter->execute([], [$target->table => [$target->uid => ['discard' => 1]]], $context);
+            if ($this->targets->row($target->table, (int)$target->row['uid']) !== null) {
+                throw new RecordPersistenceException('DataHandler did not discard the workspace version.', 1792305112);
+            }
+        });
     }
 
     private function languageCommand(RecordInterface $record, int $languageId, string $command): RecordInterface
     {
         $context = RecordWriteContext::capture($this->context);
-        $target = $this->targets->fromRecord($record, $context);
-        if ($languageId <= 0 || $target->languageId !== 0 || !$this->targets->schema($target->table, $context)->isLanguageAware()) {
-            throw new InvalidRecordValueException('Localization requires a default-language source and a positive target language.', 1792305041);
-        }
-        $handler = $this->adapter->execute([], [$target->table => [$target->uid => [$command => $languageId]]], $context);
-        $uid = (int)($handler->copyMappingArray_merged[$target->table][$target->uid] ?? 0);
-        if ($uid <= 0) {
-            throw new RecordPersistenceException('DataHandler did not resolve the translated record.', 1792305113);
-        }
-        $saved = $this->reloadAfterCommand($target->table, $uid, $context);
-        $schema = $this->targets->schema($target->table, $context);
-        $languageField = $schema->getCapability(TcaSchemaCapability::Language)->getLanguageField()->getName();
-        if ((int)$saved->getRawRecord()->get($languageField) !== $languageId) {
-            throw new RecordPersistenceException('The result does not identify the requested language.', 1792305114);
-        }
-        return $saved;
+        return $context->run(function () use ($context, $record, $languageId, $command) {
+            $target = $this->targets->fromRecord($record, $context);
+            if ($languageId <= 0 || $target->languageId !== 0 || !$this->targets->schema($target->table, $context)->isLanguageAware()) {
+                throw new InvalidRecordValueException('Localization requires a default-language source and a positive target language.', 1792305041);
+            }
+            $handler = $this->adapter->execute([], [$target->table => [$target->uid => [$command => $languageId]]], $context);
+            $uid = (int)($handler->copyMappingArray_merged[$target->table][$target->uid] ?? 0);
+            if ($uid <= 0) {
+                throw new RecordPersistenceException('DataHandler did not resolve the translated record.', 1792305113);
+            }
+            $saved = $this->reloadAfterCommand($target->table, $uid, $context);
+            $schema = $this->targets->schema($target->table, $context);
+            $languageField = $schema->getCapability(TcaSchemaCapability::Language)->getLanguageField()->getName();
+            if ((int)$saved->getRawRecord()->get($languageField) !== $languageId) {
+                throw new RecordPersistenceException('The result does not identify the requested language.', 1792305114);
+            }
+            return $saved;
+        });
     }
 
     /** @return array{int, int} */
@@ -321,15 +460,15 @@ final readonly class RecordWriter
     private function reloadAfterCommand(string $table, int $uid, RecordWriteContext $context): RecordInterface
     {
         try {
-            return $this->record($this->targets->byUid($table, $uid, $context));
+            return $this->record($this->targets->byUid($table, $uid, $context), $context);
         } catch (\Throwable $exception) {
             throw new RecordPersistenceException('The command completed but its result could not be reloaded.', 1792305115, [], $exception);
         }
     }
 
-    private function record(RecordWriteTarget $target): RecordInterface
+    private function record(RecordWriteTarget $target, RecordWriteContext $context): RecordInterface
     {
         // A fresh identity map is mandatory; the same logical UID may have an older read-side object.
-        return $this->recordFactory->createResolvedRecordFromDatabaseRow($target->table, $target->row, $this->context, new RecordIdentityMap());
+        return $this->recordFactory->createResolvedRecordFromDatabaseRow($target->table, $target->row, $context->readingContext(), new RecordIdentityMap());
     }
 }

@@ -37,17 +37,20 @@ final class RecordRelationSet
                 return $this;
             }
         }
-        return $this->replace([...$this->references, $reference]);
+        return $this->setMembers([...$this->references, $reference]);
     }
 
     public function remove(RecordInterface|RecordReference|RecordDraft $record): self
     {
         $key = $this->key(($this->resolve)($record));
-        return $this->replace(array_values(array_filter($this->references, fn(RecordReference|RecordDraft $reference): bool => $this->key($reference) !== $key)));
+        return $this->setMembers(array_values(array_filter($this->references, fn(RecordReference|RecordDraft $reference): bool => $this->key($reference) !== $key)));
     }
 
-    /** @param iterable<RecordInterface|RecordReference|RecordDraft> $records */
-    public function replace(iterable $records): self
+    /**
+     * Set the complete ordered membership, explicitly detaching omitted records.
+     * @param iterable<RecordInterface|RecordReference|RecordDraft> $records
+     */
+    public function setMembers(iterable $records): self
     {
         $references = [];
         foreach ($records as $record) {
@@ -62,10 +65,13 @@ final class RecordRelationSet
 
     public function clear(): self
     {
-        return $this->replace([]);
+        return $this->setMembers([]);
     }
 
-    /** @param iterable<RecordInterface|RecordReference|RecordDraft> $records */
+    /**
+     * Change order only; an incomplete or different member set is rejected.
+     * @param iterable<RecordInterface|RecordReference|RecordDraft> $records
+     */
     public function reorder(iterable $records): self
     {
         $references = [];
@@ -80,7 +86,7 @@ final class RecordRelationSet
         if ($oldKeys !== $newKeys) {
             throw new InvalidRecordValueException('Reordering must contain exactly the existing relation members.', 1792305044);
         }
-        return $this->replace($references);
+        return $this->setMembers($references);
     }
 
     private function key(RecordReference|RecordDraft $reference): string
