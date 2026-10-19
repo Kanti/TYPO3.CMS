@@ -3408,6 +3408,36 @@ typo3-backend-combobox-choice[aria-selected=true]{background-color:var(--typo3-f
 typo3-backend-combobox-choice::part(icon){-webkit-margin-end:.5rem;flex-shrink:0;margin-inline-end:.5rem}
 typo3-backend-combobox-choice::part(content){flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 typo3-backend-combobox-choice::part(indicator){color:var(--typo3-form-combobox-option-indicator);-webkit-margin-end:.25rem;margin-inline-end:.25rem;min-width:var(--typo3-form-combobox-icon-size)}
+typo3-backend-searchable-select{--searchable-select-padding:calc(var(--typo3-spacing)*0.5);display:block;min-width:0;width:100%}
+typo3-backend-searchable-select:has(>.btn-group){display:inline-block;width:auto}
+typo3-backend-searchable-select>select.searchable-select-native{border:0;-webkit-clip-path:inset(50%);clip-path:inset(50%);height:1px;min-height:0;min-width:0;overflow:hidden;padding:0;position:absolute;width:1px}
+.input-group>typo3-backend-searchable-select{flex:1 1 auto;width:1%}
+.input-group>typo3-backend-searchable-select:not(:first-child)>:is(select,.searchable-select-trigger){border-end-start-radius:0;border-start-start-radius:0}
+.input-group.has-validation>typo3-backend-searchable-select:nth-last-child(n+3)>:is(select,.searchable-select-trigger),.input-group:not(.has-validation)>typo3-backend-searchable-select:not(:last-child)>:is(select,.searchable-select-trigger){border-end-end-radius:0;border-start-end-radius:0}
+typo3-backend-searchable-select .searchable-select-trigger{cursor:pointer;text-align:start}
+typo3-backend-searchable-select .searchable-select-popup{background:var(--typo3-component-bg);border:var(--typo3-component-border-width) solid var(--typo3-component-border-color);border-radius:var(--typo3-input-border-radius);box-shadow:var(--typo3-component-box-shadow);color:var(--typo3-component-color);inset:auto;margin:0;overflow:hidden;padding:var(--searchable-select-padding);position:fixed}
+typo3-backend-searchable-select .searchable-select-popup:popover-open{display:flex;flex-direction:column}
+typo3-backend-searchable-select .searchable-select-search-field{flex:none;-webkit-margin-after:var(--searchable-select-padding);margin-block-end:var(--searchable-select-padding)}
+typo3-backend-searchable-select .searchable-select-search-field[hidden]{display:none}
+typo3-backend-searchable-select .searchable-select-search-field .searchable-select-clear{height:100%;inset-block-start:0;inset-inline-end:0;justify-content:center;transform:none;width:2.3em}
+typo3-backend-searchable-select .searchable-select-search-field .searchable-select-clear[hidden]{display:none}
+typo3-backend-searchable-select .searchable-select-search-field .searchable-select-clear:before{background-color:currentColor;content:"";height:16px;-webkit-mask-image:var(--typo3-icons-close);mask-image:var(--typo3-icons-close);width:16px}
+typo3-backend-searchable-select .dropdown-menu>li[hidden]{display:none}
+typo3-backend-searchable-select .searchable-select-search-row{background:var(--typo3-dropdown-bg);inset-block-start:0;padding:var(--typo3-dropdown-item-padding-y) var(--typo3-dropdown-item-padding-x);position:-webkit-sticky;position:sticky;z-index:1}
+typo3-backend-searchable-select .searchable-select-search-row .searchable-select-search-field{margin:0}
+typo3-backend-searchable-select .searchable-select-status-row:not(.visually-hidden){padding:var(--typo3-dropdown-item-padding-y) var(--typo3-dropdown-item-padding-x)}
+typo3-backend-searchable-select .searchable-select-options{max-height:18rem;min-height:0;overflow-y:auto;overscroll-behavior:contain}
+typo3-backend-searchable-select .searchable-select-group-label,typo3-backend-searchable-select .searchable-select-option,typo3-backend-searchable-select .searchable-select-status:not(:empty){padding:var(--typo3-list-item-padding-y) var(--typo3-list-item-padding-x)}
+typo3-backend-searchable-select .searchable-select-group-label{color:var(--typo3-text-color-variant);font-weight:700}
+typo3-backend-searchable-select .searchable-select-option{align-items:center;border-radius:calc(var(--typo3-input-border-radius) - var(--typo3-input-border-width));cursor:pointer;display:flex;gap:var(--searchable-select-padding);min-height:2.5rem;overflow-wrap:anywhere}
+typo3-backend-searchable-select .searchable-select-option:hover,typo3-backend-searchable-select .searchable-select-option[data-active]{background:var(--typo3-list-item-hover-bg);color:var(--typo3-list-item-hover-color)}
+typo3-backend-searchable-select .searchable-select-option[data-active]{outline:var(--typo3-outline-width) var(--typo3-outline-style) var(--typo3-input-focus-border-color);outline-offset:calc(var(--typo3-outline-width)*-1)}
+typo3-backend-searchable-select .searchable-select-option[aria-disabled=true]{color:var(--typo3-list-item-disabled-color);cursor:not-allowed}
+typo3-backend-searchable-select .searchable-select-option-label{min-width:0}
+typo3-backend-searchable-select .searchable-select-option-indicator{-webkit-margin-start:auto;margin-inline-start:auto}
+@media (pointer:coarse){
+typo3-backend-searchable-select .searchable-select-search{font-size:max(16px,var(--typo3-input-font-size))}
+typo3-backend-searchable-select .dropdown-item,typo3-backend-searchable-select .searchable-select-option{min-height:44px}}
 typo3-backend-content-navigation{--content-navigation-divider-color:color-mix(in srgb,var(--typo3-surface-container-lowest),var(--typo3-text-color-base) 10%);--content-navigation-divider-color-active:var(--typo3-state-primary-border-color);--content-navigation-flyout-box-shadow:var(--typo3-component-box-shadow-flyout)}
 typo3-backend-content-navigation [slot=content] typo3-backend-progress-bar{--progress-border-radius:0;left:0;position:absolute;right:0;top:0;z-index:10}
 typo3-backend-content-navigation .upload-queue-item typo3-backend-progress-bar{position:relative}

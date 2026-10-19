@@ -1177,6 +1177,33 @@
       <trans-unit id="component.select.section.colorScheme.optgroup.multiple.headline">
         <source>Multiple selection with option groups</source>
       </trans-unit>
+      <trans-unit id="component.select.section.searchable.headline">
+        <source>Searchable select with option groups</source>
+      </trans-unit>
+      <trans-unit id="component.select.section.searchable.introtext">
+        <source>Wrapping a native single select in &lt;code&gt;&amp;lt;typo3-backend-searchable-select&amp;gt;&lt;/code&gt; adds a search field above its options. With seven or more options, search is visible automatically; with fewer options, typing reveals it. The selected value stays unchanged while searching. Picking an option updates the select and dispatches a &lt;code&gt;change&lt;/code&gt; event on it, which shows a notification in these examples.</source>
+      </trans-unit>
+      <trans-unit id="component.select.section.searchableMenu.headline">
+        <source>Searchable dropdown menu</source>
+      </trans-unit>
+      <trans-unit id="component.select.section.searchableMenu.introtext">
+        <source>A dropdown menu wrapped in &lt;code&gt;&amp;lt;typo3-backend-searchable-select&amp;gt;&lt;/code&gt; is filtered the same way: &lt;code&gt;dropdown-header&lt;/code&gt; items group the &lt;code&gt;dropdown-item&lt;/code&gt; entries, and picking an entry clicks it, so a link is followed. The &lt;code&gt;label&lt;/code&gt; attribute names the searchable select. Dropdown buttons in the document header provide this automatically. Original icons, formatting and actions are preserved.</source>
+      </trans-unit>
+      <trans-unit id="component.select.section.searchablePreselected.headline">
+        <source>Searchable select with a selected option</source>
+      </trans-unit>
+      <trans-unit id="component.select.section.searchableDisabled.headline">
+        <source>Searchable select, disabled</source>
+      </trans-unit>
+      <trans-unit id="component.select.section.searchableAdditionalText.headline">
+        <source>Searchable select with additional text</source>
+      </trans-unit>
+      <trans-unit id="component.select.searchable.notification.title">
+        <source>Option picked</source>
+      </trans-unit>
+      <trans-unit id="component.select.searchable.notification.message">
+        <source>"{label}" (value "{value}") was picked. A navigation would load the page now.</source>
+      </trans-unit>
       <!-- Component: Status indicator -->
       <trans-unit id="component.statusIndicator.headline">
         <source>Status indicators</source>

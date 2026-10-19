@@ -75,6 +75,7 @@ final class SelectCountryElement extends AbstractFormElement
         $selectId = StringUtility::getUniqueId('tceforms-select-');
         $selectedIcon = '';
         $size = (int)($config['size'] ?? 0);
+        $searchable = $size <= 1;
 
         // Style set on <select/>
         $options = '';
@@ -186,9 +187,15 @@ final class SelectCountryElement extends AbstractFormElement
             $html[] =                   $selectedIcon;
             $html[] =               '</span>';
         }
+        if ($searchable) {
+            $html[] =               '<typo3-backend-searchable-select>';
+        }
         $html[] =                   '<select ' . GeneralUtility::implodeAttributes($selectAttributes, true) . '>';
         $html[] =                       $options;
         $html[] =                   '</select>';
+        if ($searchable) {
+            $html[] =               '</typo3-backend-searchable-select>';
+        }
         if ($hasIcons) {
             $html[] =           '</div>';
         }
@@ -209,6 +216,9 @@ final class SelectCountryElement extends AbstractFormElement
         $html[] =   '</div>';
         $html[] = '</div>';
 
+        if ($searchable) {
+            $resultArray['javaScriptModules'][] = JavaScriptModuleInstruction::create('@typo3/backend/element/searchable-select-element.js');
+        }
         $onFieldChangeItems = $this->getOnFieldChangeItems($parameterArray['fieldChangeFunc'] ?? []);
         $resultArray['javaScriptModules']['selectSingleElement'] = JavaScriptModuleInstruction::create(
             '@typo3/backend/form-engine/element/select-country-element.js'

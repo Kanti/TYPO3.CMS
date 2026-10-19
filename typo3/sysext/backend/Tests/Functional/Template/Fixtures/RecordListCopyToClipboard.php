@@ -17,6 +17,7 @@ $fileMtimeActions = filemtime(__DIR__ . '/../../../../../core/Resources/Public/I
 // Where EXT:core serves its public resources from differs by installation mode.
 $coreAssetPath = (string)\TYPO3\CMS\Core\Utility\PathUtility::getSystemResourceUri('EXT:core/Resources/Public/');
 return <<<EOF
+<typo3-backend-searchable-select label="Share">
 <div class="btn-group">
     <button type="button" class="btn btn-sm btn-default dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false" aria-label="Share" title="Share">
         <span class="t3js-icon icon icon-size-small icon-state-default icon-actions-share-alt" data-identifier="actions-share-alt" aria-hidden="true">
@@ -49,4 +50,5 @@ return <<<EOF
         </li>
     </ul>
 </div>
+</typo3-backend-searchable-select>
 EOF;

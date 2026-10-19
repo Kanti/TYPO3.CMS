@@ -1,0 +1,186 @@
+//
+// Shared searchable select and dropdown component.
+//
+// Markup:
+// <typo3-backend-searchable-select>
+//     <select class="form-select">...</select>
+// </typo3-backend-searchable-select>
+// <typo3-backend-searchable-select>
+//     <div class="btn-group">...<ul class="dropdown-menu">...</ul></div>
+// </typo3-backend-searchable-select>
+//
+typo3-backend-searchable-select {
+    --searchable-select-padding: calc(var(--typo3-spacing) * .5);
+    display: block;
+    min-width: 0;
+    width: 100%;
+
+    &:has(> .btn-group) {
+        display: inline-block;
+        width: auto;
+    }
+
+    > select.searchable-select-native {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        min-width: 0;
+        min-height: 0;
+        clip-path: inset(50%);
+        padding: 0;
+        border: 0;
+        overflow: hidden;
+    }
+
+    .input-group > & {
+        flex: 1 1 auto;
+        width: 1%;
+    }
+
+    .input-group > &:not(:first-child) > :is(select, .searchable-select-trigger) {
+        border-start-start-radius: 0;
+        border-end-start-radius: 0;
+    }
+
+    .input-group:not(.has-validation) > &:not(:last-child) > :is(select, .searchable-select-trigger),
+    .input-group.has-validation > &:nth-last-child(n + 3) > :is(select, .searchable-select-trigger) {
+        border-start-end-radius: 0;
+        border-end-end-radius: 0;
+    }
+
+    .searchable-select-trigger {
+        text-align: start;
+        cursor: pointer;
+    }
+
+    .searchable-select-popup {
+        position: fixed;
+        inset: auto;
+        margin: 0;
+        padding: var(--searchable-select-padding);
+        color: var(--typo3-component-color);
+        background: var(--typo3-component-bg);
+        border: var(--typo3-component-border-width) solid var(--typo3-component-border-color);
+        border-radius: var(--typo3-input-border-radius);
+        box-shadow: var(--typo3-component-box-shadow);
+        overflow: hidden;
+
+        &:popover-open {
+            display: flex;
+            flex-direction: column;
+        }
+    }
+
+    .searchable-select-search-field {
+        flex: none;
+        margin-block-end: var(--searchable-select-padding);
+
+        &[hidden] {
+            display: none;
+        }
+    }
+
+    .searchable-select-search-field .searchable-select-clear {
+        justify-content: center;
+        inset-block-start: 0;
+        inset-inline-end: 0;
+        width: 2.3em;
+        height: 100%;
+        transform: none;
+
+        &[hidden] {
+            display: none;
+        }
+
+        &:before {
+            content: "";
+            width: 16px;
+            height: 16px;
+            background-color: currentColor;
+            mask-image: var(--typo3-icons-close);
+        }
+    }
+
+    .dropdown-menu > li[hidden] {
+        display: none;
+    }
+
+    .searchable-select-search-row {
+        position: sticky;
+        inset-block-start: 0;
+        z-index: 1;
+        padding: var(--typo3-dropdown-item-padding-y) var(--typo3-dropdown-item-padding-x);
+        background: var(--typo3-dropdown-bg);
+
+        .searchable-select-search-field {
+            margin: 0;
+        }
+    }
+
+    .searchable-select-status-row:not(.visually-hidden) {
+        padding: var(--typo3-dropdown-item-padding-y) var(--typo3-dropdown-item-padding-x);
+    }
+
+    .searchable-select-options {
+        min-height: 0;
+        max-height: 18rem;
+        overflow-y: auto;
+        overscroll-behavior: contain;
+    }
+
+    .searchable-select-group-label,
+    .searchable-select-status:not(:empty),
+    .searchable-select-option {
+        padding: var(--typo3-list-item-padding-y) var(--typo3-list-item-padding-x);
+    }
+
+    .searchable-select-group-label {
+        color: var(--typo3-text-color-variant);
+        font-weight: bold;
+    }
+
+    .searchable-select-option {
+        display: flex;
+        align-items: center;
+        gap: var(--searchable-select-padding);
+        min-height: 2.5rem;
+        border-radius: calc(var(--typo3-input-border-radius) - var(--typo3-input-border-width));
+        cursor: pointer;
+        overflow-wrap: anywhere;
+
+        &:hover,
+        &[data-active] {
+            color: var(--typo3-list-item-hover-color);
+            background: var(--typo3-list-item-hover-bg);
+        }
+
+        &[data-active] {
+            outline: var(--typo3-outline-width) var(--typo3-outline-style) var(--typo3-input-focus-border-color);
+            outline-offset: calc(-1 * var(--typo3-outline-width));
+        }
+
+        &[aria-disabled="true"] {
+            color: var(--typo3-list-item-disabled-color);
+            cursor: not-allowed;
+        }
+    }
+
+    .searchable-select-option-label {
+        min-width: 0;
+    }
+
+    .searchable-select-option-indicator {
+        margin-inline-start: auto;
+    }
+
+    @media (pointer: coarse) {
+        .searchable-select-search {
+            font-size: max(16px, var(--typo3-input-font-size));
+        }
+
+        .searchable-select-option,
+        .dropdown-item {
+            min-height: 44px;
+        }
+    }
+}
