@@ -227,6 +227,10 @@ readonly class ComponentFactory
         return GeneralUtility::makeInstance(SplitButton::class);
     }
 
+    /**
+     * Creates a dropdown with search on typing. Search is shown immediately
+     * when the menu contains seven or more visible options.
+     */
     public function createDropDownButton(): DropDownButton
     {
         return GeneralUtility::makeInstance(DropDownButton::class);

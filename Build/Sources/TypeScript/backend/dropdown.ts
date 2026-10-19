@@ -12,9 +12,18 @@
  */
 
 import DocumentService from '@typo3/core/document-service';
+import { DropdownSearch } from '@typo3/backend/dropdown-search';
 
 class Dropdown {
+  private readonly searches = new WeakMap<HTMLElement, DropdownSearch>();
+
   constructor() {
+    document.addEventListener('beforetoggle', (event: ToggleEvent) => {
+      if (event.newState === 'closed') {
+        this.searches.get(event.target as HTMLElement)?.reset();
+      }
+    }, true);
+
     // Add keyboard navigation bindings when a dropdown menu opens
     document.addEventListener('toggle', (e: ToggleEvent) => {
       const menu = e.target as HTMLElement;
@@ -23,6 +32,7 @@ class Dropdown {
       }
 
       if (e.newState === 'open') {
+        this.getSearch(menu)?.open();
         menu.addEventListener('keydown', this.handleKeydown);
         menu.addEventListener('focusout', this.handleFocusout);
       } else {
@@ -45,9 +55,15 @@ class Dropdown {
         return;
       }
 
+      const menuId = trigger.getAttribute('popovertarget');
+      const menu = menuId ? document.getElementById(menuId) : null;
+      const search = menu ? this.getSearch(menu) : null;
+      if (search?.handleKeydown(e)) {
+        menu.showPopover();
+        return;
+      }
+
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-        const menuId = trigger.getAttribute('popovertarget');
-        const menu = menuId ? document.getElementById(menuId) : null;
         if (!menu?.matches('[popover]')) {
           return;
         }
@@ -118,7 +134,18 @@ class Dropdown {
   private getFocusableItems(menu: HTMLElement): HTMLElement[] {
     return Array.from(
       menu.querySelectorAll<HTMLElement>('.dropdown-item:not(:disabled):not(.disabled)')
-    ).filter((item) => item.closest('.dropdown-menu') === menu);
+    ).filter((item) => item.closest('.dropdown-menu') === menu
+      && !item.closest('[hidden]') && item.getAttribute('aria-disabled') !== 'true');
+  }
+
+  private getSearch(menu: HTMLElement): DropdownSearch | null {
+    if (!menu.hasAttribute('data-dropdown-search')) {
+      return null;
+    }
+    if (!this.searches.has(menu)) {
+      this.searches.set(menu, new DropdownSearch(menu, () => this.getFocusableItems(menu)));
+    }
+    return this.searches.get(menu);
   }
 
   private isRtl(element: HTMLElement): boolean {
@@ -133,6 +160,18 @@ class Dropdown {
     // If the focused element's closest dropdown-menu is not this menu,
     // the event belongs to a nested submenu and should not be handled here.
     if (activeElement && activeElement.closest('.dropdown-menu') !== menu) {
+      return;
+    }
+
+    if (this.searches.get(menu)?.handleKeydown(e)) {
+      return;
+    }
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      e.stopPropagation();
+      const trigger = document.querySelector<HTMLElement>(`[popovertarget="${menu.id}"]`);
+      menu.hidePopover();
+      trigger?.focus();
       return;
     }
 
@@ -155,7 +194,7 @@ class Dropdown {
         break;
       case 'ArrowUp':
         e.preventDefault();
-        items[(currentIndex - 1 + items.length) % items.length].focus();
+        items[currentIndex < 0 ? items.length - 1 : (currentIndex - 1 + items.length) % items.length].focus();
         break;
       case 'ArrowRight':
       case 'ArrowLeft':
@@ -185,15 +224,6 @@ class Dropdown {
           }
         }
         break;
-      case 'Escape': {
-        // Close the current menu and return focus to its trigger
-        e.preventDefault();
-        e.stopPropagation();
-        const trigger = document.querySelector<HTMLElement>(`[popovertarget="${menu.id}"]`);
-        menu.hidePopover();
-        trigger?.focus();
-        break;
-      }
       case 'Home':
         e.preventDefault();
         items[0].focus();

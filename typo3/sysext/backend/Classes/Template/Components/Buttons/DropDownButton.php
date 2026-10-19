@@ -233,7 +233,7 @@ class DropDownButton implements ButtonInterface
         $buttonContent = $icon . ($icon !== '' && $buttonLabel !== '' ? ' ' : '') . $buttonLabel;
 
         return sprintf(
-            '<div class="btn-group"><button %s>%s</button><ul class="dropdown-menu">%s</ul></div>',
+            '<div class="btn-group"><button %s>%s</button><ul class="dropdown-menu" data-dropdown-search>%s</ul></div>',
             GeneralUtility::implodeAttributes($attributes, true),
             $buttonContent,
             implode('', array_map(static fn(DropDownItemInterface $item) => '<li>' . $item->render() . '</li>', $items))

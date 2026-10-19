@@ -25,6 +25,25 @@
             <f:sanitize.html><f:translate key="component.dropdown.introtext" domain="styleguide.messages" /></f:sanitize.html>
         </p>
 
+        <h2><f:translate key="component.dropdown.section.search.headline" domain="styleguide.messages" /></h2>
+        <p><f:translate key="component.dropdown.section.search.description" domain="styleguide.messages" /></p>
+        <f:variable name="searchCode">$button = $componentFactory->createDropDownButton()
+    ->setLabel('Language')
+    ->setShowLabelText(true);
+// Add seven or more options: search appears automatically.</f:variable>
+        <sg:example codePreview="true" customCode="{searchCode}" codeLanguage="php">
+            <f:format.raw>{searchExamples.visible}</f:format.raw>
+        </sg:example>
+        <h3><f:translate key="component.dropdown.section.search.typing.headline" domain="styleguide.messages" /></h3>
+        <p><f:translate key="component.dropdown.section.search.typing.description" domain="styleguide.messages" /></p>
+        <f:variable name="searchTypingCode">$button = $componentFactory->createDropDownButton()
+    ->setLabel('Language')
+    ->setShowLabelText(true);
+// Add fewer than seven options: type to reveal search.</f:variable>
+        <sg:example codePreview="true" customCode="{searchTypingCode}" codeLanguage="php">
+            <f:format.raw>{searchExamples.typing}</f:format.raw>
+        </sg:example>
+
         <h2><f:translate key="component.dropdown.section.toggles.headline" domain="styleguide.messages" /></h2>
         <f:variable name="customCode">
             <button class="btn btn-default dropdown-toggle" popovertarget="demo">

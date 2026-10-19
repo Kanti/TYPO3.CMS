@@ -578,6 +578,18 @@
         <source>State</source>
       </trans-unit>
       <!-- Component: Dropdown -->
+      <trans-unit id="component.dropdown.section.search.headline">
+        <source>Search in dropdown buttons</source>
+      </trans-unit>
+      <trans-unit id="component.dropdown.section.search.description">
+        <source>Dropdown buttons created with ComponentFactory support searching their items. With seven or more visible options, the search field is shown and focused automatically when the dropdown opens. Matching text is highlighted in the results. Use arrow keys to navigate the filtered results, Enter to activate an item, and Escape to close. Closing resets the search and highlighting.</source>
+      </trans-unit>
+      <trans-unit id="component.dropdown.section.search.typing.headline">
+        <source>Search on typing with fewer than seven options</source>
+      </trans-unit>
+      <trans-unit id="component.dropdown.section.search.typing.description">
+        <source>With fewer than seven visible options, the search field is initially hidden. Start typing on the dropdown button or an item to reveal the search field and filter from the first character.</source>
+      </trans-unit>
       <trans-unit id="component.dropdown.headline">
         <source>Dropdown</source>
       </trans-unit>
@@ -1138,6 +1150,12 @@
         <source><![CDATA[When the container becomes too narrow (below 750px), the navigation automatically switches to flyout mode using CSS container queries. In flyout mode, the navigation overlays the content instead of sitting beside it, and resizing is disabled.]]></source>
       </trans-unit>
       <!-- Component: Select -->
+      <trans-unit id="component.select.section.search.headline">
+        <source>Search in FormEngine dropdown selects</source>
+      </trans-unit>
+      <trans-unit id="component.select.section.search.description">
+        <source>FormEngine selectSingle and selectCountry fields support searching automatically. With seven or more visible options, search is shown on opening; with fewer options, typing reveals it. Matching text is highlighted without changing its spacing. Arrow keys navigate, Enter selects, and Escape closes without changing the value.</source>
+      </trans-unit>
       <trans-unit id="component.select.headline">
         <source>Select</source>
       </trans-unit>

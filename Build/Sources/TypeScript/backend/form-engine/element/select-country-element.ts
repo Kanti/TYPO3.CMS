@@ -15,6 +15,7 @@ import RegularEvent from '@typo3/core/event/regular-event';
 import DocumentService from '@typo3/core/document-service';
 import FormEngine, { type OnFieldChangeItem } from '@typo3/backend/form-engine';
 import { selector } from '@typo3/core/literals';
+import { SelectElement } from '@typo3/backend/element/select-element';
 
 interface SelectCountryElementOptions {
   onChange?: OnFieldChangeItem[];
@@ -76,6 +77,8 @@ class SelectCountryElement {
       selectElement.dispatchEvent(new Event('change'));
       target.closest('.form-wizard-icon-list-item a').classList.add('active');
     }).delegateTo(selectElement.closest('.form-control-wrap'), '.t3js-forms-select-single-icons .form-wizard-icon-list-item a:not(.active)');
+
+    SelectElement.enhance(selectElement);
   };
 }
 
