@@ -627,6 +627,108 @@ final class ComponentsController
         return $view->renderResponse('Backend/Components/Datetime');
     }
 
+    /**
+     * @return list<array{label: string, options: list<array{value: string, label: string}>}>
+     */
+    private function getSearchableSelectGroups(): array
+    {
+        $groups = [
+            'Fruits' => [
+                'Apple',
+                'Apricot',
+                'Açaí',
+                'Banana',
+                'Blackberry',
+                'Blueberry',
+                'Cherry',
+                'Grape',
+                'Kiwi',
+                'Lemon',
+                'Mango',
+                'Orange',
+                'Papaya',
+                'Pear',
+                'Pineapple',
+                'Raspberry',
+                'Strawberry',
+            ],
+            'Vegetables' => [
+                'Artichoke',
+                'Asparagus',
+                'Broccoli',
+                'Carrot',
+                'Cauliflower',
+                'Courgette',
+                'Cucumber',
+                'Jalapeño',
+                'Kohlrabi',
+                'Leek',
+                'Onion',
+                'Pepper',
+                'Potato',
+                'Spinach',
+                'Tomato',
+            ],
+            'Herbs and spices' => [
+                'Basil',
+                'Chives',
+                'Cinnamon',
+                'Coriander',
+                'Dill',
+                'Nutmeg',
+                'Oregano',
+                'Paprika',
+                'Parsley',
+                'Rosemary',
+                'Saffron',
+                'Thyme',
+            ],
+            'Dairy' => [
+                'Butter',
+                'Crème fraîche',
+                'Emmentaler',
+                'Gruyère',
+                'Mascarpone',
+                'Milk',
+                'Quark',
+                'Yoghurt',
+            ],
+            'Bakery' => [
+                'Baguette',
+                'Brezel',
+                'Brioche',
+                'Croissant',
+                'Pain au chocolat',
+                'Pumpernickel',
+                'Sourdough bread',
+            ],
+            'Beverages' => [
+                'Apple juice',
+                'Café au lait',
+                'Coffee',
+                'Green tea',
+                'Lemonade',
+                'Mineral water',
+                'Orange juice',
+            ],
+        ];
+        $result = [];
+        foreach ($groups as $groupLabel => $optionLabels) {
+            $options = [];
+            foreach ($optionLabels as $optionLabel) {
+                $options[] = [
+                    'value' => strtolower(str_replace(' ', '-', $optionLabel)),
+                    'label' => $optionLabel,
+                ];
+            }
+            $result[] = [
+                'label' => $groupLabel,
+                'options' => $options,
+            ];
+        }
+        return $result;
+    }
+
     private function renderSelectView(ServerRequestInterface $request): ResponseInterface
     {
         $view = $this->createModuleTemplate($request, 'select');
@@ -634,6 +736,7 @@ final class ComponentsController
             'actions' => $this->allowedActions,
             'currentAction' => 'select',
             'routeIdentifier' => 'styleguide_components',
+            'searchableSelectGroups' => $this->getSearchableSelectGroups(),
         ]);
         return $view->renderResponse('Backend/Components/Select');
     }

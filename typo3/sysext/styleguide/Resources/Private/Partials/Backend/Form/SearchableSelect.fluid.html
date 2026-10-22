@@ -1,0 +1,27 @@
+<html
+    xmlns:f="http://typo3.org/ns/TYPO3/CMS/Fluid/ViewHelpers"
+    data-namespace-typo3-fluid="true"
+>
+
+<div class="form-group{f:if(condition: additionalClass, then: ' {additionalClass}')}">
+    <label for="{identifier}" class="form-label">{f:if(condition: fieldLabel, then: fieldLabel, else: 'Field label')}</label>
+    <typo3-backend-searchable-select>
+        <select
+            class="form-select"
+            id="{identifier}"
+            {f:if(condition: formText, then: 'aria-describedby="form-text-{identifier}"')}
+            {f:if(condition: disabled, then: 'disabled')}
+        >
+            <f:for each="{groups}" as="group">
+            <optgroup label="{group.label}">
+                <f:for each="{group.options}" as="option">
+                <option value="{option.value}"{f:if(condition: '{option.value} == {selected}', then: ' selected')}>{option.label}</option>
+                </f:for>
+            </optgroup>
+            </f:for>
+        </select>
+    </typo3-backend-searchable-select>
+    <f:if condition="{formText}"><div id="form-text-{identifier}" class="form-text">{formText}</div></f:if>
+</div>
+
+</html>

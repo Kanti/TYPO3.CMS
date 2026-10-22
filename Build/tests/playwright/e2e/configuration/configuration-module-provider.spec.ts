@@ -25,6 +25,17 @@ test.describe('Configuration Module Provider', () => {
     await expect(contentFrame.getByText('typo3/cms-frontend/authentication').first()).toBeVisible();
   });
 
+  test('filters providers in the original dropdown', async ({ backend }) => {
+    const header = backend.contentFrame.locator('.t3js-module-docheader-buttons');
+    await header.getByRole('button', { name: 'Configuration to show' }).click();
+    const menu = header.locator('.dropdown-menu:popover-open');
+    const search = menu.getByRole('searchbox', { name: 'Filter by item' });
+    await search.fill('psr-15');
+    await expect(menu.locator('li:not([hidden]) > .dropdown-item')).toHaveText(['HTTP Middlewares (PSR-15)']);
+    await search.press('Enter');
+    await expect(backend.contentFrame.locator('h1')).toContainText('Configuration of "HTTP Middlewares (PSR-15)"');
+  });
+
   test('See all pages in dropdown', async ({ backend }) => {
     const contentFrame = backend.contentFrame;
 

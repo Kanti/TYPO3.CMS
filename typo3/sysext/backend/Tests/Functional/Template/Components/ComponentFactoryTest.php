@@ -37,6 +37,19 @@ final class ComponentFactoryTest extends FunctionalTestCase
     }
 
     #[Test]
+    public function createDropDownButtonEnablesSearch(): void
+    {
+        $button = $this->subject->createDropDownButton()
+            ->setLabel('Languages')
+            ->setShowLabelText(true)
+            ->addItem($this->subject->createDropDownItem()->setTag('button')->setLabel('Deutsch'));
+
+        self::assertTrue($button->isValid());
+        self::assertStringContainsString('<typo3-backend-searchable-select', $button->render());
+        self::assertStringContainsString('Deutsch', $button->render());
+    }
+
+    #[Test]
     public function createBackButtonReturnsValidLinkButton(): void
     {
         $button = $this->subject->createBackButton('/some/return/url');

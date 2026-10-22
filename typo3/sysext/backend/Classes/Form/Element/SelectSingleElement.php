@@ -104,6 +104,7 @@ class SelectSingleElement extends AbstractFormElement
         $selectId = StringUtility::getUniqueId('tceforms-select-');
         $selectedItem = null;
         $size = (int)($config['size'] ?? 0);
+        $searchable = $size <= 1;
 
         // Style set on <select/>
         $options = '';
@@ -227,9 +228,15 @@ class SelectSingleElement extends AbstractFormElement
             }
             $html[] =               '</span>';
         }
+        if ($searchable) {
+            $html[] =               '<typo3-backend-searchable-select>';
+        }
         $html[] =                   '<select ' . GeneralUtility::implodeAttributes($selectAttributes, true) . '>';
         $html[] =                       $options;
         $html[] =                   '</select>';
+        if ($searchable) {
+            $html[] =               '</typo3-backend-searchable-select>';
+        }
         if ($hasIcons) {
             $html[] =           '</div>';
         }
@@ -250,6 +257,9 @@ class SelectSingleElement extends AbstractFormElement
         $html[] =   '</div>';
         $html[] = '</div>';
 
+        if ($searchable) {
+            $resultArray['javaScriptModules'][] = JavaScriptModuleInstruction::create('@typo3/backend/element/searchable-select-element.js');
+        }
         $onFieldChangeItems = $this->getOnFieldChangeItems($parameterArray['fieldChangeFunc'] ?? []);
         $resultArray['javaScriptModules']['selectSingleElement'] = JavaScriptModuleInstruction::create(
             '@typo3/backend/form-engine/element/select-single-element.js'

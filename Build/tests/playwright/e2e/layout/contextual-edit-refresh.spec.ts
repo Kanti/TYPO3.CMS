@@ -40,6 +40,7 @@ test('contextual record edit sheet survives a "Refresh required" round trip', as
     await modalContent.getByRole('tab', { name: 'Plugin' }).click();
     await modalContent
       .getByLabel(/Form definition/)
+      .and(modalContent.locator('select'))
       .selectOption({ value: 'EXT:styleguide/Resources/Private/Forms/simpleform.form.yaml' });
 
     const refreshDialog = page.getByRole('dialog', { name: 'Refresh required' });
@@ -53,7 +54,7 @@ test('contextual record edit sheet survives a "Refresh required" round trip', as
 
     const modalContent = await backend.modal.getModalContent();
     await expect(
-      modalContent.getByLabel(/Form definition/)
+      modalContent.getByLabel(/Form definition/).and(modalContent.locator('select'))
     ).toHaveValue('EXT:styleguide/Resources/Private/Forms/simpleform.form.yaml', { timeout: 10000 });
   });
 
