@@ -22,6 +22,7 @@ use Psr\Http\Message\ServerRequestInterface;
 use TYPO3\CMS\Backend\Attribute\AsController;
 use TYPO3\CMS\Backend\Dto\Breadcrumb\BreadcrumbNode;
 use TYPO3\CMS\Backend\Routing\UriBuilder;
+use TYPO3\CMS\Backend\Template\Components\ComponentFactory;
 use TYPO3\CMS\Backend\Template\Enum\ModuleLayout;
 use TYPO3\CMS\Backend\Template\ModuleTemplate;
 use TYPO3\CMS\Backend\Template\ModuleTemplateFactory;
@@ -87,6 +88,7 @@ final class ComponentsController
         private readonly ModuleTemplateFactory $moduleTemplateFactory,
         private readonly FlashMessageService $flashMessageService,
         private readonly UriBuilder $uriBuilder,
+        private readonly ComponentFactory $componentFactory,
     ) {}
 
     /**
@@ -288,6 +290,21 @@ final class ComponentsController
     private function renderDropdownView(ServerRequestInterface $request): ResponseInterface
     {
         $view = $this->createModuleTemplate($request, 'dropdown');
+        $searchExamples = [];
+        $examples = [
+            'visible' => ['English', 'Deutsch', 'Español', 'Français', 'Italiano', 'Português', 'Polski'],
+            'typing' => ['English', 'Deutsch', 'Français'],
+        ];
+        foreach ($examples as $mode => $languages) {
+            $button = $this->componentFactory->createDropDownButton()
+                ->setLabel('Language')
+                ->setShowLabelText(true);
+            foreach ($languages as $language) {
+                $button->addItem($this->componentFactory->createDropDownItem()->setTag('button')->setLabel($language));
+            }
+            $searchExamples[$mode] = $button->render();
+        }
+        $view->assign('searchExamples', $searchExamples);
         $view->assignMultiple([
             'actions' => $this->allowedActions,
             'currentAction' => 'dropdown',
