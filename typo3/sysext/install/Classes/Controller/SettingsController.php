@@ -223,6 +223,7 @@ class SettingsController extends AbstractController
                 'Configuration not writable',
                 ContextualFeedbackSeverity::ERROR
             );
+            return new JsonResponse(['success' => true, 'status' => $messages]);
         }
         // Sanitize given user list and write out
         $newUserList = [];
@@ -233,6 +234,12 @@ class SettingsController extends AbstractController
                     $newUserList[] = (int)$uid;
                 }
             }
+        }
+
+        $currentUserList = array_map('intval', $GLOBALS['TYPO3_CONF_VARS']['SYS']['systemMaintainers'] ?? []);
+        if (array_diff($newUserList, $currentUserList) === [] && array_diff($currentUserList, $newUserList) === []) {
+            $messages[] = new FlashMessage('No changes to the system maintainer list.', 'System maintainers not updated', ContextualFeedbackSeverity::INFO);
+            return new JsonResponse(['success' => true, 'status' => $messages]);
         }
 
         $container = $this->lateBootService->getContainer(true);
@@ -507,8 +514,17 @@ class SettingsController extends AbstractController
         } else {
             $extensionKey = $request->getParsedBody()['install']['extensionKey'];
             $configuration = $request->getParsedBody()['install']['extensionConfiguration'] ?? [];
-            $nestedConfiguration = [];
+            $nestedConfiguration = $this->configurationManager->getLocalConfiguration()['EXTENSIONS'][$extensionKey] ?? [];
+            $currentConfiguration = $GLOBALS['TYPO3_CONF_VARS']['EXTENSIONS'][$extensionKey] ?? [];
             foreach ($configuration as $configKey => $value) {
+                // Unchanged form values may originate from additional.php and must not be persisted.
+                if (ArrayUtility::isValidPath($currentConfiguration, $configKey, '.')) {
+                    $currentValue = ArrayUtility::getValueByPath($currentConfiguration, $configKey, '.');
+                    $currentValue = is_bool($currentValue) ? (int)$currentValue : $currentValue;
+                    if ((string)$currentValue === (string)$value) {
+                        continue;
+                    }
+                }
                 $nestedConfiguration = ArrayUtility::setValueByPath($nestedConfiguration, $configKey, $value, '.');
             }
             new ExtensionConfiguration()->set($extensionKey, $nestedConfiguration);
@@ -595,7 +611,7 @@ class SettingsController extends AbstractController
                 if (isset($configurationDescription['SYS']['items']['features']['items'][$featureName]['description'])) {
                     $path = 'SYS/features/' . $featureName;
                     $newValue = isset($enabledFeaturesFromPost[$featureName]);
-                    if ($newValue !== $this->configurationManager->getConfigurationValueByPath($path)) {
+                    if ($newValue !== (bool)$GLOBALS['TYPO3_CONF_VARS']['SYS']['features'][$featureName]) {
                         $configurationPathValuePairs[$path] = $newValue;
                         $updatedFeatures[] = $featureName . ' [' . ($newValue ? 'On' : 'Off') . ']';
                     }

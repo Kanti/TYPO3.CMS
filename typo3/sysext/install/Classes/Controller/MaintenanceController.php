@@ -557,7 +557,7 @@ class MaintenanceController extends AbstractController
                     $newAdminUserUid = (int)$connectionPool->getConnectionForTable('be_users')->lastInsertId();
 
                     // Get the list of the existing systemMaintainer
-                    $existingSystemMaintainersList = $GLOBALS['TYPO3_CONF_VARS']['SYS']['systemMaintainers'] ?? [];
+                    $existingSystemMaintainersList = $this->configurationManager->getLocalConfiguration()['SYS']['systemMaintainers'] ?? [];
 
                     // Add the new admin user to the existing systemMaintainer list
                     $newSystemMaintainersList = $existingSystemMaintainersList;
@@ -643,7 +643,7 @@ class MaintenanceController extends AbstractController
                     $dependencies = $this->locales->getLocaleDependencies($availableIso);
                     if (!empty($dependencies)) {
                         foreach ($dependencies as $dependency) {
-                            if (!in_array($dependency, $activeLanguages, true)) {
+                            if (!in_array($dependency, $activateArray, true)) {
                                 $activateArray[] = $dependency;
                             }
                         }
@@ -651,11 +651,12 @@ class MaintenanceController extends AbstractController
                 }
             }
             if (!empty($activateArray)) {
-                $activeLanguages = array_merge($activeLanguages, $activateArray);
+                $storedLanguages = $this->configurationManager->getLocalConfiguration()['LANG']['availableLocales'] ?? [];
+                $activeLanguages = array_values(array_unique(array_merge($storedLanguages, $activateArray)));
                 sort($activeLanguages);
                 $this->configurationManager->setLocalConfigurationValueByPath(
-                    'LANG',
-                    ['availableLocales' => $activeLanguages]
+                    'LANG/availableLocales',
+                    $activeLanguages
                 );
                 $activationArray = [];
                 foreach ($activateArray as $activateIso) {
@@ -728,17 +729,20 @@ class MaintenanceController extends AbstractController
             } else {
                 if (in_array($iso, $activeLanguages, true)) {
                     // Deactivate this language
+                    $storedLanguages = $this->configurationManager->getLocalConfiguration()['LANG']['availableLocales'] ?? [];
                     $newActiveLanguages = [];
-                    foreach ($activeLanguages as $activeLanguage) {
+                    foreach ($storedLanguages as $activeLanguage) {
                         if ($activeLanguage === $iso) {
                             continue;
                         }
                         $newActiveLanguages[] = $activeLanguage;
                     }
-                    $this->configurationManager->setLocalConfigurationValueByPath(
-                        'LANG',
-                        ['availableLocales' => $newActiveLanguages]
-                    );
+                    if ($newActiveLanguages !== $storedLanguages) {
+                        $this->configurationManager->setLocalConfigurationValueByPath(
+                            'LANG/availableLocales',
+                            $newActiveLanguages
+                        );
+                    }
                     $messageQueue->enqueue(new FlashMessage(
                         'Language "' . $availableLanguages[$iso] . ' (' . $iso . ')" has been deactivated'
                     ));
