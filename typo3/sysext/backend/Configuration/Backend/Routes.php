@@ -13,6 +13,18 @@ use TYPO3\CMS\Backend\Security\SudoMode\Access\AccessLifetime;
  * The "access" property declares who can reach a route, see \TYPO3\CMS\Backend\Routing\RouteAccess.
  */
 return [
+    'session_synchronization_confirm' => [
+        'path' => '/session/synchronize/confirm',
+        'methods' => ['POST'],
+        'access' => 'authenticated-without-token',
+        'target' => Controller\SessionSynchronizationController::class . '::confirmAction',
+    ],
+    'session_synchronization_receipt' => [
+        'path' => '/session/synchronize/receipt',
+        'methods' => ['POST'],
+        'access' => 'authenticated-without-token',
+        'target' => Controller\SessionSynchronizationController::class . '::receiptAction',
+    ],
     // Login screen of the TYPO3 Backend
     'login' => [
         'path' => '/login',

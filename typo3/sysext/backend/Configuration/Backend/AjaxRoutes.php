@@ -12,6 +12,12 @@ use TYPO3\CMS\Backend\Security\SudoMode\Access\AccessLifetime;
  */
 return [
 
+    'session_synchronization_control' => [
+        'path' => '/session/synchronize/control',
+        'methods' => ['POST'],
+        'target' => Controller\SessionSynchronizationController::class . '::controlAction',
+    ],
+
     // Rename resource
     'resource_rename' => [
         'path' => '/resource/rename',
