@@ -24,8 +24,10 @@ use Psr\Http\Server\RequestHandlerInterface;
 use TYPO3\CMS\Core\Context\Context;
 use TYPO3\CMS\Core\Context\DateTimeAspect;
 use TYPO3\CMS\Core\Context\LanguageAspectFactory;
+use TYPO3\CMS\Core\Context\UserAspect;
 use TYPO3\CMS\Core\Domain\DateTimeFactory;
 use TYPO3\CMS\Core\Domain\Repository\PageRepository;
+use TYPO3\CMS\Core\Preview\PreviewToken;
 use TYPO3\CMS\Core\Routing\PageArguments;
 use TYPO3\CMS\Core\Schema\LanguageMarker;
 use TYPO3\CMS\Core\Utility\GeneralUtility;
@@ -33,6 +35,8 @@ use TYPO3\CMS\Core\Utility\RootlineUtility;
 use TYPO3\CMS\Frontend\Aspect\PreviewAspect;
 use TYPO3\CMS\Frontend\Controller\ErrorController;
 use TYPO3\CMS\Frontend\Page\PageAccessFailureReasons;
+use TYPO3\CMS\Frontend\Preview\PreviewNavigationScript;
+use TYPO3\CMS\Frontend\Preview\PreviewPageAccess;
 
 /**
  * Middleware for handling preview settings
@@ -44,6 +48,8 @@ readonly class PreviewSimulator implements MiddlewareInterface
     public function __construct(
         protected Context $context,
         protected PageRepository $pageRepository,
+        private PreviewPageAccess $previewPageAccess,
+        private PreviewNavigationScript $previewNavigationScript,
     ) {}
 
     /**
@@ -53,6 +59,36 @@ readonly class PreviewSimulator implements MiddlewareInterface
      */
     public function process(ServerRequestInterface $request, RequestHandlerInterface $handler): ResponseInterface
     {
+        // A preview token brings date, visibility and workspace along, see PreviewTokenAuthenticator
+        $previewToken = $request->getAttribute(PreviewTokenAuthenticator::ATTRIBUTE);
+        if ($previewToken instanceof PreviewToken) {
+            $pageArguments = $request->getAttribute('routing');
+            if (!$pageArguments instanceof PageArguments) {
+                return GeneralUtility::makeInstance(ErrorController::class)->pageNotFoundAction(
+                    $request,
+                    'Page Arguments could not be resolved',
+                    ['code' => PageAccessFailureReasons::INVALID_PAGE_ARGUMENTS]
+                );
+            }
+            // A refusal leaves the stack through PreviewTokenAuthenticator, which answers with the error page
+            $groups = $this->previewPageAccess->authorize($previewToken, $pageArguments->getPageId());
+            // An editor without a simulated login keeps a frontend login of the frame, as with a backend login
+            if ($previewToken->profile->loggedIn) {
+                $this->replaceUserGroups($request, $groups);
+                if ($groups === []) {
+                    // A login without any group still counts as login: "-2" applies, "-1" does not
+                    $this->context->setAspect('frontend.user', new UserAspect($request->getAttribute('frontend.user'), [0, -2]));
+                }
+            } elseif ($previewToken->isVisitorWithoutBackendUser()) {
+                // A token without an editor shows the page as a visitor sees it, who is not logged in: "-1" applies
+                $this->context->setAspect('frontend.user', new UserAspect(null, [0, -1]));
+            }
+            if ($this->editorSeesHiddenPage($previewToken, $request)) {
+                $this->context->setAspect('visibility', $this->context->getAspect('visibility')->withIncludeHiddenPages(true));
+                $this->context->setAspect('frontend.preview', new PreviewAspect(true));
+            }
+            return $this->previewNavigationScript->addToPage($request, $handler, $previewToken, $pageArguments->getPageId());
+        }
         $isLoggedIn = $this->context->getPropertyFromAspect('backend.user', 'isLoggedIn', false);
         $isOfflineWorkspace = $this->context->getPropertyFromAspect('workspace', 'isOffline', false);
         // When previewing a workspace with the preview link, the PreviewUserAuthentication is NOT marked as
@@ -123,6 +159,30 @@ readonly class PreviewSimulator implements MiddlewareInterface
     }
 
     /**
+     * The editor of a token sees a hidden page as with a backend login, unless the token
+     * shows all hidden pages anyway
+     *
+     * @internal
+     */
+    protected function editorSeesHiddenPage(PreviewToken $previewToken, ServerRequestInterface $request): bool
+    {
+        if ($previewToken->isVisitorWithoutBackendUser()) {
+            return false;
+        }
+        if ($previewToken->profile->hiddenPages) {
+            return false;
+        }
+        $pageArguments = $request->getAttribute('routing');
+        if (!$pageArguments instanceof PageArguments) {
+            return false;
+        }
+        if ($this->checkIfPageIsHidden($pageArguments->getPageId(), $request)) {
+            return true;
+        }
+        return $this->checkIfRootlineRequiresPreview($pageArguments->getPageId());
+    }
+
+    /**
      * Checks if the page is hidden in the active workspace + language setup.
      */
     protected function checkIfPageIsHidden(int $pageId, ServerRequestInterface $request): bool
@@ -162,6 +222,29 @@ readonly class PreviewSimulator implements MiddlewareInterface
         $GLOBALS['SIM_EXEC_TIME'] = $queryTime;
         $this->context->setAspect('date', new DateTimeAspect(DateTimeFactory::createFromTimestamp($queryTime)));
         return true;
+    }
+
+    /**
+     * The groups of a preview token replace the groups of a logged-in frontend user,
+     * so the preview shows exactly what members of these groups see.
+     *
+     * @param list<int> $groups
+     * @internal
+     */
+    protected function replaceUserGroups(ServerRequestInterface $request, array $groups): void
+    {
+        $frontendUser = $request->getAttribute('frontend.user');
+        if (!is_array($frontendUser->user)) {
+            $frontendUser->user = [$frontendUser->userid_column => PHP_INT_MAX];
+        }
+        $frontendUser->user[$frontendUser->usergroup_column] = implode(',', $groups);
+        // Set this option so the is_online timestamp is not updated in updateOnlineTimestamp()
+        $frontendUser->user['is_online'] = $this->context->getPropertyFromAspect('date', 'timestamp');
+        $frontendUser->userGroups = [];
+        foreach ($groups as $group) {
+            $frontendUser->userGroups[$group] = ['uid' => $group, 'title' => '_PREVIEW_'];
+        }
+        $this->context->setAspect('frontend.user', $frontendUser->createUserAspect());
     }
 
     /**

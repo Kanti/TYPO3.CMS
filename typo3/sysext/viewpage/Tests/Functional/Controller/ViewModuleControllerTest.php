@@ -18,16 +18,26 @@ declare(strict_types=1);
 namespace TYPO3\CMS\Viewpage\Tests\Functional\Controller;
 
 use PHPUnit\Framework\Attributes\Test;
+use Psr\Http\Message\ResponseInterface;
 use TYPO3\CMS\Backend\Context\PageContextFactory;
 use TYPO3\CMS\Backend\Module\ModuleData;
 use TYPO3\CMS\Backend\Module\ModuleProvider;
+use TYPO3\CMS\Backend\Routing\Event\AfterPagePreviewUriGeneratedEvent;
+use TYPO3\CMS\Backend\Routing\Event\BeforePagePreviewUriGeneratedEvent;
 use TYPO3\CMS\Backend\Routing\Route;
 use TYPO3\CMS\Backend\User\SharedUserPreferences;
 use TYPO3\CMS\Core\Authentication\BackendUserAuthentication;
 use TYPO3\CMS\Core\Core\SystemEnvironmentBuilder;
+use TYPO3\CMS\Core\Database\ConnectionPool;
+use TYPO3\CMS\Core\EventDispatcher\ListenerProvider;
 use TYPO3\CMS\Core\Http\NormalizedParams;
 use TYPO3\CMS\Core\Http\ServerRequest;
+use TYPO3\CMS\Core\Http\Uri;
 use TYPO3\CMS\Core\Localization\LanguageServiceFactory;
+use TYPO3\CMS\Core\Preview\PreviewTokenService;
+use TYPO3\CMS\Core\Security\ContentSecurityPolicy\Directive;
+use TYPO3\CMS\Core\Security\ContentSecurityPolicy\PolicyRegistry;
+use TYPO3\CMS\Core\Security\ContentSecurityPolicy\UriValue;
 use TYPO3\CMS\Core\Site\SiteFinder;
 use TYPO3\CMS\Core\Tests\Functional\SiteHandling\SiteBasedTestTrait;
 use TYPO3\CMS\Viewpage\Controller\ViewModuleController;
@@ -182,7 +192,197 @@ final class ViewModuleControllerTest extends FunctionalTestCase
         $controller->handleRequest($request);
     }
 
-    private function createRequest(int $pageId, array $additionalParams = []): ServerRequest
+    #[Test]
+    public function visiblePageIsShownInTheFrameWithAPreviewToken(): void
+    {
+        $settings = $this->previewSettingsOf($this->get(ViewModuleController::class)->handleRequest($this->createRequest(1)));
+
+        $this->assertFrameWithPreviewToken($settings);
+    }
+
+    #[Test]
+    public function hiddenPageIsShownInTheFrameWithAPreviewToken(): void
+    {
+        $this->get(ConnectionPool::class)->getConnectionForTable('pages')->update('pages', ['hidden' => 1], ['uid' => 1]);
+
+        $settings = $this->previewSettingsOf($this->get(ViewModuleController::class)->handleRequest($this->createRequest(1)));
+
+        $this->assertFrameWithPreviewToken($settings);
+    }
+
+    #[Test]
+    public function pageOnTheHostOfTheBackendIsShownInTheFrameWithAPreviewToken(): void
+    {
+        $settings = $this->previewSettingsOf($this->get(ViewModuleController::class)->handleRequest($this->createRequest(1, [], 'example.com')));
+
+        $this->assertFrameWithPreviewToken($settings);
+    }
+
+    #[Test]
+    public function frameIsLoadedWithTheCookiesOfTheBrowserInEveryBrowser(): void
+    {
+        $content = (string)$this->get(ViewModuleController::class)->handleRequest($this->createRequest(1))->getBody();
+
+        self::assertMatchesRegularExpression('/<iframe[^>]*id="tx_viewpage_iframe"/', $content);
+        self::assertDoesNotMatchRegularExpression('/<iframe[^>]*credentialless/', $content);
+    }
+
+    #[Test]
+    public function viewButtonOpensTheSiteDirectlyWhereThePreviewNeedsNoToken(): void
+    {
+        $content = (string)$this->get(ViewModuleController::class)->handleRequest($this->createRequest(1))->getBody();
+
+        self::assertStringNotContainsString('/typo3/preview?', $content);
+    }
+
+    #[Test]
+    public function viewButtonOpensThePreviewPageWhereThePreviewNeedsAToken(): void
+    {
+        $this->get(ConnectionPool::class)->getConnectionForTable('pages')->update('pages', ['hidden' => 1], ['uid' => 1]);
+
+        $content = (string)$this->get(ViewModuleController::class)->handleRequest($this->createRequest(1))->getBody();
+
+        self::assertStringContainsString('/typo3/preview?', html_entity_decode($content));
+    }
+
+    #[Test]
+    public function addressOutsideTheSitesOfTheInstallationIsShownInTheFrameAsItIs(): void
+    {
+        $container = $this->get('service_container');
+        $container->set(
+            'headless-preview-uri-listener',
+            static function (BeforePagePreviewUriGeneratedEvent $event): void {
+                $event->setPreviewUri(new Uri('https://headless.example/page?ADMCMD_simTime=1'));
+            }
+        );
+        $container->get(ListenerProvider::class)->addListener(BeforePagePreviewUriGeneratedEvent::class, 'headless-preview-uri-listener');
+
+        $response = $this->get(ViewModuleController::class)->handleRequest($this->createRequest(1));
+        $settings = $this->previewSettingsOf($response);
+
+        self::assertSame('https://headless.example/page?ADMCMD_simTime=1', $settings['url']);
+        self::assertSame([], $settings['hosts']);
+        self::assertSame('', $settings['renewUrl']);
+        self::assertStringNotContainsString('not allowed', (string)$response->getBody());
+    }
+
+    #[Test]
+    public function relativeAddressOutsideTheSitesOfTheInstallationIsShownOnTheBackendHost(): void
+    {
+        $container = $this->get('service_container');
+        $container->set(
+            'relative-preview-uri-listener',
+            static function (AfterPagePreviewUriGeneratedEvent $event): void {
+                $event->setPreviewUri(new Uri('/headless/page?a=1'));
+            }
+        );
+        $container->get(ListenerProvider::class)->addListener(AfterPagePreviewUriGeneratedEvent::class, 'relative-preview-uri-listener');
+
+        $settings = $this->previewSettingsOf($this->get(ViewModuleController::class)->handleRequest($this->createRequest(1)));
+
+        self::assertSame('https://backend.example.org/headless/page?a=1', $settings['url']);
+        self::assertSame([], $settings['hosts']);
+        self::assertSame('', $settings['renewUrl']);
+    }
+
+    /**
+     * The module builds the address of the page once, for the frame and for the View
+     * button, so listeners of the preview events run once per request.
+     */
+    #[Test]
+    public function previewEventsAreDispatchedOncePerRequest(): void
+    {
+        $calls = [];
+        $container = $this->get('service_container');
+        $container->set('count-before-listener', static function (BeforePagePreviewUriGeneratedEvent $event) use (&$calls): void {
+            $calls[] = 'before';
+        });
+        $container->set('count-after-listener', static function (AfterPagePreviewUriGeneratedEvent $event) use (&$calls): void {
+            $calls[] = 'after';
+        });
+        $container->get(ListenerProvider::class)->addListener(BeforePagePreviewUriGeneratedEvent::class, 'count-before-listener');
+        $container->get(ListenerProvider::class)->addListener(AfterPagePreviewUriGeneratedEvent::class, 'count-after-listener');
+
+        $this->get(ViewModuleController::class)->handleRequest($this->createRequest(1));
+
+        self::assertSame(['before', 'after'], $calls);
+    }
+
+    /**
+     * The frame shows the site on its own origin, which the Content-Security-Policy of
+     * the module has to allow as frame source.
+     */
+    #[Test]
+    public function frameMayShowTheOriginsOfThePreview(): void
+    {
+        $this->get(ViewModuleController::class)->handleRequest($this->createRequest(1));
+
+        self::assertSame(['https://example.com'], $this->getFrameSources());
+    }
+
+    /**
+     * An address outside the sites of the installation is shown as it is, from its own
+     * origin, which the Content-Security-Policy of the module has to allow instead.
+     */
+    #[Test]
+    public function frameMayShowTheOriginOfAnAddressOutsideTheSitesOfTheInstallation(): void
+    {
+        $container = $this->get('service_container');
+        $container->set(
+            'headless-preview-uri-listener',
+            static function (BeforePagePreviewUriGeneratedEvent $event): void {
+                $event->setPreviewUri(new Uri('https://headless.example/page'));
+            }
+        );
+        $container->get(ListenerProvider::class)->addListener(BeforePagePreviewUriGeneratedEvent::class, 'headless-preview-uri-listener');
+
+        $this->get(ViewModuleController::class)->handleRequest($this->createRequest(1));
+
+        self::assertSame(['https://headless.example/page'], $this->getFrameSources());
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function getFrameSources(): array
+    {
+        $sources = [];
+        foreach ($this->get(PolicyRegistry::class)->getMutationCollections() as $collection) {
+            foreach ($collection->mutations as $mutation) {
+                if ($mutation->directive !== Directive::FrameSrc) {
+                    continue;
+                }
+                foreach ($mutation->sources as $source) {
+                    if ($source instanceof UriValue) {
+                        $sources[] = (string)$source;
+                    }
+                }
+            }
+        }
+        return $sources;
+    }
+
+    private function previewSettingsOf(ResponseInterface $response): array
+    {
+        self::assertSame(1, preg_match('/data-preview-settings="([^"]+)"/', (string)$response->getBody(), $matches), (string)$response->getBody());
+        return json_decode(html_entity_decode($matches[1]), true, flags: JSON_THROW_ON_ERROR);
+    }
+
+    private function assertFrameWithPreviewToken(array $settings): void
+    {
+        self::assertStringStartsWith('https://example.com/', $settings['url']);
+        self::assertNotSame('', $this->tokenOf($settings['url']));
+        self::assertNotSame('', $settings['renewUrl']);
+        self::assertContains('example.com', $settings['hosts']);
+    }
+
+    private function tokenOf(string $url): string
+    {
+        parse_str((string)parse_url($url, PHP_URL_QUERY), $query);
+        return (string)($query[PreviewTokenService::PARAMETER] ?? '');
+    }
+
+    private function createRequest(int $pageId, array $additionalParams = [], string $backendHost = 'backend.example.org'): ServerRequest
     {
         $site = $this->get(SiteFinder::class)->getSiteByIdentifier('test-site');
         $module = $this->get(ModuleProvider::class)->getModule('page_preview');
@@ -194,7 +394,7 @@ final class ViewModuleControllerTest extends FunctionalTestCase
 
         $queryParams = array_merge(['id' => $pageId], $additionalParams);
 
-        $request = new ServerRequest('https://example.com/typo3/')
+        $request = new ServerRequest('https://' . $backendHost . '/typo3/', 'GET', null, [], ['HTTP_HOST' => $backendHost, 'HTTPS' => 'on', 'SCRIPT_NAME' => '/index.php'])
             ->withAttribute('applicationType', SystemEnvironmentBuilder::REQUESTTYPE_BE)
             ->withAttribute('site', $site)
             ->withAttribute('route', $route)
@@ -204,6 +404,7 @@ final class ViewModuleControllerTest extends FunctionalTestCase
 
         $request = $request->withAttribute('normalizedParams', NormalizedParams::createFromRequest($request));
 
+        $GLOBALS['TYPO3_REQUEST'] = $request;
         $pageContextFactory = $this->get(PageContextFactory::class);
         $pageContext = $pageContextFactory->createFromRequest($request, $pageId, $this->backendUser);
         $request = $request->withAttribute('pageContext', $pageContext);

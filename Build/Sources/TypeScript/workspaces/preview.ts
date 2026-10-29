@@ -23,6 +23,7 @@ import RegularEvent from '@typo3/core/event/regular-event';
 import { topDocument } from '@typo3/core/utility/top-window';
 import labels from '~labels/workspaces.messages';
 import PersistentStorage from '@typo3/backend/storage/persistent';
+import PreviewFrame from '@typo3/backend/preview/preview-frame';
 
 /**
  * Stage ID for the publish execute action.
@@ -59,9 +60,19 @@ class Preview extends Workspaces {
 
     DocumentService.ready().then((): void => {
       this.getElements();
+      this.initializePreviewFrames();
       this.resizeViews();
       this.registerEvents();
       this.initStageButtons();
+    });
+  }
+
+  /**
+   * Loads the live and the workspace frame with their preview tokens
+   */
+  private initializePreviewFrames(): void {
+    document.querySelectorAll<HTMLIFrameElement>('iframe[data-preview-settings]').forEach((frame: HTMLIFrameElement): void => {
+      new PreviewFrame(frame, JSON.parse(frame.dataset.previewSettings));
     });
   }
 

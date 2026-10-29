@@ -1162,7 +1162,7 @@ class EditDocumentController
         $pageId = $this->popViewId ?: $this->firstEl->viewId;
         $previewUriBuilder = PreviewUriBuilder::createForRecordPreview($this->firstEl->table, $this->firstEl->record, $pageId);
         if ($previewUriBuilderForCurrentPage || $previewUriBuilder->isPreviewable()) {
-            $previewUrl = $previewUriBuilder->buildUri();
+            $previewUrl = $previewUriBuilder->buildBackendPreviewUri();
             if ($previewUrl) {
                 $viewButton = $this->componentFactory->createLinkButton()
                     ->setHref((string)$previewUrl)

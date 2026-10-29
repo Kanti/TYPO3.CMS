@@ -17,6 +17,7 @@ import PersistentStorage, { type UC } from '@typo3/backend/storage/persistent';
 import RegularEvent from '@typo3/core/event/regular-event';
 import DebounceEvent from '@typo3/core/event/debounce-event';
 import type { ResizeEvent } from '@interactjs/actions/resize/plugin';
+import PreviewFrame from '@typo3/backend/preview/preview-frame';
 
 enum Selectors {
   resizableContainerIdentifier = '.t3js-viewpage-resizeable',
@@ -46,6 +47,7 @@ class ViewPage {
 
   private readonly storagePrefix: string = 'moduleData.page_preview.States.';
   private iframe: HTMLIFrameElement;
+  private previewFrame: PreviewFrame;
   private inputCustomWidth: HTMLInputElement;
   private inputCustomHeight: HTMLInputElement;
   private customPresetItem: HTMLElement;
@@ -61,7 +63,8 @@ class ViewPage {
       const presetCustomLabel = document.querySelector('.t3js-preset-custom-label');
 
       this.defaultLabel = presetCustomLabel?.textContent.trim() ?? '';
-      this.iframe = document.getElementById('tx_this_iframe') as HTMLIFrameElement;
+      this.iframe = document.getElementById('tx_viewpage_iframe') as HTMLIFrameElement;
+      this.previewFrame = new PreviewFrame(this.iframe, JSON.parse(this.iframe.dataset.previewSettings));
       this.inputCustomWidth = document.querySelector<HTMLInputElement>(Selectors.inputWidthSelector);
       this.inputCustomHeight = document.querySelector<HTMLInputElement>(Selectors.inputHeightSelector);
       this.customPresetItem = document.querySelector<HTMLElement>(Selectors.customSelector);
@@ -180,7 +183,7 @@ class ViewPage {
 
     // Add event for refresh button click
     new RegularEvent('click', (): void => {
-      this.iframe.contentWindow.location.reload();
+      this.previewFrame.reload();
     }).bindTo(document.querySelector(Selectors.refreshSelector));
 
     let resizeStartWidth = 0;
