@@ -36,6 +36,13 @@ return [
         'target' => Controller\StateTrackerController::class . '::mainAction',
     ],
 
+    'preview' => [
+        'path' => '/preview',
+        'access' => 'authenticated-without-token',
+        'methods' => ['GET'],
+        'target' => Controller\PreviewController::class . '::showAction',
+    ],
+
     // Logout script for the TYPO3 Backend
     'logout' => [
         'path' => '/logout',

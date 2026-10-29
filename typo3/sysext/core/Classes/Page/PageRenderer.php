@@ -1329,6 +1329,9 @@ class PageRenderer implements SingletonInterface
         }
 
         $this->inlineSettings['ajaxUrls'] = $ajaxUrls;
+        if (!$publicRoutesOnly) {
+            $this->inlineSettings['previewUrl'] = (string)$uriBuilder->buildUriFromRoute('preview');
+        }
     }
 
     protected function addGlobalCSSUrlsToInlineSettings(ServerRequestInterface $request): void

@@ -70,7 +70,7 @@ class SiteBaseRedirectResolver implements MiddlewareInterface
         }
 
         // Language is found, and hidden but also not visible to the BE user, this needs to fail
-        if ($language instanceof SiteLanguage && !$this->isLanguageEnabled($language, $GLOBALS['BE_USER'] ?? null)) {
+        if ($language instanceof SiteLanguage && $request->getAttribute('frontend.preview.token') === null && !$this->isLanguageEnabled($language, $GLOBALS['BE_USER'] ?? null)) {
             return GeneralUtility::makeInstance(ErrorController::class)->pageNotFoundAction(
                 $request,
                 'Page is not available in the requested language.',

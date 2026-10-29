@@ -92,6 +92,9 @@ final class WorkspacePreview implements MiddlewareInterface
      */
     public function process(ServerRequestInterface $request, RequestHandlerInterface $handler): ResponseInterface
     {
+        if ($request->getAttribute('frontend.preview.token') !== null) {
+            return $handler->handle($request);
+        }
         $keyword = $this->getPreviewInputCode($request);
         $setCookieOnCurrentRequest = false;
         $normalizedParams = $request->getAttribute('normalizedParams');

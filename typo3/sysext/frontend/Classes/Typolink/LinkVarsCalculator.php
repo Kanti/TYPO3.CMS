@@ -35,6 +35,9 @@ readonly class LinkVarsCalculator
      */
     public function getAllowedLinkVarsFromRequest(string $linkVarsSetting, array $queryParams, Context $context): string
     {
+        if (is_string($queryParams['_ps'] ?? null) && $context->hasAspect('frontend.preview') && $context->getPropertyFromAspect('frontend.preview', 'isPreview', false)) {
+            $linkVarsSetting = ltrim($linkVarsSetting . ',_ps', ',');
+        }
         $calculatedLinkVars = '';
         $adminCommand = $queryParams['ADMCMD_prev'] ?? '';
         $isBackendUserLoggedIn = $context->getAspect('backend.user')->isLoggedIn();

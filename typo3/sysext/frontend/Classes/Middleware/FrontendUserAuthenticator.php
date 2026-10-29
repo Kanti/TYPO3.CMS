@@ -26,6 +26,7 @@ use Psr\Log\LoggerInterface;
 use Symfony\Component\RateLimiter\LimiterInterface;
 use TYPO3\CMS\Core\Authentication\Event\AfterUserLoggedInEvent;
 use TYPO3\CMS\Core\Context\Context;
+use TYPO3\CMS\Core\Database\ConnectionPool;
 use TYPO3\CMS\Core\Http\SetCookieService;
 use TYPO3\CMS\Core\RateLimiter\RateLimiterFactoryInterface;
 use TYPO3\CMS\Core\RateLimiter\RequestRateLimitedException;
@@ -53,6 +54,25 @@ readonly class FrontendUserAuthenticator implements MiddlewareInterface
     public function process(ServerRequestInterface $request, RequestHandlerInterface $handler): ResponseInterface
     {
         $frontendUser = GeneralUtility::makeInstance(FrontendUserAuthentication::class);
+        $preview = $request->getAttribute('frontend.preview.token');
+        if ($preview !== null) {
+            // A preview has its own groups and never authenticates or changes a real FE session.
+            $frontendUser->initializeStatelessSession();
+            $frontendUser->user = [$frontendUser->usergroup_column => implode(',', $preview['groups'])];
+            $frontendUser->userGroups = [];
+            foreach ($preview['groups'] as $groupId) {
+                $frontendUser->userGroups[$groupId] = GeneralUtility::makeInstance(ConnectionPool::class)
+                    ->getConnectionForTable('fe_groups')->select(['*'], 'fe_groups', ['uid' => $groupId])->fetchAssociative();
+                foreach (['uid', 'pid', 'title'] as $field) {
+                    $frontendUser->groupData[$field][$groupId] = $frontendUser->userGroups[$groupId][$field];
+                }
+            }
+            if ($preview['groups'] !== []) {
+                $frontendUser->user[$frontendUser->userid_column] = PHP_INT_MAX;
+            }
+            $this->context->setAspect('frontend.user', $frontendUser->createUserAspect());
+            return $handler->handle($request->withAttribute('frontend.user', $frontendUser));
+        }
 
         // Rate Limiting
         $rateLimiter = $this->ensureLoginRateLimit($frontendUser, $request);

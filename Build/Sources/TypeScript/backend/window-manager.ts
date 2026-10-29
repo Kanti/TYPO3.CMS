@@ -12,6 +12,7 @@
  */
 
 import Utility from '@typo3/backend/utility';
+import PreviewController from '@typo3/backend/preview-controller';
 import { topWindow } from '@typo3/core/utility/top-window';
 
 /**
@@ -41,6 +42,17 @@ class WindowManager {
       switchFocus = !window.opener;
     } else if (switchFocus === undefined) {
       switchFocus = true;
+    }
+    const isPreview = new URL(uri, window.location.href).searchParams.has('_ps');
+    if (isPreview) {
+      const previewWindow = topWindow.open('', windowName, windowFeatures);
+      if (previewWindow) {
+        PreviewController.open(previewWindow, uri);
+        if (switchFocus) {
+          previewWindow.focus();
+        }
+      }
+      return previewWindow;
     }
     const existingWindow = this.windows[windowName] ?? window.open('', windowName, windowFeatures);
     let isInstanceOfWindow = false;

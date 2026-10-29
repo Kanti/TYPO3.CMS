@@ -1,0 +1,11 @@
+<html xmlns:f="http://typo3.org/ns/TYPO3/CMS/Fluid/ViewHelpers" data-namespace-typo3-fluid="true">
+<main class="d-flex flex-column vh-100">
+    <header id="typo3-preview-toolbar" class="d-flex align-items-center gap-3 p-2 border-bottom">
+        <strong>{f:translate(key: 'backend.preview:title')}</strong>
+        <button id="typo3-preview-refresh" type="button" class="btn btn-default">{f:translate(key: 'core.core:labels.reload')}</button>
+        <a id="typo3-preview-live" class="btn btn-default" href="{liveUrl}">{f:translate(key: 'backend.preview:live')}</a>
+        <span class="text-truncate" id="typo3-preview-url">{liveUrl}</span>
+    </header>
+    <iframe id="typo3-preview-frame" class="flex-grow-1 w-100 border-0" src="{url}" title="{f:translate(key: 'backend.preview:title')}" referrerpolicy="no-referrer"></iframe>
+</main>
+</html>

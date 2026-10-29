@@ -17,6 +17,7 @@ declare(strict_types=1);
 
 namespace TYPO3\CMS\Frontend\Typolink;
 
+use GuzzleHttp\Psr7\UriResolver;
 use Psr\EventDispatcher\EventDispatcherInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use Psr\Http\Message\UriInterface;
@@ -47,6 +48,7 @@ use TYPO3\CMS\Core\Http\Uri;
 use TYPO3\CMS\Core\LinkHandling\LinkService;
 use TYPO3\CMS\Core\LinkHandling\PageTypeLinkResolver;
 use TYPO3\CMS\Core\LinkHandling\TypoLinkCodecService;
+use TYPO3\CMS\Core\Preview\PreviewTokenService;
 use TYPO3\CMS\Core\Routing\InvalidRouteArgumentsException;
 use TYPO3\CMS\Core\Routing\PageArguments;
 use TYPO3\CMS\Core\Routing\RouterInterface;
@@ -310,6 +312,18 @@ class PageLinkBuilder extends AbstractTypolinkBuilder implements TypolinkBuilder
             }
         }
 
+        $preview = $request->getAttribute('frontend.preview.token');
+        if ($preview !== null) {
+            $tokenService = GeneralUtility::makeInstance(PreviewTokenService::class);
+            $targetUri = UriResolver::resolve($request->getUri(), new Uri($result->getUrl()));
+            if ($tokenService->allowsUri($preview, $targetUri)) {
+                $result = $result->withAttribute('href', (string)$tokenService->withToken($targetUri, $request->getQueryParams()['_ps']));
+            } else {
+                parse_str($targetUri->getQuery(), $targetQuery);
+                unset($targetQuery['_ps']);
+                $result = $result->withAttribute('href', (string)$targetUri->withQuery(HttpUtility::buildQueryString($targetQuery)));
+            }
+        }
         $this->addPageCacheTag($request, $resolvedPage);
 
         // Setting title if blank value to link

@@ -154,11 +154,32 @@ class FrontendUserAuthentication extends AbstractUserAuthentication
      */
     protected $dontSetCookie = true;
 
+    private bool $persistSessionData = true;
+
     public function __construct()
     {
         $this->name = self::getCookieName();
         parent::__construct();
         $this->checkPid = (bool)($GLOBALS['TYPO3_CONF_VARS']['FE']['checkFeUserPid'] ?? true);
+    }
+
+    /**
+     * Initialize the regular session API for a preview without reading a cookie
+     * or persisting data between requests.
+     *
+     * @internal
+     */
+    public function initializeStatelessSession(): void
+    {
+        $this->persistSessionData = false;
+        $this->initializeUserSessionManager();
+    }
+
+    public function start(ServerRequestInterface $request)
+    {
+        if ($this->persistSessionData) {
+            parent::start($request);
+        }
     }
 
     /**
@@ -236,6 +257,9 @@ class FrontendUserAuthentication extends AbstractUserAuthentication
      */
     public function createUserSession(array $tempuser): UserSession
     {
+        if (!$this->persistSessionData) {
+            return $this->userSession;
+        }
         // At this point we do not know if we need to set a session or a permanent cookie
         // So we force the cookie to be set after authentication took place, which will
         // then call setSessionCookie(), which will set a cookie with correct settings.
@@ -353,6 +377,9 @@ class FrontendUserAuthentication extends AbstractUserAuthentication
      */
     public function storeSessionData()
     {
+        if (!$this->persistSessionData) {
+            return;
+        }
         // Saves UC and SesData if changed.
         if ($this->userData_change) {
             $this->writeUC();
@@ -384,6 +411,9 @@ class FrontendUserAuthentication extends AbstractUserAuthentication
     public function removeSessionData()
     {
         $this->userSession->overrideData([]);
+        if (!$this->persistSessionData) {
+            return;
+        }
         if ($this->userSessionManager->isSessionPersisted($this->userSession)) {
             // Remove session record if $this->user is empty or in case the session is anonymous
             if (empty($this->user) || $this->userSession->isAnonymous()) {
@@ -402,9 +432,40 @@ class FrontendUserAuthentication extends AbstractUserAuthentication
      */
     protected function regenerateSessionId()
     {
+        if (!$this->persistSessionData) {
+            return;
+        }
         parent::regenerateSessionId();
         // We force the cookie to be set later in the authentication process
         $this->dontSetCookie = false;
+    }
+
+    public function writeUC()
+    {
+        if ($this->persistSessionData) {
+            parent::writeUC();
+        }
+    }
+
+    public function logoff()
+    {
+        if ($this->persistSessionData) {
+            parent::logoff();
+        }
+    }
+
+    protected function setSessionCookie()
+    {
+        if ($this->persistSessionData) {
+            parent::setSessionCookie();
+        }
+    }
+
+    public function removeCookie($cookieName = null)
+    {
+        if ($this->persistSessionData) {
+            parent::removeCookie($cookieName);
+        }
     }
 
     /**

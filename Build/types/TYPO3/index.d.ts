@@ -33,6 +33,7 @@ declare namespace TYPO3 {
     username: string,
   };
   export namespace settings {
+    export const previewUrl: string;
     export const ajaxUrls: {
       [key: string]: string
     };
