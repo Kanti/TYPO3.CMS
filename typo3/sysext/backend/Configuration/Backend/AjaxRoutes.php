@@ -11,6 +11,11 @@ use TYPO3\CMS\Backend\Security\SudoMode\Access\AccessLifetime;
  * but will be extended further.
  */
 return [
+    'preview_renew' => [
+        'path' => '/preview/renew',
+        'target' => Controller\PreviewController::class . '::renewAction',
+        'methods' => ['POST'],
+    ],
 
     // Rename resource
     'resource_rename' => [

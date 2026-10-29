@@ -18,10 +18,12 @@ declare(strict_types=1);
 namespace TYPO3\CMS\Backend\Routing;
 
 use Psr\EventDispatcher\EventDispatcherInterface;
+use Psr\Http\Message\ServerRequestInterface;
 use Psr\Http\Message\UriInterface;
 use TYPO3\CMS\Backend\Routing\Event\AfterPagePreviewUriGeneratedEvent;
 use TYPO3\CMS\Backend\Routing\Event\BeforePagePreviewUriGeneratedEvent;
 use TYPO3\CMS\Backend\Utility\BackendUtility;
+use TYPO3\CMS\Core\Authentication\BackendUserAuthentication;
 use TYPO3\CMS\Core\Context\Context;
 use TYPO3\CMS\Core\Context\DateTimeAspect;
 use TYPO3\CMS\Core\Context\VisibilityAspect;
@@ -32,7 +34,9 @@ use TYPO3\CMS\Core\DataHandling\PageDoktypeRegistry;
 use TYPO3\CMS\Core\Domain\DateTimeFactory;
 use TYPO3\CMS\Core\Domain\RecordInterface;
 use TYPO3\CMS\Core\Exception\SiteNotFoundException;
+use TYPO3\CMS\Core\Http\ApplicationType;
 use TYPO3\CMS\Core\Page\PageRenderer;
+use TYPO3\CMS\Core\Preview\PreviewTokenService;
 use TYPO3\CMS\Core\Routing\InvalidRouteArgumentsException;
 use TYPO3\CMS\Core\Routing\RouterInterface;
 use TYPO3\CMS\Core\Routing\UnableToLinkToPageException;
@@ -307,8 +311,28 @@ class PreviewUriBuilder
             );
             $eventDispatcher->dispatch($event);
 
-            return $event->getPreviewUri();
-        } catch (UnableToLinkToPageException $e) {
+            $uri = $event->getPreviewUri();
+            $backendRequest = $GLOBALS['TYPO3_REQUEST'] ?? null;
+            $backendUser = $GLOBALS['BE_USER'] ?? null;
+            if ($backendRequest instanceof ServerRequestInterface
+                && $backendUser instanceof BackendUserAuthentication
+                && ApplicationType::fromRequest($backendRequest)->isBackend()
+            ) {
+                $tokens = GeneralUtility::makeInstance(PreviewTokenService::class);
+                parse_str($uri->getQuery(), $query);
+                $token = $tokens->issue($backendUser, $backendRequest->getUri(), [
+                    'workspace' => ($query['ADMCMD_prev'] ?? '') === 'LIVE' ? 0 : $backendUser->workspace,
+                    'date' => (int)($query['ADMCMD_simTime'] ?? 0),
+                    'groups' => array_values(array_filter(GeneralUtility::intExplode(',', (string)($query['ADMCMD_simUser'] ?? ''), true), static fn(int $id): bool => $id > 0)),
+                ]);
+                $claims = $tokens->decode($token);
+                if ($tokens->allowsUri($claims, $uri)) {
+                    $tokens->assertPageAccess($claims, $backendUser, $event->getPageId());
+                    return $tokens->withToken($uri, $token);
+                }
+            }
+            return $uri;
+        } catch (UnableToLinkToPageException|\UnexpectedValueException $e) {
             return null;
         }
     }

@@ -1756,6 +1756,7 @@ return [
         'cacheHash' => [
             'cachedParametersWhiteList' => [],
             'excludedParameters' => [
+                '_ps',
                 'L',
                 // Matomo
                 'mtm_campaign',

@@ -51,6 +51,9 @@ class BackendUserAuthenticator extends \TYPO3\CMS\Core\Middleware\BackendUserAut
      */
     public function process(ServerRequestInterface $request, RequestHandlerInterface $handler): ResponseInterface
     {
+        if ($request->getAttribute('frontend.preview.token') !== null) {
+            return $handler->handle($request);
+        }
         // Initializing a possible logged-in Backend User
         // If the backend cookie is set,
         // we proceed and check if a backend user is logged in.

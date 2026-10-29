@@ -12,6 +12,7 @@
  */
 
 import interact from 'interactjs';
+import PreviewController from '@typo3/backend/preview-controller';
 import DocumentService from '@typo3/core/document-service';
 import PersistentStorage, { type UC } from '@typo3/backend/storage/persistent';
 import RegularEvent from '@typo3/core/event/regular-event';
@@ -46,6 +47,7 @@ class ViewPage {
 
   private readonly storagePrefix: string = 'moduleData.page_preview.States.';
   private iframe: HTMLIFrameElement;
+  private preview: PreviewController;
   private inputCustomWidth: HTMLInputElement;
   private inputCustomHeight: HTMLInputElement;
   private customPresetItem: HTMLElement;
@@ -61,7 +63,10 @@ class ViewPage {
       const presetCustomLabel = document.querySelector('.t3js-preset-custom-label');
 
       this.defaultLabel = presetCustomLabel?.textContent.trim() ?? '';
-      this.iframe = document.getElementById('tx_this_iframe') as HTMLIFrameElement;
+      this.iframe = document.getElementById('tx_viewpage_iframe') as HTMLIFrameElement;
+      if (new URL(this.iframe.src).searchParams.has('_ps')) {
+        this.preview = new PreviewController(this.iframe.contentWindow, this.iframe.src, this.iframe);
+      }
       this.inputCustomWidth = document.querySelector<HTMLInputElement>(Selectors.inputWidthSelector);
       this.inputCustomHeight = document.querySelector<HTMLInputElement>(Selectors.inputHeightSelector);
       this.customPresetItem = document.querySelector<HTMLElement>(Selectors.customSelector);
@@ -180,7 +185,11 @@ class ViewPage {
 
     // Add event for refresh button click
     new RegularEvent('click', (): void => {
-      this.iframe.contentWindow.location.reload();
+      if (this.preview) {
+        this.preview.refresh();
+      } else {
+        this.iframe.setAttribute('src', this.iframe.src);
+      }
     }).bindTo(document.querySelector(Selectors.refreshSelector));
 
     let resizeStartWidth = 0;

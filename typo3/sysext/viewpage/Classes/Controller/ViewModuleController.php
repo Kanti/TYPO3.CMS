@@ -35,6 +35,7 @@ use TYPO3\CMS\Core\Domain\Repository\PageRepository;
 use TYPO3\CMS\Core\Imaging\IconFactory;
 use TYPO3\CMS\Core\Imaging\IconSize;
 use TYPO3\CMS\Core\Localization\LanguageService;
+use TYPO3\CMS\Core\Preview\PreviewTokenService;
 use TYPO3\CMS\Core\Security\ContentSecurityPolicy\Directive;
 use TYPO3\CMS\Core\Security\ContentSecurityPolicy\Mutation;
 use TYPO3\CMS\Core\Security\ContentSecurityPolicy\MutationCollection;
@@ -130,6 +131,17 @@ final class ViewModuleController
             'url' => $targetUrl,
         ]);
 
+        parse_str($targetUri->getQuery(), $previewQuery);
+        if (isset($previewQuery['_ps'])) {
+            $claims = GeneralUtility::makeInstance(PreviewTokenService::class)->decode($previewQuery['_ps']);
+            foreach ($claims['scope'] as $languages) {
+                foreach ($languages as $base) {
+                    $this->policyRegistry->appendMutationCollection(new MutationCollection(
+                        new Mutation(MutationMode::Extend, Directive::FrameSrc, new UriValue($base))
+                    ));
+                }
+            }
+        }
         if ($targetUri->getScheme() !== '' && $targetUri->getHost() !== '') {
             // temporarily(!) extend the CSP `frame-src` directive with the URL to be shown in the `<iframe>`
             $mutation = new Mutation(MutationMode::Extend, Directive::FrameSrc, UriValue::fromUri($targetUri));

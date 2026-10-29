@@ -26,6 +26,8 @@ use TYPO3\CMS\Core\Context\DateTimeAspect;
 use TYPO3\CMS\Core\Context\LanguageAspectFactory;
 use TYPO3\CMS\Core\Domain\DateTimeFactory;
 use TYPO3\CMS\Core\Domain\Repository\PageRepository;
+use TYPO3\CMS\Core\Http\HtmlResponse;
+use TYPO3\CMS\Core\Preview\PreviewTokenService;
 use TYPO3\CMS\Core\Routing\PageArguments;
 use TYPO3\CMS\Core\Utility\GeneralUtility;
 use TYPO3\CMS\Core\Utility\RootlineUtility;
@@ -52,6 +54,23 @@ readonly class PreviewSimulator implements MiddlewareInterface
      */
     public function process(ServerRequestInterface $request, RequestHandlerInterface $handler): ResponseInterface
     {
+        $preview = $request->getAttribute('frontend.preview.token');
+        if ($preview !== null) {
+            try {
+                $pageArguments = $request->getAttribute('routing');
+                if (!$pageArguments instanceof PageArguments) {
+                    throw new \UnexpectedValueException('Preview page unresolved', 1793200811);
+                }
+                GeneralUtility::makeInstance(PreviewTokenService::class)->assertPageAccess(
+                    $preview,
+                    $request->getAttribute('frontend.preview.user'),
+                    $pageArguments->getPageId()
+                );
+            } catch (\UnexpectedValueException) {
+                return new HtmlResponse('Preview access denied.', 403);
+            }
+            return $handler->handle($request);
+        }
         $isLoggedIn = $this->context->getPropertyFromAspect('backend.user', 'isLoggedIn', false);
         $isOfflineWorkspace = $this->context->getPropertyFromAspect('workspace', 'isOffline', false);
         // When previewing a workspace with the preview link, the PreviewUserAuthentication is NOT marked as

@@ -34,6 +34,7 @@ use TYPO3\CMS\Core\Exception\Page\PageReferenceResolvingReachedIterationLimitExc
 use TYPO3\CMS\Core\Exception\Page\RootLineException;
 use TYPO3\CMS\Core\LinkHandling\PageTypeLinkResolver;
 use TYPO3\CMS\Core\Page\PageLayoutResolver;
+use TYPO3\CMS\Core\Preview\PreviewTokenService;
 use TYPO3\CMS\Core\Schema\Capability\TcaSchemaCapability;
 use TYPO3\CMS\Core\Schema\TcaSchemaFactory;
 use TYPO3\CMS\Core\Site\Entity\NullSite;
@@ -502,7 +503,7 @@ final readonly class PageInformationFactory
             }
             if ((int)$rootLineEntry['doktype'] === PageRepository::DOKTYPE_BE_USER_SECTION) {
                 // Only logged in backend users with 'PAGE_SHOW' permissions are allowed to FE render backend user sections.
-                $isBackendUserLoggedIn = $this->context->getPropertyFromAspect('backend.user', 'isLoggedIn', false);
+                $isBackendUserLoggedIn = $request->getAttribute('frontend.preview.token') !== null || $this->context->getPropertyFromAspect('backend.user', 'isLoggedIn', false);
                 if (!$isBackendUserLoggedIn) {
                     $response = $this->errorController->accessDeniedAction(
                         $request,
@@ -511,7 +512,7 @@ final readonly class PageInformationFactory
                     );
                     throw new PageInformationCreationFailedException($response, 1705416744);
                 }
-                if (!$this->getBackendUser()->doesUserHaveAccess($pageInformation->getPageRecord(), Permission::PAGE_SHOW)) {
+                if (!(($request->getAttribute('frontend.preview.user') ?? $this->getBackendUser())?->doesUserHaveAccess($pageInformation->getPageRecord(), Permission::PAGE_SHOW))) {
                     $response = $this->errorController->accessDeniedAction(
                         $request,
                         'Subsection was found and not accessible',
@@ -567,6 +568,23 @@ final readonly class PageInformationFactory
      */
     private function checkBackendUserAccess(ServerRequestInterface $request, PageInformation $pageInformation): void
     {
+        $preview = $request->getAttribute('frontend.preview.token');
+        if ($preview !== null) {
+            try {
+                $tokens = GeneralUtility::makeInstance(PreviewTokenService::class);
+                foreach (array_unique([$pageInformation->getId(), $pageInformation->getContentFromPid()]) as $pageId) {
+                    if ($pageId > 0) {
+                        $tokens->assertPageAccess($preview, $request->getAttribute('frontend.preview.user'), $pageId);
+                    }
+                }
+            } catch (\UnexpectedValueException) {
+                throw new PageInformationCreationFailedException(
+                    $this->errorController->accessDeniedAction($request, 'Preview access denied.'),
+                    1793200819
+                );
+            }
+            return;
+        }
         // No backend user was logged in, nothing to check
         if (!$this->context->getPropertyFromAspect('backend.user', 'isLoggedIn', false)) {
             return;
