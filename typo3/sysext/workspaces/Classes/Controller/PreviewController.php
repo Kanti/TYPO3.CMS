@@ -20,6 +20,9 @@ namespace TYPO3\CMS\Workspaces\Controller;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use TYPO3\CMS\Backend\Attribute\AsController;
+use TYPO3\CMS\Backend\Preview\AddressOutsidePreviewException;
+use TYPO3\CMS\Backend\Preview\PreviewAccessDeniedException;
+use TYPO3\CMS\Backend\Preview\PreviewTokenIssuer;
 use TYPO3\CMS\Backend\Routing\PreviewUriBuilder;
 use TYPO3\CMS\Backend\Routing\UriBuilder;
 use TYPO3\CMS\Backend\Template\PageRendererBackendSetupTrait;
@@ -32,11 +35,18 @@ use TYPO3\CMS\Core\Context\WorkspaceAspect;
 use TYPO3\CMS\Core\Domain\PageAncestryResolver;
 use TYPO3\CMS\Core\Exception\SiteNotFoundException;
 use TYPO3\CMS\Core\Http\HtmlResponse;
+use TYPO3\CMS\Core\Http\Uri;
 use TYPO3\CMS\Core\Information\Typo3Information;
 use TYPO3\CMS\Core\Localization\LanguageServiceFactory;
 use TYPO3\CMS\Core\Page\PageRenderer;
 use TYPO3\CMS\Core\Routing\InvalidRouteArgumentsException;
 use TYPO3\CMS\Core\Routing\UnableToLinkToPageException;
+use TYPO3\CMS\Core\Security\ContentSecurityPolicy\Directive;
+use TYPO3\CMS\Core\Security\ContentSecurityPolicy\Mutation;
+use TYPO3\CMS\Core\Security\ContentSecurityPolicy\MutationCollection;
+use TYPO3\CMS\Core\Security\ContentSecurityPolicy\MutationMode;
+use TYPO3\CMS\Core\Security\ContentSecurityPolicy\PolicyRegistry;
+use TYPO3\CMS\Core\Security\ContentSecurityPolicy\UriValue;
 use TYPO3\CMS\Core\Site\Entity\Site;
 use TYPO3\CMS\Core\Site\SiteFinder;
 use TYPO3\CMS\Core\Utility\GeneralUtility;
@@ -62,6 +72,8 @@ final readonly class PreviewController
         private ExtensionConfiguration $extensionConfiguration,
         private LanguageServiceFactory $languageServiceFactory,
         private PageAncestryResolver $pageAncestryResolver,
+        private PreviewTokenIssuer $previewTokenIssuer,
+        private PolicyRegistry $policyRegistry,
     ) {}
 
     /**
@@ -125,11 +137,8 @@ final readonly class PreviewController
                 $rootline
             );
             if (!$this->workspaceService->isNewPage($pageUid)) {
-                $parameters = array_merge(
-                    $queryParameters,
-                    $queryParametersLive,
-                    ['ADMCMD_prev' => 'LIVE']
-                );
+                // The live frame shows the page as a visitor sees it, without a simulated group
+                $parameters = $queryParameters;
                 // temporarily set workspace aspect to live (0) to generate the live URL
                 $liveWorkspaceContext = clone $this->context;
                 $liveWorkspaceContext->setAspect('workspace', new WorkspaceAspect(0));
@@ -154,26 +163,68 @@ final readonly class PreviewController
             if (($queryParametersLive['ADMCMD_simUser'] ?? 0) !== ($queryParametersDraft['ADMCMD_simUser'] ?? 0)) {
                 // TODO: figure out how the handle this edge case
             }
-            $parameters = array_merge(
-                $queryParameters,
-                $queryParametersDraft,
-                ['ADMCMD_prev' => 'IGNORE']
-            );
+            $parameters = array_merge($queryParameters, $queryParametersDraft);
             $wsUrl = $this->generateUrl($site, $pageUid, $parameters);
         } catch (SiteNotFoundException|InvalidRouteArgumentsException $e) {
             throw new UnableToLinkToPageException(sprintf('The link to the page with ID "%d" could not be generated: %s', $pageUid, $e->getMessage()), 1559794913, $e);
         }
 
+        try {
+            $livePreviewSettings = $liveUrl !== false ? $this->signFrame($request, $liveUrl, $pageUid, null) : '';
+            $workspacePreviewSettings = $this->signFrame($request, $wsUrl, $pageUid, $activeWorkspace);
+        } catch (PreviewAccessDeniedException) {
+            return new HtmlResponse(
+                htmlspecialchars($this->languageServiceFactory->createFromUserPreferences($backendUser)->sL('backend.preview:error.denied')),
+                403,
+                ['Cache-Control' => 'private, no-store']
+            );
+        }
         $view->assignMultiple([
             'logoLink' => Typo3Information::URL_COMMUNITY,
             'liveUrl' => $liveUrl,
-            'wsUrl' => $wsUrl,
+            'livePreviewSettings' => $livePreviewSettings,
+            'wsPreviewSettings' => $workspacePreviewSettings,
             'activeWorkspace' => $availableWorkspaces[$activeWorkspace],
             'splitPreviewModes' => $splitPreviewModes,
             'activePreviewMode' => $activePreviewMode,
         ]);
         $this->pageRenderer->setBodyContent('<body>' . $view->render('Preview/Index'));
         return new HtmlResponse($this->pageRenderer->render($request));
+    }
+
+    /**
+     * Loads the frame with a preview token, so the preview works on every domain
+     * without a backend login there. The live version is shown as a visitor sees it.
+     *
+     * @param int|null $workspace the workspace of the preview, null for the live version
+     * @return string settings of the frame for the browser
+     * @throws PreviewAccessDeniedException
+     */
+    private function signFrame(ServerRequestInterface $request, string $url, int $pageUid, ?int $workspace): string
+    {
+        $uri = new Uri($url);
+        try {
+            $preview = $workspace === null
+                ? $this->previewTokenIssuer->issueForVisitor($request, $this->getBackendUser(), $uri, $pageUid)
+                : $this->previewTokenIssuer->issue($request, $this->getBackendUser(), $uri, $pageUid, $workspace);
+        } catch (AddressOutsidePreviewException) {
+            // An address the preview signs no token for opens as it is, as in the Preview module
+            if ($uri->getScheme() !== '' && $uri->getHost() !== '') {
+                $this->allowFrameSource(UriValue::fromUri($uri));
+            }
+            return json_encode($this->previewTokenIssuer->getPlainFrameSettings($request, $uri, $pageUid), JSON_THROW_ON_ERROR);
+        }
+        foreach ($preview->scope->getOrigins() as $origin) {
+            $this->allowFrameSource(new UriValue($origin));
+        }
+        return json_encode($this->previewTokenIssuer->getFrameSettings($preview, $pageUid), JSON_THROW_ON_ERROR);
+    }
+
+    private function allowFrameSource(UriValue $source): void
+    {
+        $this->policyRegistry->appendMutationCollection(new MutationCollection(
+            new Mutation(MutationMode::Extend, Directive::FrameSrc, $source)
+        ));
     }
 
     private function getBackendUser(): BackendUserAuthentication

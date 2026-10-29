@@ -18,6 +18,7 @@ namespace TYPO3\CMS\Frontend\Page;
 use Symfony\Component\DependencyInjection\Attribute\Autoconfigure;
 use TYPO3\CMS\Core\Crypto\HashAlgo;
 use TYPO3\CMS\Core\Crypto\HashService;
+use TYPO3\CMS\Core\Preview\PreviewTokenService;
 use TYPO3\CMS\Core\Utility\GeneralUtility;
 
 /**
@@ -154,14 +155,14 @@ class CacheHashCalculator
 
     /**
      * Checks whether the given parameter is out of a known data-set starting
-     * with ADMCMD.
+     * with ADMCMD, or is the preview token of a backend preview.
      *
      * @param string $key
      * @return bool
      */
     protected function isAdminPanelParameter($key)
     {
-        return $key === 'ADMCMD_simUser' || $key === 'ADMCMD_simTime' || $key === 'ADMCMD_prev';
+        return $key === 'ADMCMD_simUser' || $key === 'ADMCMD_simTime' || $key === 'ADMCMD_prev' || $key === PreviewTokenService::PARAMETER;
     }
 
     /**

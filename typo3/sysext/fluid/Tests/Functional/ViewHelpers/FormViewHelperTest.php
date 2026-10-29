@@ -22,6 +22,9 @@ use PHPUnit\Framework\Attributes\Test;
 use Psr\Http\Message\ServerRequestInterface;
 use TYPO3\CMS\Core\Core\SystemEnvironmentBuilder;
 use TYPO3\CMS\Core\Http\ServerRequest;
+use TYPO3\CMS\Core\Preview\PreviewProfile;
+use TYPO3\CMS\Core\Preview\PreviewScope;
+use TYPO3\CMS\Core\Preview\PreviewToken;
 use TYPO3\CMS\Core\Tests\Functional\SiteHandling\SiteBasedTestTrait;
 use TYPO3\CMS\Core\TypoScript\AST\Node\RootNode;
 use TYPO3\CMS\Core\TypoScript\FrontendTypoScript;
@@ -31,6 +34,7 @@ use TYPO3\CMS\Extbase\Mvc\Request;
 use TYPO3\CMS\Fluid\Core\Rendering\RenderingContextFactory;
 use TYPO3\CMS\Fluid\Tests\Functional\Fixtures\ViewHelpers\ExtendsAbstractEntity;
 use TYPO3\CMS\Frontend\ContentObject\ContentObjectRenderer;
+use TYPO3\CMS\Frontend\Middleware\PreviewAccess;
 use TYPO3\TestingFramework\Core\Functional\FunctionalTestCase;
 use TYPO3Fluid\Fluid\View\TemplateView;
 
@@ -227,18 +231,178 @@ final class FormViewHelperTest extends FunctionalTestCase
         self::assertSame($expected, $view->render());
     }
 
-    private function createRequest(): ServerRequestInterface
+    public static function previewKeepsFormInFrameDataProvider(): array
+    {
+        return [
+            'top' => ['_top', '_self'],
+            'parent' => [' _Parent ', '_self'],
+            'blank' => ['_blank', '_blank'],
+        ];
+    }
+
+    #[DataProvider('previewKeepsFormInFrameDataProvider')]
+    #[Test]
+    public function previewKeepsFormInFrame(string $target, string $expectedTarget): void
+    {
+        $request = $this->createRequest(true);
+        $context = $this->get(RenderingContextFactory::class)->create([], $request);
+        $context->getTemplatePaths()->setTemplateSource('<f:form actionUri="/search" target="' . $target . '" />');
+        $this->get(ConfigurationManagerInterface::class)->setRequest($request);
+        self::assertStringContainsString('target="' . $expectedTarget . '"', new TemplateView($context)->render());
+    }
+
+    #[Test]
+    public function formTargetIsKeptWithoutPreview(): void
+    {
+        $request = $this->createRequest();
+        $context = $this->get(RenderingContextFactory::class)->create([], $request);
+        $context->getTemplatePaths()->setTemplateSource('<f:form actionUri="/search" target="_top" />');
+        $this->get(ConfigurationManagerInterface::class)->setRequest($request);
+        self::assertStringContainsString('target="_top"', new TemplateView($context)->render());
+    }
+
+    public static function previewTokenIsAddedToFormsSentViaGetToHostsOfThePreviewDataProvider(): array
+    {
+        return [
+            'address relative to the page' => ['/search'],
+            'address on the host of the page' => ['https://site.example/search'],
+            'address on another host of the preview' => ['https://other.example/search'],
+            'address relative to the scheme on another host of the preview' => ['//other.example/search'],
+        ];
+    }
+
+    /**
+     * A form sent via HTTP GET replaces the query of its action, so the token travels in a
+     * hidden field to the hosts of the preview, where it keeps the page in the frame.
+     */
+    #[DataProvider('previewTokenIsAddedToFormsSentViaGetToHostsOfThePreviewDataProvider')]
+    #[Test]
+    public function previewTokenIsAddedToFormsSentViaGetToHostsOfThePreview(string $action): void
+    {
+        $request = $this->createRequest(true);
+        $context = $this->get(RenderingContextFactory::class)->create([], $request);
+        $context->getTemplatePaths()->setTemplateSource('<f:form actionUri="' . $action . '" method="get" />');
+        $this->get(ConfigurationManagerInterface::class)->setRequest($request);
+        self::assertStringContainsString('<input type="hidden" name="__t3ct" value="preview-jwt" >', new TemplateView($context)->render());
+    }
+
+    public static function previewTokenIsNotAddedToFormsSentViaGetToOtherHostsDataProvider(): array
+    {
+        return [
+            'external search service' => ['https://search.outside.example/'],
+            'address relative to the scheme on another host' => ['//outside.example/search'],
+            'host of the preview with user information' => ['https://editor@site.example/search'],
+        ];
+    }
+
+    /**
+     * A form sent via HTTP GET to another host, such as an external search or newsletter
+     * service, never carries the token: in a new window, or in a browser that cannot keep
+     * the navigation in the frame, the token would reach that host.
+     */
+    #[DataProvider('previewTokenIsNotAddedToFormsSentViaGetToOtherHostsDataProvider')]
+    #[Test]
+    public function previewTokenIsNotAddedToFormsSentViaGetToOtherHosts(string $action): void
+    {
+        $request = $this->createRequest(true);
+        $context = $this->get(RenderingContextFactory::class)->create([], $request);
+        $context->getTemplatePaths()->setTemplateSource('<f:form actionUri="' . $action . '" method="get" target="_blank" />');
+        $this->get(ConfigurationManagerInterface::class)->setRequest($request);
+        self::assertStringNotContainsString('__t3ct', new TemplateView($context)->render());
+    }
+
+    public static function previewTokenIsAddedToTheActionOfFormsSentViaPostDataProvider(): array
+    {
+        return [
+            'address relative to the page' => ['/order', '/order?__t3ct=preview-jwt'],
+            'address with a query and a fragment' => ['/order?step=2&items[]=1#form', '/order?step=2&items[]=1&__t3ct=preview-jwt#form'],
+            'address on another host of the preview' => ['https://other.example/order', 'https://other.example/order?__t3ct=preview-jwt'],
+            'address that carries an older token' => ['/order?__t3ct=older-jwt', '/order?__t3ct=preview-jwt'],
+        ];
+    }
+
+    /**
+     * A form sent via HTTP POST keeps the query of its action, so the token goes there and
+     * the answer stays in the preview. That holds for an action written as an address, as
+     * a plugin passes it in actionUri, as well as for one built by a typolink.
+     */
+    #[DataProvider('previewTokenIsAddedToTheActionOfFormsSentViaPostDataProvider')]
+    #[Test]
+    public function previewTokenIsAddedToTheActionOfFormsSentViaPost(string $action, string $expectedAction): void
+    {
+        $request = $this->createRequest(true);
+        $context = $this->get(RenderingContextFactory::class)->create([], $request);
+        $context->getTemplatePaths()->setTemplateSource('<f:form actionUri="' . $action . '" method="post" />');
+        $this->get(ConfigurationManagerInterface::class)->setRequest($request);
+        self::assertStringContainsString('action="' . htmlspecialchars($expectedAction) . '"', new TemplateView($context)->render());
+    }
+
+    public static function previewTokenIsNotAddedToTheActionOfFormsSentViaPostToOtherHostsDataProvider(): array
+    {
+        return [
+            'payment service' => ['https://payment.outside.example/checkout'],
+            'address relative to the scheme on another host' => ['//outside.example/order'],
+        ];
+    }
+
+    /**
+     * A form sent via HTTP POST to another host, such as a payment or newsletter service,
+     * never carries the token in its action.
+     */
+    #[DataProvider('previewTokenIsNotAddedToTheActionOfFormsSentViaPostToOtherHostsDataProvider')]
+    #[Test]
+    public function previewTokenIsNotAddedToTheActionOfFormsSentViaPostToOtherHosts(string $action): void
+    {
+        $request = $this->createRequest(true);
+        $context = $this->get(RenderingContextFactory::class)->create([], $request);
+        $context->getTemplatePaths()->setTemplateSource('<f:form actionUri="' . $action . '" method="post" />');
+        $this->get(ConfigurationManagerInterface::class)->setRequest($request);
+        self::assertStringNotContainsString('__t3ct', new TemplateView($context)->render());
+    }
+
+    public static function previewTokenIsNotAddedDataProvider(): array
+    {
+        return [
+            'post without preview' => ['post', false],
+            'get without preview' => ['get', false],
+        ];
+    }
+
+    #[DataProvider('previewTokenIsNotAddedDataProvider')]
+    #[Test]
+    public function previewTokenIsNotAdded(string $method, bool $preview): void
+    {
+        $request = $this->createRequest($preview);
+        $context = $this->get(RenderingContextFactory::class)->create([], $request);
+        $context->getTemplatePaths()->setTemplateSource('<f:form actionUri="/search" method="' . $method . '" />');
+        $this->get(ConfigurationManagerInterface::class)->setRequest($request);
+        self::assertStringNotContainsString('__t3ct', new TemplateView($context)->render());
+    }
+
+    private function createRequest(bool $preview = false): ServerRequestInterface
     {
         $frontendTypoScript = new FrontendTypoScript(new RootNode(), [], [], []);
         $frontendTypoScript->setSetupTree(new RootNode());
         $frontendTypoScript->setSetupArray([]);
         $frontendTypoScript->setConfigArray([]);
         $contentObject = $this->get(ContentObjectRenderer::class);
-        $serverRequest = new ServerRequest()
+        $serverRequest = new ServerRequest($preview ? 'https://site.example/page' : null)
             ->withAttribute('applicationType', SystemEnvironmentBuilder::REQUESTTYPE_FE)
             ->withAttribute('frontend.typoscript', $frontendTypoScript)
             ->withAttribute('extbase', new ExtbaseRequestParameters())
             ->withAttribute('currentContentObject', $contentObject);
+        if ($preview) {
+            $profile = PreviewProfile::visitor();
+            $serverRequest = $serverRequest
+                ->withAttribute(
+                    PreviewAccess::ATTRIBUTE,
+                    new PreviewToken('preview-jwt', $profile, 'https://backend.example.com', time() + 60, 1)
+                )
+                ->withAttribute(PreviewAccess::SCOPE_ATTRIBUTE, new PreviewScope([
+                    ['site' => 'main', 'host' => 'site.example', 'origin' => 'https://site.example'],
+                    ['site' => 'other', 'host' => 'other.example', 'origin' => 'https://other.example'],
+                ]));
+        }
         return new Request($serverRequest);
     }
 }
