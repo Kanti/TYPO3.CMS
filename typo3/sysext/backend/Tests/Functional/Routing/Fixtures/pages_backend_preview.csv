@@ -1,0 +1,22 @@
+"pages"
+,"uid","pid","sorting","title","slug","doktype","hidden","extendToSubpages","starttime","fe_group","sys_language_uid","l10n_parent","deleted","perms_everybody"
+,1,0,128,"Site on the backend host","/",1,0,0,0,"",0,0,0,15
+,2,1,128,"Hidden on the backend host","/hidden",1,1,0,0,"",0,0,0,15
+,10,0,256,"Site on another domain","/",1,0,0,0,"",0,0,0,15
+,11,10,128,"Visible","/visible",1,0,0,0,"",0,0,0,15
+,12,10,256,"Hidden","/hidden",1,1,0,0,"",0,0,0,15
+,13,10,384,"Hidden branch","/hidden-branch",1,1,1,0,"",0,0,0,15
+,14,13,128,"Below a hidden branch","/hidden-branch/below",1,0,0,0,"",0,0,0,15
+,15,10,512,"Scheduled","/scheduled",1,0,0,4102444800,"",0,0,0,15
+,16,10,640,"Restricted","/restricted",1,0,0,0,"5",0,0,0,15
+,17,10,768,"Translated","/translated",1,0,0,0,"",0,0,0,15
+,18,10,768,"Hidden translation","/hidden-translation",1,1,0,0,"",1,17,0,15
+,19,10,128,"Visible German","/visible",1,0,0,0,"",1,11,0,15
+,22,10,896,"Backend user section","/backend-user-section",6,0,0,0,"",0,0,0,15
+,23,22,128,"Below a backend user section","/backend-user-section/below",1,0,0,0,"",0,0,0,15
+,20,0,384,"Site on a sibling host","/",1,0,0,0,"",0,0,0,15
+,21,20,128,"Hidden on a sibling host","/hidden",1,1,0,0,"",0,0,0,15
+"tt_content"
+,"uid","pid","sorting","header","hidden","deleted"
+,1,11,128,"Visible content",0,0
+,2,11,256,"Hidden content",1,0

@@ -57,6 +57,29 @@ return [
                 'typo3/cms-frontend/maintenance-mode',
             ],
         ],
+        'typo3/cms-frontend/preview-access' => [
+            'target' => \TYPO3\CMS\Frontend\Middleware\PreviewAccess::class,
+            'after' => [
+                'typo3/cms-frontend/site',
+                'typo3/cms-frontend/maintenance-mode',
+                'typo3/cms-core/request-token-middleware',
+            ],
+            'before' => [
+                'typo3/cms-frontend/backend-user-authentication',
+                'typo3/cms-frontend/authentication',
+                'typo3/cms-frontend/base-redirect-resolver',
+            ],
+        ],
+        'typo3/cms-frontend/preview-access-scope' => [
+            'target' => \TYPO3\CMS\Frontend\Middleware\PreviewAccessScope::class,
+            'after' => [
+                'typo3/cms-frontend/page-resolver',
+            ],
+            'before' => [
+                'typo3/cms-frontend/page-argument-validator',
+                'typo3/cms-frontend/preview-simulator',
+            ],
+        ],
         'typo3/cms-frontend/preview-simulator' => [
             'target' => \TYPO3\CMS\Frontend\Middleware\PreviewSimulator::class,
             'after' => [

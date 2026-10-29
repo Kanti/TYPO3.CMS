@@ -24,8 +24,10 @@ use Psr\Http\Server\RequestHandlerInterface;
 use TYPO3\CMS\Core\Context\Context;
 use TYPO3\CMS\Core\Context\DateTimeAspect;
 use TYPO3\CMS\Core\Context\LanguageAspectFactory;
+use TYPO3\CMS\Core\Context\UserAspect;
 use TYPO3\CMS\Core\Domain\DateTimeFactory;
 use TYPO3\CMS\Core\Domain\Repository\PageRepository;
+use TYPO3\CMS\Core\Preview\PreviewToken;
 use TYPO3\CMS\Core\Routing\PageArguments;
 use TYPO3\CMS\Core\Schema\LanguageMarker;
 use TYPO3\CMS\Core\Utility\GeneralUtility;
@@ -53,6 +55,30 @@ readonly class PreviewSimulator implements MiddlewareInterface
      */
     public function process(ServerRequestInterface $request, RequestHandlerInterface $handler): ResponseInterface
     {
+        // A preview token brings date, visibility and workspace along, see PreviewAccess
+        $previewToken = $request->getAttribute(PreviewAccess::ATTRIBUTE);
+        if ($previewToken instanceof PreviewToken) {
+            if (!$previewToken->profile->loggedIn) {
+                // An editor keeps a frontend login of the frame, as with a backend login. A token without
+                // an editor shows the page as a visitor sees it, who is not logged in: "-1" applies
+                if ($previewToken->userId === null) {
+                    $this->context->setAspect('frontend.user', new UserAspect(null, [0, -1]));
+                }
+            } else {
+                // Only the groups the editor may simulate on this page, see PreviewAccessScope
+                $groups = $request->getAttribute(PreviewAccessScope::GROUPS_ATTRIBUTE, []);
+                $this->replaceUserGroups($request, $groups);
+                if ($groups === []) {
+                    // A login without any group still counts as login: "-2" applies, "-1" does not
+                    $this->context->setAspect('frontend.user', new UserAspect($request->getAttribute('frontend.user'), [0, -2]));
+                }
+            }
+            if ($this->editorSeesHiddenPage($previewToken, $request)) {
+                $this->context->setAspect('visibility', $this->context->getAspect('visibility')->withIncludeHiddenPages(true));
+                $this->context->setAspect('frontend.preview', new PreviewAspect(true));
+            }
+            return $handler->handle($request);
+        }
         $isLoggedIn = $this->context->getPropertyFromAspect('backend.user', 'isLoggedIn', false);
         $isOfflineWorkspace = $this->context->getPropertyFromAspect('workspace', 'isOffline', false);
         // When previewing a workspace with the preview link, the PreviewUserAuthentication is NOT marked as
@@ -123,6 +149,28 @@ readonly class PreviewSimulator implements MiddlewareInterface
     }
 
     /**
+     * The editor of a token sees a hidden page as with a backend login, unless the token
+     * shows all hidden pages anyway
+     */
+    private function editorSeesHiddenPage(PreviewToken $previewToken, ServerRequestInterface $request): bool
+    {
+        if ($previewToken->userId === null) {
+            return false;
+        }
+        if ($previewToken->profile->hiddenPages) {
+            return false;
+        }
+        $pageArguments = $request->getAttribute('routing');
+        if (!$pageArguments instanceof PageArguments) {
+            return false;
+        }
+        if ($this->checkIfPageIsHidden($pageArguments->getPageId(), $request)) {
+            return true;
+        }
+        return $this->checkIfRootlineRequiresPreview($pageArguments->getPageId());
+    }
+
+    /**
      * Checks if the page is hidden in the active workspace + language setup.
      */
     protected function checkIfPageIsHidden(int $pageId, ServerRequestInterface $request): bool
@@ -162,6 +210,28 @@ readonly class PreviewSimulator implements MiddlewareInterface
         $GLOBALS['SIM_EXEC_TIME'] = $queryTime;
         $this->context->setAspect('date', new DateTimeAspect(DateTimeFactory::createFromTimestamp($queryTime)));
         return true;
+    }
+
+    /**
+     * The groups of a preview token replace the groups of a logged-in frontend user,
+     * so the preview shows exactly what members of these groups see.
+     *
+     * @param list<int> $groups
+     */
+    protected function replaceUserGroups(ServerRequestInterface $request, array $groups): void
+    {
+        $frontendUser = $request->getAttribute('frontend.user');
+        if (!is_array($frontendUser->user)) {
+            $frontendUser->user = [$frontendUser->userid_column => PHP_INT_MAX];
+        }
+        $frontendUser->user[$frontendUser->usergroup_column] = implode(',', $groups);
+        // Set this option so the is_online timestamp is not updated in updateOnlineTimestamp()
+        $frontendUser->user['is_online'] = $this->context->getPropertyFromAspect('date', 'timestamp');
+        $frontendUser->userGroups = [];
+        foreach ($groups as $group) {
+            $frontendUser->userGroups[$group] = ['uid' => $group, 'title' => '_PREVIEW_'];
+        }
+        $this->context->setAspect('frontend.user', $frontendUser->createUserAspect());
     }
 
     /**

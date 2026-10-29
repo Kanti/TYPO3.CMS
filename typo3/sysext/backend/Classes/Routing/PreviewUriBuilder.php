@@ -18,12 +18,17 @@ declare(strict_types=1);
 namespace TYPO3\CMS\Backend\Routing;
 
 use Psr\EventDispatcher\EventDispatcherInterface;
+use Psr\Http\Message\ServerRequestInterface;
 use Psr\Http\Message\UriInterface;
+use TYPO3\CMS\Backend\Preview\BackendLoginCookieScope;
 use TYPO3\CMS\Backend\Routing\Event\AfterPagePreviewUriGeneratedEvent;
 use TYPO3\CMS\Backend\Routing\Event\BeforePagePreviewUriGeneratedEvent;
 use TYPO3\CMS\Backend\Utility\BackendUtility;
+use TYPO3\CMS\Core\Authentication\BackendUserAuthentication;
+use TYPO3\CMS\Core\Cache\CacheManager;
 use TYPO3\CMS\Core\Context\Context;
 use TYPO3\CMS\Core\Context\DateTimeAspect;
+use TYPO3\CMS\Core\Context\LanguageAspect;
 use TYPO3\CMS\Core\Context\VisibilityAspect;
 use TYPO3\CMS\Core\Database\ConnectionPool;
 use TYPO3\CMS\Core\Database\Query\Restriction\DeletedRestriction;
@@ -33,7 +38,10 @@ use TYPO3\CMS\Core\Domain\DateTimeFactory;
 use TYPO3\CMS\Core\Domain\PageAncestry;
 use TYPO3\CMS\Core\Domain\PageAncestryResolver;
 use TYPO3\CMS\Core\Domain\RecordInterface;
+use TYPO3\CMS\Core\Domain\Repository\PageRepository;
 use TYPO3\CMS\Core\Exception\SiteNotFoundException;
+use TYPO3\CMS\Core\Http\ApplicationType;
+use TYPO3\CMS\Core\Http\NormalizedParams;
 use TYPO3\CMS\Core\Page\PageRenderer;
 use TYPO3\CMS\Core\Routing\InvalidRouteArgumentsException;
 use TYPO3\CMS\Core\Routing\RouterInterface;
@@ -61,6 +69,7 @@ class PreviewUriBuilder
     public const OPTION_WINDOW_SCOPE_GLOBAL = 'global';
 
     protected array $record = [];
+    protected array $previewedRecord = [];
     protected string $table = 'pages';
     protected int $pageId;
     protected int $languageId = LanguageMarker::DEFAULT_LANGUAGE;
@@ -117,6 +126,7 @@ class PreviewUriBuilder
         $previewPageId = self::getPreviewPageId($table, $recordId, $pageId);
         $obj = self::create($previewPageId);
         $obj->table = $table;
+        $obj->previewedRecord = is_array($record) ? $record : (BackendUtility::getRecord($table, $recordId) ?? []);
         $obj = $obj->withSection($table === 'tt_content' ? '#c' . $recordId : '');
         $obj = $obj->withAdditionalQueryParameters(self::getPreviewUrlParameters($previewPageId, $table, $record));
 
@@ -231,6 +241,153 @@ class PreviewUriBuilder
             }
         }
         return self::isPreviewableDoktype($this->pageId, (int)$this->record['doktype']);
+    }
+
+    /**
+     * Builds the preview page of the backend for the preview URI where the preview
+     * needs a preview token, see requiresPreviewToken(). The preview page shows the
+     * frontend address in a frame with a preview token. Everywhere else it is the
+     * preview URI itself.
+     *
+     * @internal only to be used by the TYPO3 Core
+     */
+    public function buildBackendPreviewUri(?array $options = null, ?Context $context = null): ?UriInterface
+    {
+        $uri = $this->buildUri($options, $context);
+        if ($uri === null) {
+            return null;
+        }
+        if (!$this->requiresPreviewToken($uri)) {
+            return $uri;
+        }
+        return GeneralUtility::makeInstance(UriBuilder::class)->buildUriFromRoute('preview', [
+            'url' => (string)$uri,
+            'page' => $this->pageId,
+        ]);
+    }
+
+    /**
+     * A preview of the address needs a preview token if the page needs the backend login
+     * to be shown as a preview and the backend login cookie does not reach the host of the
+     * site. A page needs the backend login if it is simulated at another date or for a
+     * frontend user group, shown in a workspace, hidden or below a hidden page extending to
+     * its subpages, in a backend user section or a disabled language, or if the previewed
+     * record is hidden or not published at the moment. Preview links built outside of the
+     * backend, for example in the frontend, never need a token.
+     */
+    private function requiresPreviewToken(UriInterface $uri): bool
+    {
+        // An address of the site, absolute or relative, and not for example a mailto: link
+        if (!in_array($uri->getScheme(), ['', 'http', 'https'], true)) {
+            return false;
+        }
+        $request = $GLOBALS['TYPO3_REQUEST'] ?? null;
+        if (!$request instanceof ServerRequestInterface) {
+            return false;
+        }
+        if (!ApplicationType::fromRequest($request)->isBackend()) {
+            return false;
+        }
+        if (!($GLOBALS['BE_USER'] ?? null) instanceof BackendUserAuthentication) {
+            return false;
+        }
+        $normalizedParams = $request->getAttribute('normalizedParams') ?? NormalizedParams::createFromRequest($request);
+        if (GeneralUtility::makeInstance(BackendLoginCookieScope::class)->reaches($normalizedParams, $uri)) {
+            return false;
+        }
+        parse_str($uri->getQuery(), $query);
+        if (isset($query['ADMCMD_simTime'])) {
+            return true;
+        }
+        if (isset($query['ADMCMD_simUser'])) {
+            return true;
+        }
+        if ($GLOBALS['BE_USER']->workspace > 0) {
+            return true;
+        }
+        // Decided once per page, language and request, as lists build a preview button for every row
+        $cache = GeneralUtility::makeInstance(CacheManager::class)->getCache('runtime');
+        $cacheIdentifier = 'preview-uri-builder-page-needs-backend-login-' . $this->pageId . '-' . $this->languageId;
+        if (!$cache->has($cacheIdentifier)) {
+            $cache->set($cacheIdentifier, $this->pageNeedsBackendLogin());
+        }
+        if ((bool)$cache->get($cacheIdentifier)) {
+            return true;
+        }
+        return $this->isPreviewedRecordOutOfSight();
+    }
+
+    /**
+     * A preview link usually opens the page directly, and the frontend decides with the
+     * backend login cookie whether to show it. Where the cookie does not reach the site,
+     * the backend has to decide before the click, so it repeats the frontend rules for
+     * pages that need a backend login.
+     */
+    private function pageNeedsBackendLogin(): bool
+    {
+        $pageRepository = GeneralUtility::makeInstance(PageRepository::class);
+        foreach (array_unique([$this->languageId, LanguageMarker::DEFAULT_LANGUAGE]) as $languageId) {
+            if ($pageRepository->checkIfPageIsHidden($this->pageId, new LanguageAspect($languageId))) {
+                return true;
+            }
+        }
+        $rootLine = $this->rootLine !== [] ? $this->rootLine : self::resolveRootLine($this->pageId);
+        // Backend user sections are shown only with a backend login, also to pages below them
+        foreach ($rootLine as $page) {
+            if ((int)($page['doktype'] ?? 0) === PageRepository::DOKTYPE_BE_USER_SECTION) {
+                return true;
+            }
+        }
+        // A language disabled in the site configuration is shown only with a backend login
+        try {
+            $site = GeneralUtility::makeInstance(SiteFinder::class)->getSiteByPageId($this->pageId, $rootLine);
+            if (!$site->getLanguageById($this->languageId)->enabled()) {
+                return true;
+            }
+        } catch (SiteNotFoundException|\InvalidArgumentException) {
+            // Without a site or language there is no disabled language
+        }
+        array_shift($rootLine);
+        foreach ($rootLine as $page) {
+            if ((int)($page['uid'] ?? 0) === 0) {
+                continue;
+            }
+            if ((bool)($page['extendToSubpages'] ?? false)) {
+                return (bool)($page['hidden'] ?? false);
+            }
+        }
+        return false;
+    }
+
+    private function isPreviewedRecordOutOfSight(): bool
+    {
+        if ($this->table === 'pages') {
+            return false;
+        }
+        if ($this->previewedRecord === []) {
+            return false;
+        }
+        $schemaFactory = GeneralUtility::makeInstance(TcaSchemaFactory::class);
+        if (!$schemaFactory->has($this->table)) {
+            return false;
+        }
+        $schema = $schemaFactory->get($this->table);
+        $now = $this->context->getPropertyFromAspect('date', 'timestamp');
+        if ($schema->hasCapability(TcaSchemaCapability::RestrictionDisabledField)
+            && (bool)($this->previewedRecord[$schema->getCapability(TcaSchemaCapability::RestrictionDisabledField)->getFieldName()] ?? false)
+        ) {
+            return true;
+        }
+        if ($schema->hasCapability(TcaSchemaCapability::RestrictionStartTime)
+            && (int)($this->previewedRecord[$schema->getCapability(TcaSchemaCapability::RestrictionStartTime)->getFieldName()] ?? 0) > $now
+        ) {
+            return true;
+        }
+        if (!$schema->hasCapability(TcaSchemaCapability::RestrictionEndTime)) {
+            return false;
+        }
+        $endTime = (int)($this->previewedRecord[$schema->getCapability(TcaSchemaCapability::RestrictionEndTime)->getFieldName()] ?? 0);
+        return $endTime > 0 && $endTime <= $now;
     }
 
     /**
@@ -445,7 +602,7 @@ class PreviewUriBuilder
     protected function buildAttributes(?array $options = null): ?array
     {
         $options = $this->enrichOptions($options);
-        if (null === ($uri = $this->buildUri($options))) {
+        if (null === ($uri = $this->buildBackendPreviewUri($options))) {
             return null;
         }
         $args = [

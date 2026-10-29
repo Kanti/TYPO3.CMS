@@ -22,6 +22,13 @@ return [
         'target' => Controller\LoginController::class . '::formAction',
     ],
 
+    // Preview of a page of any site in a frame, with a preview token
+    'preview' => [
+        'path' => '/preview',
+        'methods' => ['GET'],
+        'target' => Controller\PreviewController::class . '::showAction',
+    ],
+
     // Main backend rendering setup (previously called backend.php) for the TYPO3 Backend
     'main' => [
         'path' => '/main',

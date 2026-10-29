@@ -11,6 +11,12 @@ use TYPO3\CMS\Backend\Security\SudoMode\Access\AccessLifetime;
  * but will be extended further.
  */
 return [
+    // Sign a fresh preview token for the frame of the preview page
+    'preview_token' => [
+        'path' => '/preview/token',
+        'methods' => ['POST'],
+        'target' => Controller\PreviewController::class . '::tokenAction',
+    ],
 
     // Rename resource
     'resource_rename' => [

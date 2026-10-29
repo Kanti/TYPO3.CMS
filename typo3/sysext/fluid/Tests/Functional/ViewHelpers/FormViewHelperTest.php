@@ -22,6 +22,8 @@ use PHPUnit\Framework\Attributes\Test;
 use Psr\Http\Message\ServerRequestInterface;
 use TYPO3\CMS\Core\Core\SystemEnvironmentBuilder;
 use TYPO3\CMS\Core\Http\ServerRequest;
+use TYPO3\CMS\Core\Preview\PreviewProfile;
+use TYPO3\CMS\Core\Preview\PreviewToken;
 use TYPO3\CMS\Core\Tests\Functional\SiteHandling\SiteBasedTestTrait;
 use TYPO3\CMS\Core\TypoScript\AST\Node\RootNode;
 use TYPO3\CMS\Core\TypoScript\FrontendTypoScript;
@@ -31,6 +33,7 @@ use TYPO3\CMS\Extbase\Mvc\Request;
 use TYPO3\CMS\Fluid\Core\Rendering\RenderingContextFactory;
 use TYPO3\CMS\Fluid\Tests\Functional\Fixtures\ViewHelpers\ExtendsAbstractEntity;
 use TYPO3\CMS\Frontend\ContentObject\ContentObjectRenderer;
+use TYPO3\CMS\Frontend\Middleware\PreviewAccess;
 use TYPO3\TestingFramework\Core\Functional\FunctionalTestCase;
 use TYPO3Fluid\Fluid\View\TemplateView;
 
@@ -227,7 +230,66 @@ final class FormViewHelperTest extends FunctionalTestCase
         self::assertSame($expected, $view->render());
     }
 
-    private function createRequest(): ServerRequestInterface
+    public static function previewKeepsFormInFrameDataProvider(): array
+    {
+        return [
+            'top' => ['_top', '_self'],
+            'parent' => [' _Parent ', '_self'],
+            'blank' => ['_blank', '_blank'],
+        ];
+    }
+
+    #[DataProvider('previewKeepsFormInFrameDataProvider')]
+    #[Test]
+    public function previewKeepsFormInFrame(string $target, string $expectedTarget): void
+    {
+        $request = $this->createRequest(true);
+        $context = $this->get(RenderingContextFactory::class)->create([], $request);
+        $context->getTemplatePaths()->setTemplateSource('<f:form actionUri="/search" target="' . $target . '" />');
+        $this->get(ConfigurationManagerInterface::class)->setRequest($request);
+        self::assertStringContainsString('target="' . $expectedTarget . '"', new TemplateView($context)->render());
+    }
+
+    #[Test]
+    public function formTargetIsKeptWithoutPreview(): void
+    {
+        $request = $this->createRequest();
+        $context = $this->get(RenderingContextFactory::class)->create([], $request);
+        $context->getTemplatePaths()->setTemplateSource('<f:form actionUri="/search" target="_top" />');
+        $this->get(ConfigurationManagerInterface::class)->setRequest($request);
+        self::assertStringContainsString('target="_top"', new TemplateView($context)->render());
+    }
+
+    #[Test]
+    public function previewTokenIsAddedToFormsSentViaGet(): void
+    {
+        $request = $this->createRequest(true);
+        $context = $this->get(RenderingContextFactory::class)->create([], $request);
+        $context->getTemplatePaths()->setTemplateSource('<f:form actionUri="/search" method="get" />');
+        $this->get(ConfigurationManagerInterface::class)->setRequest($request);
+        self::assertStringContainsString('<input type="hidden" name="__t3ct" value="preview-jwt" >', new TemplateView($context)->render());
+    }
+
+    public static function previewTokenIsNotAddedDataProvider(): array
+    {
+        return [
+            'post in preview' => ['post', true],
+            'get without preview' => ['get', false],
+        ];
+    }
+
+    #[DataProvider('previewTokenIsNotAddedDataProvider')]
+    #[Test]
+    public function previewTokenIsNotAdded(string $method, bool $preview): void
+    {
+        $request = $this->createRequest($preview);
+        $context = $this->get(RenderingContextFactory::class)->create([], $request);
+        $context->getTemplatePaths()->setTemplateSource('<f:form actionUri="/search" method="' . $method . '" />');
+        $this->get(ConfigurationManagerInterface::class)->setRequest($request);
+        self::assertStringNotContainsString('__t3ct', new TemplateView($context)->render());
+    }
+
+    private function createRequest(bool $preview = false): ServerRequestInterface
     {
         $frontendTypoScript = new FrontendTypoScript(new RootNode(), [], [], []);
         $frontendTypoScript->setSetupTree(new RootNode());
@@ -239,6 +301,13 @@ final class FormViewHelperTest extends FunctionalTestCase
             ->withAttribute('frontend.typoscript', $frontendTypoScript)
             ->withAttribute('extbase', new ExtbaseRequestParameters())
             ->withAttribute('currentContentObject', $contentObject);
+        if ($preview) {
+            $profile = new PreviewProfile(0, false, false, 0, []);
+            $serverRequest = $serverRequest->withAttribute(
+                PreviewAccess::ATTRIBUTE,
+                new PreviewToken('preview-jwt', $profile, 'https://backend.example.com', time() + 60, 1)
+            );
+        }
         return new Request($serverRequest);
     }
 }

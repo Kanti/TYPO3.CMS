@@ -44,6 +44,7 @@ use TYPO3\CMS\Core\Utility\GeneralUtility;
 use TYPO3\CMS\Frontend\Authentication\FrontendBackendUserAuthentication;
 use TYPO3\CMS\Frontend\Cache\CacheInstruction;
 use TYPO3\CMS\Frontend\Event\AfterTypoScriptDeterminedEvent;
+use TYPO3\CMS\Frontend\Middleware\PreviewAccess;
 use TYPO3\CMS\Workspaces\Authentication\PreviewUserAuthentication;
 
 /**
@@ -92,6 +93,10 @@ final class WorkspacePreview implements MiddlewareInterface
      */
     public function process(ServerRequestInterface $request, RequestHandlerInterface $handler): ResponseInterface
     {
+        // A preview token sets the workspace itself and shows no info box in the frame
+        if ($request->getAttribute(PreviewAccess::ATTRIBUTE) !== null) {
+            return $handler->handle($request);
+        }
         $keyword = $this->getPreviewInputCode($request);
         $setCookieOnCurrentRequest = false;
         $normalizedParams = $request->getAttribute('normalizedParams');

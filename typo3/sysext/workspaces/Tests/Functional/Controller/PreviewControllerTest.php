@@ -97,6 +97,15 @@ final class PreviewControllerTest extends FunctionalTestCase
         self::assertStringNotContainsString('typo3-workspace-topbar-slider-hidden', $content);
     }
 
+    #[Test]
+    public function framesAreLoadedWithTheCookiesOfTheBrowserInEveryBrowser(): void
+    {
+        $content = $this->renderPreview();
+
+        self::assertMatchesRegularExpression('/<iframe[^>]*t3js-workspace-view-workspace/', $content);
+        self::assertDoesNotMatchRegularExpression('/<iframe[^>]*credentialless/', $content);
+    }
+
     private function renderPreview(): string
     {
         $request = new ServerRequest('https://example.com/typo3/workspace/preview-control')

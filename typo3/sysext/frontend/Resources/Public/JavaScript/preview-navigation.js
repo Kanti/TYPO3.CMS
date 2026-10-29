@@ -1,0 +1,13 @@
+/*
+ * This file is part of the TYPO3 CMS project.
+ *
+ * It is free software; you can redistribute it and/or modify it under
+ * the terms of the GNU General Public License, either version 2
+ * of the License, or any later version.
+ *
+ * For the full copyright and license information, please read the
+ * LICENSE.txt file that was distributed with this source code.
+ *
+ * The TYPO3 project - inspiring people to share!
+ */
+const f="__t3ct",s=document.querySelector("script[data-preview-backend]");function h(n){try{return decodeURIComponent(n.split("=",1)[0].replace(/\+/g," "))===f}catch{return!1}}function g(n){return n.search===""?[]:n.search.slice(1).split("&")}function l(n){const r=g(n).find(h);if(r===void 0)return null;const t=r.includes("=")?r.slice(r.indexOf("=")+1):"";try{return decodeURIComponent(t.replace(/\+/g," "))}catch{return t}}function p(n){const r=new URL(n),t=g(n),i=t.filter(u=>!h(u));return i.length!==t.length&&(r.search=i.length===0?"":"?"+i.join("&")),r}function d(n,r){const t=p(n),i=t.search.slice(1);return t.search="?"+(i===""?"":i+"&")+f+"="+encodeURIComponent(r),t}if(s&&window.parent!==window){let i=function(e){return["http:","https:"].includes(e.protocol)?r.includes(e.host.toLowerCase()):!1},u=function(e){window.parent.postMessage(e,n)};const n=s.dataset.previewBackend,r=JSON.parse(s.dataset.previewHosts);let t=l(new URL(window.location.href));u({type:"typo3:preview:location",url:p(new URL(window.location.href)).href,page:Number(s.dataset.previewPage),expires:Number(s.dataset.previewExpires)}),window.addEventListener("message",e=>{if(e.source!==window.parent||e.origin!==n||e.data?.type!=="typo3:preview:token"||typeof e.data.token!="string")return;const o=t;t=e.data.token,window.history.replaceState(window.history.state,"",d(new URL(window.location.href),t)),document.querySelectorAll("a[href]").forEach(a=>{const c=new URL(a.href);l(c)===o&&(a.href=d(c,t).href)}),document.querySelectorAll("form[action]").forEach(a=>{const c=new URL(a.action,document.baseURI);l(c)===o&&(a.action=d(c,t).href)}),document.querySelectorAll(`input[type="hidden"][name="${f}"]`).forEach(a=>{a.value===o&&(a.value=t)})});const w="navigation"in window?window.navigation:null;w?.addEventListener("navigate",e=>{if(!e.cancelable||e.hashChange||e.downloadRequest!==null||e.destination.sameDocument)return;const o=new URL(e.destination.url);if(o.origin!==window.location.origin){e.preventDefault(),u({type:"typo3:preview:navigate",url:p(o).href});return}e.formData===null&&i(o)&&l(o)!==t&&e.canIntercept&&(e.preventDefault(),w.navigate(d(o,t).href,{history:e.navigationType==="replace"?"replace":"auto"}))})}

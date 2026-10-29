@@ -23,6 +23,8 @@ use TYPO3\CMS\Backend\Attribute\AsController;
 use TYPO3\CMS\Backend\Context\PageContext;
 use TYPO3\CMS\Backend\Context\PageContextFactory;
 use TYPO3\CMS\Backend\Domain\Model\Language\LanguageItem;
+use TYPO3\CMS\Backend\Preview\PreviewAccessDeniedException;
+use TYPO3\CMS\Backend\Preview\PreviewTokenIssuer;
 use TYPO3\CMS\Backend\Routing\PreviewUriBuilder;
 use TYPO3\CMS\Backend\Routing\UriBuilder;
 use TYPO3\CMS\Backend\Template\Components\ComponentFactory;
@@ -62,6 +64,7 @@ final class ViewModuleController
         private readonly PageRepository $pageRepository,
         private readonly PolicyRegistry $policyRegistry,
         private readonly ComponentFactory $componentFactory,
+        private readonly PreviewTokenIssuer $previewTokenIssuer,
         private readonly PageContextFactory $pageContextFactory,
         private readonly PageDoktypeRegistry $pageDoktypeRegistry,
     ) {}
@@ -104,16 +107,16 @@ final class ViewModuleController
             );
         }
 
-        $targetUri = PreviewUriBuilder::create($this->pageContext->pageId)
+        $previewUriBuilder = PreviewUriBuilder::create($this->pageContext->pageId)
             ->withAdditionalQueryParameters((($typeId = (int)($this->pageContext->getModuleTsConfig('web_view')['type'] ?? 0)) > 0) ? '&type=' . $typeId : '')
-            ->withLanguage($languageId)
-            ->buildUri();
+            ->withLanguage($languageId);
+        $targetUri = $previewUriBuilder->buildUri();
         $targetUrl = (string)$targetUri;
         if ($targetUri === null || $targetUrl === '') {
             return $view->assign('info', $languageService->sL('LLL:EXT:viewpage/Resources/Private/Language/locallang.xlf:noValidPageSelected'))->renderResponse('Empty');
         }
 
-        $this->registerDocHeader($view, $previewLanguages, $languageId, $targetUrl);
+        $this->registerDocHeader($view, $previewLanguages, $languageId, (string)$previewUriBuilder->buildBackendPreviewUri(), $targetUrl);
         $moduleData = $request->getAttribute('moduleData');
         $current = $moduleData->get('States')['current'] ?? [];
         $current['label'] = ($current['label'] ?? $languageService->sL('LLL:EXT:viewpage/Resources/Private/Language/locallang.xlf:custom'));
@@ -124,22 +127,38 @@ final class ViewModuleController
         $custom['width'] = MathUtility::forceIntegerInRange($custom['width'] ?? 320, 300);
         $custom['height'] = MathUtility::forceIntegerInRange($custom['height'] ?? 480, 300);
 
+        try {
+            // Always with a preview token, so the page stays in the frame; the site shows it as a
+            // preview only where something is previewed
+            $preview = $this->previewTokenIssuer->issue($request, $this->getBackendUser(), $targetUri, $this->pageContext->pageId);
+            $previewSettings = $this->previewTokenIssuer->getFrameSettings($preview, $this->pageContext->pageId);
+            $frameSources = array_map(static fn(string $origin): UriValue => new UriValue($origin), $preview->scope->getOrigins());
+        } catch (PreviewAccessDeniedException $exception) {
+            if ($exception->getCode() !== PreviewTokenIssuer::ADDRESS_OUTSIDE_PREVIEW) {
+                return $view->assign('info', $languageService->sL('backend.preview:error.denied'))->renderResponse('Empty');
+            }
+            // A frontend address an event listener changed to a host outside the preview, such as a
+            // decoupled frontend, opens as it is, without a token
+            $previewSettings = $this->previewTokenIssuer->getPlainFrameSettings($request, $targetUri, $this->pageContext->pageId);
+            $frameSources = $targetUri->getScheme() !== '' && $targetUri->getHost() !== '' ? [UriValue::fromUri($targetUri)] : [];
+        }
+
         $view->assignMultiple([
             'current' => $current,
             'custom' => $custom,
             'presetGroups' => $this->getPreviewPresets(),
-            'url' => $targetUrl,
+            'previewSettings' => json_encode($previewSettings, JSON_THROW_ON_ERROR),
         ]);
 
-        if ($targetUri->getScheme() !== '' && $targetUri->getHost() !== '') {
-            // temporarily(!) extend the CSP `frame-src` directive with the URL to be shown in the `<iframe>`
-            $mutation = new Mutation(MutationMode::Extend, Directive::FrameSrc, UriValue::fromUri($targetUri));
+        foreach ($frameSources as $frameSource) {
+            // temporarily(!) extend the CSP `frame-src` directive with the sites to be shown in the `<iframe>`
+            $mutation = new Mutation(MutationMode::Extend, Directive::FrameSrc, $frameSource);
             $this->policyRegistry->appendMutationCollection(new MutationCollection($mutation));
         }
         return $view->renderResponse('Show');
     }
 
-    private function registerDocHeader(ModuleTemplate $view, array $previewLanguages, int $languageId, string $targetUrl): void
+    private function registerDocHeader(ModuleTemplate $view, array $previewLanguages, int $languageId, string $previewPageUrl, string $targetUrl): void
     {
         $languageService = $this->getLanguageService();
         if (count($previewLanguages) > 1) {
@@ -168,11 +187,11 @@ final class ViewModuleController
             $view->getDocHeaderComponent()->setLanguageSelector($languageDropDownButton);
         }
         $showButton = $this->componentFactory->createLinkButton()
-            ->setHref($targetUrl)
+            ->setHref($previewPageUrl)
             ->setDataAttributes([
                 'dispatch-action' => 'TYPO3.WindowManager.localOpen',
                 'dispatch-args' => GeneralUtility::jsonEncodeForHtmlAttribute([
-                    $targetUrl,
+                    $previewPageUrl,
                     true, // switchFocus
                     'newTYPO3frontendWindow', // windowName,
                 ]),
