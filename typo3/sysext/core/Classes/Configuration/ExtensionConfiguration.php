@@ -199,7 +199,13 @@ readonly class ExtensionConfiguration
     {
         $activePackages = GeneralUtility::makeInstance(PackageManager::class)->getActivePackages();
         $fullConfiguration = [];
-        $currentLocalConfiguration = $GLOBALS['TYPO3_CONF_VARS']['EXTENSIONS'] ?? [];
+        $configurationManager = GeneralUtility::makeInstance(ConfigurationManager::class);
+        $currentLocalConfiguration = [];
+        if (!$skipWriteIfLocalConfigurationDoesNotExist
+            || @is_file($configurationManager->getSystemConfigurationFileLocation())
+        ) {
+            $currentLocalConfiguration = $configurationManager->getLocalConfiguration()['EXTENSIONS'] ?? [];
+        }
         foreach ($activePackages as $package) {
             if (!@is_file($package->getPackagePath() . 'ext_conf_template.txt')) {
                 continue;
@@ -214,8 +220,13 @@ readonly class ExtensionConfiguration
         }
         // Write new config if changed. Loose array comparison to not write if only array key order is different
         if ($fullConfiguration != $currentLocalConfiguration) {
-            $this->setAll($fullConfiguration, $skipWriteIfLocalConfigurationDoesNotExist);
+            if (!$skipWriteIfLocalConfigurationDoesNotExist || @file_exists($configurationManager->getSystemConfigurationFileLocation())) {
+                $configurationManager->setLocalConfigurationValueByPath('EXTENSIONS', $fullConfiguration);
+            }
         }
+        // Runtime overrides from additional.php must remain effective without being persisted.
+        ArrayUtility::mergeRecursiveWithOverrule($fullConfiguration, $GLOBALS['TYPO3_CONF_VARS']['EXTENSIONS'] ?? []);
+        $GLOBALS['TYPO3_CONF_VARS']['EXTENSIONS'] = $fullConfiguration;
     }
 
     /**
@@ -232,13 +243,16 @@ readonly class ExtensionConfiguration
         if (!@is_file($package->getPackagePath() . 'ext_conf_template.txt')) {
             return;
         }
-        $currentLocalConfiguration = $GLOBALS['TYPO3_CONF_VARS']['EXTENSIONS'][$extensionKey] ?? [];
+        $configurationManager = GeneralUtility::makeInstance(ConfigurationManager::class);
+        $currentLocalConfiguration = $configurationManager->getLocalConfiguration()['EXTENSIONS'][$extensionKey] ?? [];
         $extConfTemplateConfiguration = $this->getExtConfTablesWithoutCommentsAsNestedArrayWithoutDots($extensionKey);
         ArrayUtility::mergeRecursiveWithOverrule($extConfTemplateConfiguration, $currentLocalConfiguration);
         // Write new config if changed. Loose array comparison to not write if only array key order is different
         if ($extConfTemplateConfiguration != $currentLocalConfiguration) {
-            $this->set($extensionKey, $extConfTemplateConfiguration);
+            $configurationManager->setLocalConfigurationValueByPath('EXTENSIONS/' . $extensionKey, $extConfTemplateConfiguration);
         }
+        ArrayUtility::mergeRecursiveWithOverrule($extConfTemplateConfiguration, $GLOBALS['TYPO3_CONF_VARS']['EXTENSIONS'][$extensionKey] ?? []);
+        $GLOBALS['TYPO3_CONF_VARS']['EXTENSIONS'][$extensionKey] = $extConfTemplateConfiguration;
     }
 
     /**
