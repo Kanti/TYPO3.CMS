@@ -40,7 +40,8 @@ class SelectSingleElement {
 
     new RegularEvent('change', (e: Event): void => {
       const target = e.target as HTMLSelectElement;
-      const groupIconContainer: HTMLElement = target.parentElement.querySelector('.input-group-icon');
+      const selectWrapper = target.closest('typo3-backend-searchable-select') ?? target;
+      const groupIconContainer: HTMLElement = selectWrapper.parentElement.querySelector('.input-group-icon');
 
       // Update prepended select icon
       if (groupIconContainer !== null) {

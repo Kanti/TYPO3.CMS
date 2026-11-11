@@ -291,6 +291,12 @@
       <trans-unit id="collapse_state_search.numberOfSearchMatches">
         <source>{count, plural, =0 {no matches} =1 {one match} other {# matches}}</source>
       </trans-unit>
+      <trans-unit id="searchable_select.results">
+        <source>{count, plural, =0 {No results found} =1 {One result available} other {# results available}}</source>
+      </trans-unit>
+      <trans-unit id="searchable_select.group">
+        <source>{group} group, {count, plural, =1 {one option} other {# options}}</source>
+      </trans-unit>
     </body>
   </file>
 </xliff>

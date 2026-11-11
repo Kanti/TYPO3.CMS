@@ -21,6 +21,7 @@ use TYPO3\CMS\Backend\Template\Components\Buttons\DropDown\DropDownItemInterface
 use TYPO3\CMS\Backend\Template\Components\Buttons\DropDown\DropDownRadio;
 use TYPO3\CMS\Core\Imaging\Icon;
 use TYPO3\CMS\Core\Imaging\IconSize;
+use TYPO3\CMS\Core\Page\PageRenderer;
 use TYPO3\CMS\Core\Utility\GeneralUtility;
 
 /**
@@ -232,11 +233,18 @@ class DropDownButton implements ButtonInterface
         $icon = $activeItem?->getIcon()?->render() ?? $this->getIcon()?->render() ?? '';
         $buttonContent = $icon . ($icon !== '' && $buttonLabel !== '' ? ' ' : '') . $buttonLabel;
 
-        return sprintf(
+        $html = sprintf(
             '<div class="btn-group"><button %s>%s</button><ul class="dropdown-menu">%s</ul></div>',
             GeneralUtility::implodeAttributes($attributes, true),
             $buttonContent,
             implode('', array_map(static fn(DropDownItemInterface $item) => '<li>' . $item->render() . '</li>', $items))
+        );
+        GeneralUtility::makeInstance(PageRenderer::class)
+            ->loadJavaScriptModule('@typo3/backend/element/searchable-select-element.js');
+        return sprintf(
+            '<typo3-backend-searchable-select label="%s">%s</typo3-backend-searchable-select>',
+            htmlspecialchars($this->getTitle()),
+            $html
         );
     }
 

@@ -6,6 +6,11 @@
 
 <f:layout name="Module" />
 
+<f:section name="Before">
+    <f:asset.module identifier="@typo3/backend/element/searchable-select-element.js"/>
+    <f:asset.module identifier="@typo3/styleguide/searchable-select-demo.js"/>
+</f:section>
+
 <f:section name="Content">
 
     <f:render
@@ -269,6 +274,98 @@
                 }"
             />
         </sg:colorScheme>
+        <h2><f:translate key="component.select.section.searchable.headline" domain="styleguide.messages" /></h2>
+        <p>
+            <f:sanitize.html><f:translate key="component.select.section.searchable.introtext" domain="styleguide.messages" /></f:sanitize.html>
+        </p>
+        <sg:colorScheme>
+            <sg:example codePreview="true" codeLanguage="html">
+                <f:render
+                    partial="Backend/Form/SearchableSelect"
+                    arguments="{
+                        identifier: 'selectFormSearchableDefault',
+                        fieldLabel: 'Form label',
+                        groups: searchableSelectGroups
+                    }"
+                />
+            </sg:example>
+        </sg:colorScheme>
+
+        <sg:colorScheme>
+            <sg:example codePreview="true" codeLanguage="html">
+                <label for="shortSearchableSelect" class="form-label">Search by typing (three options)</label>
+                <typo3-backend-searchable-select>
+                    <select id="shortSearchableSelect" class="form-select">
+                        <option>Deutsch</option>
+                        <option>English</option>
+                        <option>Français</option>
+                    </select>
+                </typo3-backend-searchable-select>
+            </sg:example>
+        </sg:colorScheme>
+
+        <h2><f:translate key="component.select.section.searchableMenu.headline" domain="styleguide.messages" /></h2>
+        <p>
+            <f:sanitize.html><f:translate key="component.select.section.searchableMenu.introtext" domain="styleguide.messages" /></f:sanitize.html>
+        </p>
+        <sg:colorScheme>
+            <sg:example codePreview="true" codeLanguage="html">
+                <f:render
+                    partial="Backend/Form/SearchableSelectMenu"
+                    arguments="{
+                        label: 'Show',
+                        groups: searchableSelectGroups,
+                        selected: 'cherry'
+                    }"
+                />
+            </sg:example>
+        </sg:colorScheme>
+
+        <h2><f:translate key="component.select.section.searchablePreselected.headline" domain="styleguide.messages" /></h2>
+        <sg:colorScheme>
+            <sg:example codePreview="true" codeLanguage="html">
+                <f:render
+                    partial="Backend/Form/SearchableSelect"
+                    arguments="{
+                        identifier: 'selectFormSearchablePreselected',
+                        fieldLabel: 'Form label',
+                        groups: searchableSelectGroups,
+                        selected: 'rosemary'
+                    }"
+                />
+            </sg:example>
+        </sg:colorScheme>
+
+        <h2><f:translate key="component.select.section.searchableDisabled.headline" domain="styleguide.messages" /></h2>
+        <sg:colorScheme>
+            <sg:example codePreview="true" codeLanguage="html">
+                <f:render
+                    partial="Backend/Form/SearchableSelect"
+                    arguments="{
+                        identifier: 'selectFormSearchableDisabled',
+                        fieldLabel: 'Form label',
+                        groups: searchableSelectGroups,
+                        disabled: 1
+                    }"
+                />
+            </sg:example>
+        </sg:colorScheme>
+
+        <h2><f:translate key="component.select.section.searchableAdditionalText.headline" domain="styleguide.messages" /></h2>
+        <sg:colorScheme>
+            <sg:example codePreview="true" codeLanguage="html">
+                <f:render
+                    partial="Backend/Form/SearchableSelect"
+                    arguments="{
+                        identifier: 'selectFormSearchableAdditionalText',
+                        fieldLabel: 'Form label',
+                        groups: searchableSelectGroups,
+                        formText: 'Filtering ignores case and accents: typing cafe also finds Café au lait.'
+                    }"
+                />
+            </sg:example>
+        </sg:colorScheme>
+
     </div>
 
 </f:section>
