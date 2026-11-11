@@ -21,6 +21,7 @@ use Psr\EventDispatcher\EventDispatcherInterface;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use TYPO3\CMS\Backend\Attribute\AsController;
+use TYPO3\CMS\Backend\Authentication\SessionSynchronization\OriginResolver;
 use TYPO3\CMS\Backend\Backend\Bookmark\BookmarkService;
 use TYPO3\CMS\Backend\Controller\Event\AfterBackendPageRenderEvent;
 use TYPO3\CMS\Backend\Controller\Event\BeforeBackendPageRenderEvent;
@@ -85,6 +86,7 @@ readonly class BackendController
         protected DateConfigurationFactory $dateConfigurationFactory,
         protected SystemResourceFactory $systemResourceFactory,
         protected SystemResourcePublisherInterface $systemResourcePublisher,
+        protected OriginResolver $sessionSynchronizationOrigins,
     ) {}
 
     /**
@@ -100,6 +102,14 @@ readonly class BackendController
         $this->setUpBasicPageRendererForBackend($pageRenderer, $this->extensionConfiguration, $request, $this->getLanguageService());
 
         $javaScriptRenderer = $pageRenderer->getJavaScriptRenderer();
+        if (count($this->sessionSynchronizationOrigins->resolve($request)) > 1) {
+            $javaScriptRenderer->addJavaScriptModuleInstruction(
+                JavaScriptModuleInstruction::create('@typo3/backend/session-synchronization.js')
+                    ->invoke('initialize', [
+                        'endpoint' => (string)$this->uriBuilder->buildUriFromRoute('ajax_session_synchronization_control'),
+                    ])
+            );
+        }
         $javaScriptRenderer->addGlobalAssignment(['window' => [
             'name' => 'typo3-backend', // reset window name to a standardized value
             'opener' => null, // remove any previously set opener value

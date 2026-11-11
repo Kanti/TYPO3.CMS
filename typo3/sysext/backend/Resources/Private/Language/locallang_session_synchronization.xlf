@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<xliff xmlns="urn:oasis:names:tc:xliff:document:1.2" version="1.2">
+  <file source-language="en" datatype="plaintext" original="EXT:backend/Resources/Private/Language/locallang_session_synchronization.xlf" date="2026-10-27T00:00:00Z" product-name="cms">
+    <header/>
+    <body>
+      <trans-unit id="title" resname="title">
+        <source>Sign-in on other domains</source>
+      </trans-unit>
+      <trans-unit id="bridge.completing" resname="bridge.completing">
+        <source>Completing sign-in…</source>
+      </trans-unit>
+      <trans-unit id="bridge.return" resname="bridge.return">
+        <source>Return to TYPO3</source>
+      </trans-unit>
+      <trans-unit id="incomplete" resname="incomplete">
+        <source>You are signed in here. Sign-in has not been transferred to all domains.</source>
+      </trans-unit>
+      <trans-unit id="unavailable" resname="unavailable">
+        <source>You are signed in here. Sign-in on other domains could not be checked. You can continue working and try again.</source>
+      </trans-unit>
+      <trans-unit id="retry" resname="retry">
+        <source>Try again</source>
+      </trans-unit>
+      <trans-unit id="complete" resname="complete">
+        <source>Complete sign-in on other domains</source>
+      </trans-unit>
+      <trans-unit id="pending" resname="pending">
+        <source>Not yet transferred</source>
+      </trans-unit>
+      <trans-unit id="synchronized" resname="synchronized">
+        <source>Signed in</source>
+      </trans-unit>
+      <trans-unit id="skipped" resname="skipped">
+        <source>Another user is already signed in</source>
+      </trans-unit>
+      <trans-unit id="failed" resname="failed">
+        <source>Sign-in could not be transferred</source>
+      </trans-unit>
+      <trans-unit id="navigation-required" resname="navigation-required">
+        <source>A direct visit is needed to complete sign-in</source>
+      </trans-unit>
+    </body>
+  </file>
+</xliff>

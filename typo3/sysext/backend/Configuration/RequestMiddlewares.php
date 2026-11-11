@@ -31,6 +31,16 @@ return [
                 'typo3/cms-backend/locked-backend',
             ],
         ],
+        'typo3/cms-backend/session-synchronization' => [
+            'target' => \TYPO3\CMS\Backend\Middleware\SessionSynchronization::class,
+            'after' => [
+                'typo3/cms-backend/https-redirector',
+            ],
+            'before' => [
+                'typo3/cms-backend/backend-routing',
+                'typo3/cms-backend/csp-report',
+            ],
+        ],
         'typo3/cms-backend/csp-report' => [
             'target' => \TYPO3\CMS\Backend\Middleware\ContentSecurityPolicyReporter::class,
             'after' => [
