@@ -103,3 +103,108 @@
     --typo3-form-select-padding-x: var(--typo3-input-sm-padding-x);
     --typo3-form-select-font-size: var(--typo3-input-sm-font-size);
 }
+
+select.select-native,
+.input-group > select.select-native {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    min-width: 0;
+    min-height: 0;
+    clip-path: inset(50%);
+    padding: 0;
+    border: 0;
+    overflow: hidden;
+}
+
+// The native control continues to own form submission and validation.
+typo3-backend-select {
+    display: block;
+    min-width: 0;
+    width: 100%;
+
+    .select-trigger {
+        text-align: start;
+        cursor: pointer;
+    }
+
+    .select-popup {
+        position: fixed;
+        inset: auto;
+        margin: 0;
+        padding: .5rem;
+        color: var(--typo3-input-color);
+        background: var(--typo3-input-bg);
+        border: var(--typo3-input-border-width) solid var(--typo3-input-border-color);
+        border-radius: var(--typo3-input-border-radius);
+        box-shadow: 0 .25rem .75rem rgb(0 0 0 / 20%);
+        overflow: hidden;
+
+        &:popover-open {
+            display: flex;
+            flex-direction: column;
+        }
+    }
+
+    .select-search {
+        flex: none;
+        margin-bottom: .5rem;
+
+        &[hidden] {
+            display: none;
+        }
+    }
+
+    .select-options {
+        min-height: 0;
+        max-height: 18rem;
+        overflow-y: auto;
+        overscroll-behavior: contain;
+    }
+
+    .select-option,
+    .select-group-label,
+    .select-status:not(:empty) {
+        padding: .5rem .75rem;
+    }
+
+    .select-group-label {
+        font-weight: bold;
+    }
+
+    .select-option {
+        display: flex;
+        align-items: center;
+        gap: .5rem;
+        min-height: 2.5rem;
+        border-radius: var(--typo3-input-border-radius);
+        cursor: pointer;
+        overflow-wrap: anywhere;
+
+        &[aria-selected="true"]:after {
+            content: "✓";
+            margin-inline-start: auto;
+        }
+
+        &:hover,
+        &.active {
+            color: var(--typo3-input-hover-color);
+            background: var(--typo3-input-hover-bg);
+        }
+
+        &.active {
+            outline: 2px solid var(--typo3-input-focus-border-color);
+            outline-offset: -2px;
+        }
+
+        &[aria-disabled="true"] {
+            opacity: var(--typo3-input-disabled-opacity);
+            cursor: not-allowed;
+        }
+    }
+}
+
+.input-group > typo3-backend-select {
+    flex: 1 1 auto;
+    width: 1%;
+}

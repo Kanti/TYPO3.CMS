@@ -6,6 +6,10 @@
 
 <f:layout name="Module" />
 
+<f:section name="Before">
+    <f:be.pageRenderer includeJavaScriptModules="{0: '@typo3/backend/element/select-element.js'}" />
+</f:section>
+
 <f:section name="Content">
 
     <f:render
@@ -22,6 +26,33 @@
         <p>
             <f:sanitize.html><f:translate key="component.select.introtext" domain="styleguide.messages" /></f:sanitize.html>
         </p>
+
+        <h2><f:translate key="component.select.section.search.headline" domain="styleguide.messages" /></h2>
+        <p><f:translate key="component.select.section.search.description" domain="styleguide.messages" /></p>
+        <sg:example codePreview="true" codeLanguage="html">
+            <label for="selectSearchSeven" class="form-label">Language (seven options)</label>
+            <typo3-backend-select>
+                <select id="selectSearchSeven" class="form-select">
+                    <option>English</option>
+                    <option selected>Deutsch</option>
+                    <option>Español</option>
+                    <option>Français</option>
+                    <option>Italiano</option>
+                    <option>Português</option>
+                    <option>Polski</option>
+                </select>
+            </typo3-backend-select>
+        </sg:example>
+        <sg:example codePreview="true" codeLanguage="html">
+            <label for="selectSearchThree" class="form-label">Language (three options)</label>
+            <typo3-backend-select>
+                <select id="selectSearchThree" class="form-select">
+                    <option>English</option>
+                    <option selected>Deutsch</option>
+                    <option>Français</option>
+                </select>
+            </typo3-backend-select>
+        </sg:example>
 
         <h2><f:translate key="component.select.section.default.headline" domain="styleguide.messages" /></h2>
         <sg:example codePreview="true" codeLanguage="html">

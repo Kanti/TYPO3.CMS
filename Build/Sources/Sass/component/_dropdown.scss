@@ -413,3 +413,21 @@ button.dropdown-item,
     align-items: start;
     padding: calc(var(--typo3-dropdown-item-padding-y) / 2) var(--typo3-dropdown-item-padding-x) var(--typo3-dropdown-item-padding-y);
 }
+
+.dropdown-menu {
+    > li[hidden] {
+        display: none;
+    }
+
+    > .dropdown-search {
+        position: sticky;
+        top: 0;
+        z-index: 1;
+        padding: .5rem;
+        background: var(--typo3-dropdown-bg);
+    }
+
+    > .dropdown-search-status:not(.visually-hidden) {
+        padding: var(--typo3-dropdown-item-padding-y) var(--typo3-dropdown-item-padding-x);
+    }
+}
