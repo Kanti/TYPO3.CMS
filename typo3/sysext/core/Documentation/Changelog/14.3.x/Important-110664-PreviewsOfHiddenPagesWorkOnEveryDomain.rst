@@ -41,10 +41,11 @@ Where previews use a preview token
     *   -   Workspace preview
         -   always; the live frame gets a visitor token
 
-**Where needed** means: the backend login cookie does not reach the host of
-the site, because it is another host than the one of the backend and not
-covered by the cookie domain, and the page needs the backend login to be shown
-as a preview. A page needs the backend login if
+**Where needed** means: the backend login cookie does not reach the site, and
+the page needs the backend login to be shown as a preview. The cookie does not
+reach a site on another host than the backend that the cookie domain does not
+cover, below another path than the installation, or on plain HTTP while the
+backend runs on HTTPS. A page needs the backend login if
 
 *   it is hidden, or below a hidden page that extends to its subpages,
 *   it is a backend user section, or below one,
@@ -76,6 +77,13 @@ PHP API
 *   :php:`PreviewUriBuilder::buildDispatcherDataAttributes()` and the other
     methods that build the attributes of a preview button follow the same
     rule, also in extensions.
+*   Listeners of :php:`\TYPO3\CMS\Workspaces\Event\RetrievedPreviewUrlEvent`
+    get, for a page, the preview page of the backend where a preview token is
+    needed, as the preview buttons of the workspace module open it.
+*   The template :file:`Show.fluid.html` of the module
+    :guilabel:`Content > Preview` no longer gets the variable :html:`{url}`.
+    A script loads its frame from the attribute
+    :html:`data-preview-settings`, which an overridden template has to keep.
 
 Preview tokens
 --------------
@@ -156,10 +164,9 @@ The live frame next to a workspace preview gets a **visitor token**. It shows
 the page as a visitor sees it now: live, without hidden records, at the current
 time and without a frontend login, also for an editor without access to the
 live workspace. A page that is hidden in the live workspace therefore shows as
-not found there. A visitor token that
-asks for more is refused. It is valid on the sites the editor who opened the
-preview may preview now, but this editor does not become the backend user of
-the request.
+not found there. A visitor token that asks for more is refused. It is valid on
+the sites the editor who opened the preview may preview now, but this editor
+does not become the backend user of the request.
 
 Links, redirects and forms
 --------------------------
@@ -208,8 +215,9 @@ Requests
 --------
 
 *   A request with a valid preview token never builds a backend user from the
-    backend login cookie and ignores :code:`ADMCMD_prev`,
-    :code:`ADMCMD_simTime` and :code:`ADMCMD_simUser`.
+    backend login cookie and ignores :code:`ADMCMD_prev` and
+    :code:`ADMCMD_simTime`. :code:`ADMCMD_simUser` applies only with the admin
+    panel open, as without a token.
 *   A request with an invalid or expired token, or of an editor who may not
     see the page, answers with status 403 and the reason; it never falls back
     to the live page.
@@ -269,6 +277,13 @@ Server configuration
         -   Browsers send :http:`Sec-Fetch-Dest` only to HTTPS sites and to
             :code:`localhost`. Without it the token is accepted only if
             :php:`$GLOBALS['TYPO3_CONF_VARS']['BE']['lockSSL']` is disabled.
+    *   -   A site on the host of the backend
+        -   A script of the site in the frame reaches the backend page around
+            it and acts in the name of the editor, as in the module
+            :guilabel:`Content > Preview` before. Such a site needs a
+            Content-Security-Policy whose :http:`script-src` allows scripts
+            only by nonce or hash, so that scripts injected into a page do not
+            run.
 
 ..  note::
 
