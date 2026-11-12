@@ -152,7 +152,7 @@ readonly class PreviewSimulator implements MiddlewareInterface
      * The editor of a token sees a hidden page as with a backend login, unless the token
      * shows all hidden pages anyway
      */
-    private function editorSeesHiddenPage(PreviewToken $previewToken, ServerRequestInterface $request): bool
+    protected function editorSeesHiddenPage(PreviewToken $previewToken, ServerRequestInterface $request): bool
     {
         if ($previewToken->userId === null) {
             return false;
@@ -218,7 +218,7 @@ readonly class PreviewSimulator implements MiddlewareInterface
      *
      * @param list<int> $groups
      */
-    private function replaceUserGroups(ServerRequestInterface $request, array $groups): void
+    protected function replaceUserGroups(ServerRequestInterface $request, array $groups): void
     {
         $frontendUser = $request->getAttribute('frontend.user');
         if (!is_array($frontendUser->user)) {

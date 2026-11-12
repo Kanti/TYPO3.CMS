@@ -69,7 +69,7 @@ class PreviewUriBuilder
     public const OPTION_WINDOW_SCOPE_GLOBAL = 'global';
 
     protected array $record = [];
-    private array $previewedRecord = [];
+    protected array $previewedRecord = [];
     protected string $table = 'pages';
     protected int $pageId;
     protected int $languageId = LanguageMarker::DEFAULT_LANGUAGE;
@@ -275,7 +275,7 @@ class PreviewUriBuilder
      * record is hidden or not published at the moment. Preview links built outside of the
      * backend, for example in the frontend, never need a token.
      */
-    private function requiresPreviewToken(UriInterface $uri): bool
+    protected function requiresPreviewToken(UriInterface $uri): bool
     {
         // An address of the site, absolute or relative, and not for example a mailto: link
         if (!in_array($uri->getScheme(), ['', 'http', 'https'], true)) {
@@ -323,7 +323,7 @@ class PreviewUriBuilder
      * the backend has to decide before the click, so it repeats the frontend rules for
      * pages that need a backend login.
      */
-    private function pageNeedsBackendLogin(): bool
+    protected function pageNeedsBackendLogin(): bool
     {
         $pageRepository = GeneralUtility::makeInstance(PageRepository::class);
         foreach (array_unique([$this->languageId, LanguageMarker::DEFAULT_LANGUAGE]) as $languageId) {
@@ -359,7 +359,7 @@ class PreviewUriBuilder
         return false;
     }
 
-    private function isPreviewedRecordOutOfSight(): bool
+    protected function isPreviewedRecordOutOfSight(): bool
     {
         if ($this->table === 'pages') {
             return false;

@@ -432,7 +432,7 @@ class FormViewHelper extends AbstractFormViewHelper
      * token. The token travels only to the hosts of the preview, never to another host
      * such as an external search service.
      */
-    private function renderPreviewTokenHiddenField(): string
+    protected function renderPreviewTokenHiddenField(): string
     {
         $previewToken = $this->getPreviewToken();
         if ($previewToken === null) {
@@ -456,7 +456,7 @@ class FormViewHelper extends AbstractFormViewHelper
      * A preview is shown in a frame of the backend, a form targeting the window around
      * it would replace the backend with the page
      */
-    private function keepPreviewInFrame(): void
+    protected function keepPreviewInFrame(): void
     {
         if ($this->getPreviewToken() === null) {
             return;
@@ -468,7 +468,7 @@ class FormViewHelper extends AbstractFormViewHelper
         $this->tag->addAttribute('target', '_self');
     }
 
-    private function getPreviewToken(): ?PreviewToken
+    protected function getPreviewToken(): ?PreviewToken
     {
         $previewToken = $this->renderingContext->getAttribute(ServerRequestInterface::class)->getAttribute(PreviewAccess::ATTRIBUTE);
         return $previewToken instanceof PreviewToken ? $previewToken : null;
