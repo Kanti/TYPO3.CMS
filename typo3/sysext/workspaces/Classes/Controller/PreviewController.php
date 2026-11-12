@@ -136,7 +136,8 @@ final readonly class PreviewController
                 $rootline
             );
             if (!$this->workspaceService->isNewPage($pageUid)) {
-                $parameters = array_merge($queryParameters, $queryParametersLive);
+                // The live frame shows the page as a visitor sees it, without a simulated group
+                $parameters = $queryParameters;
                 // temporarily set workspace aspect to live (0) to generate the live URL
                 $liveWorkspaceContext = clone $this->context;
                 $liveWorkspaceContext->setAspect('workspace', new WorkspaceAspect(0));
