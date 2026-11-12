@@ -403,6 +403,38 @@ final class PreviewTokenIssuerTest extends FunctionalTestCase
         $issuer->renew($this->createRequest(), $user, $previous->token->jwt, new Uri('https://first.example/'), 7);
     }
 
+    /**
+     * The page around the frame renews the token of the editor who opened it. Another
+     * editor logged in to the same browser in the meantime gets no token from the
+     * simulation of the previous one; the preview page opens again for this editor.
+     */
+    #[Test]
+    public function renewalRefusesTheTokenOfAnotherEditor(): void
+    {
+        $issuer = $this->get(PreviewTokenIssuer::class);
+        $previous = $issuer->issue($this->createRequest(), $this->setUpBackendUser(1), new Uri('https://first.example/'), 2);
+        $editor = $this->setUpBackendUser(9);
+
+        $this->expectException(PreviewAccessDeniedException::class);
+        $this->expectExceptionCode(1794491403);
+        $issuer->renew($this->createRequest(), $editor, $previous->token->jwt, new Uri('https://first.example/'), 2);
+    }
+
+    /**
+     * The same holds for the visitor token of the live frame next to a workspace preview.
+     */
+    #[Test]
+    public function renewalRefusesTheVisitorTokenOfAnotherEditor(): void
+    {
+        $issuer = $this->get(PreviewTokenIssuer::class);
+        $previous = $issuer->issueForVisitor($this->createRequest(), $this->setUpBackendUser(1), new Uri('https://first.example/'), 2);
+        $editor = $this->setUpBackendUser(9);
+
+        $this->expectException(PreviewAccessDeniedException::class);
+        $this->expectExceptionCode(1794491403);
+        $issuer->renew($this->createRequest(), $editor, $previous->token->jwt, new Uri('https://first.example/'), 2);
+    }
+
     #[Test]
     public function renewalRefusesTokenOfAnotherBrowser(): void
     {

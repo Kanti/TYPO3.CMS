@@ -123,6 +123,11 @@ final readonly class PreviewTokenIssuer
         } catch (PreviewTokenRejectedException $exception) {
             throw new PreviewAccessDeniedException('Previous preview token is not valid', 1793276924, $exception);
         }
+        // Only the editor who opened the preview renews its token, never another editor
+        // logged in to the same browser since
+        if ($previous->editorId !== (int)$user->user['uid']) {
+            throw new PreviewAccessDeniedException('Previous preview token belongs to another editor', 1794491403);
+        }
         if ($previous->userId === null) {
             return $this->issueForVisitor($request, $user, $frontendUri, $pageId);
         }
