@@ -75,6 +75,25 @@ final class PreviewUriBuilderBackendPreviewTest extends FunctionalTestCase
         $this->assertPreviewPage($frontendUrl, PreviewUriBuilder::create($pageId)->buildBackendPreviewUri());
     }
 
+    /**
+     * An editor gets the preview page for the same pages as an administrator, within the
+     * mounts and the page permissions of the editor; a visible page opens directly.
+     */
+    #[Test]
+    public function editorGetsThePreviewPageForAHiddenPageOfItsMounts(): void
+    {
+        $connectionPool = $this->get(ConnectionPool::class);
+        $connectionPool->getConnectionForTable('be_groups')
+            ->insert('be_groups', ['uid' => 1, 'pid' => 0, 'title' => 'Editors', 'db_mountpoints' => '10', 'allowed_languages' => '0,1']);
+        $connectionPool->getConnectionForTable('be_users')
+            ->insert('be_users', ['uid' => 2, 'pid' => 0, 'username' => 'editor', 'admin' => 0, 'usergroup' => '1']);
+        $this->setUpBackendUser(2);
+
+        $this->assertPreviewPage('https://other.example.org/hidden', PreviewUriBuilder::create(12)->buildBackendPreviewUri());
+        $this->assertPreviewPage('https://other.example.org/hidden-branch/below', PreviewUriBuilder::create(14)->buildBackendPreviewUri());
+        self::assertSame('https://other.example.org/visible', (string)PreviewUriBuilder::create(11)->buildBackendPreviewUri());
+    }
+
     #[Test]
     public function visiblePageOnAnotherDomainOpensDirectly(): void
     {

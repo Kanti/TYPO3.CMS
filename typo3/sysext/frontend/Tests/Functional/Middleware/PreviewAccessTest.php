@@ -658,6 +658,57 @@ final class PreviewAccessTest extends FunctionalTestCase
         self::assertSame('Rendered page', (string)$previewAccess->process($request($this->signForVisitor()), $handler)->getBody());
     }
 
+    /**
+     * With lockSSL the backend is reachable via HTTPS only, and so is the preview of an
+     * editor: a site on plain HTTP refuses the token, a site on HTTPS shows the page.
+     */
+    #[Test]
+    public function backendLockedToHttpsShowsThePreviewOfAnEditorOnHttpsOnly(): void
+    {
+        $GLOBALS['TYPO3_CONF_VARS']['BE']['lockSSL'] = true;
+        $jwt = $this->sign();
+
+        $plainHttp = $this->processPreviewAccessOfSite('second', 'http://second.example/?__t3ct=' . $jwt, false);
+        $https = $this->processPreviewAccessOfSite('first', 'https://first.example/?__t3ct=' . $jwt, true);
+
+        $this->assertRejected('userNotAvailable', $plainHttp);
+        self::assertSame('Rendered page', (string)$https->getBody());
+    }
+
+    public static function lockedBackendDataProvider(): \Generator
+    {
+        yield 'locked for everybody' => [-1, false, false];
+        yield 'open to administrators only' => [1, true, false];
+        yield 'open to everybody' => [0, true, true];
+    }
+
+    /**
+     * A backend locked with adminOnly locks the preview of the editors it locks out: a
+     * locked backend shows no preview at all, one open to administrators only shows it to
+     * them alone.
+     */
+    #[Test]
+    #[DataProvider('lockedBackendDataProvider')]
+    public function lockedBackendShowsThePreviewOnlyToTheEditorsItLetsIn(int $adminOnly, bool $administratorSeesIt, bool $editorSeesIt): void
+    {
+        $GLOBALS['TYPO3_CONF_VARS']['BE']['adminOnly'] = $adminOnly;
+
+        $administrator = $this->processPreviewAccessOfSite('first', 'https://first.example/?__t3ct=' . $this->sign(), true);
+        $editor = $this->processPreviewAccessOfSite('first', 'https://first.example/?__t3ct=' . $this->signForEditor(), true);
+
+        $this->assertShownOrRefused($administratorSeesIt, $administrator);
+        $this->assertShownOrRefused($editorSeesIt, $editor);
+    }
+
+    private function assertShownOrRefused(bool $shown, ResponseInterface $response): void
+    {
+        if (!$shown) {
+            $this->assertRejected('userNotAvailable', $response);
+            return;
+        }
+        self::assertSame('Rendered page', (string)$response->getBody());
+    }
+
     #[Test]
     public function visitorTokenShowsThePageAsAVisitorSeesIt(): void
     {
@@ -1040,6 +1091,21 @@ final class PreviewAccessTest extends FunctionalTestCase
     }
 
     /**
+     * A link to a section of a page carries the token in its query, before the fragment,
+     * so the browser sends it and scrolls to the section (thread 530).
+     */
+    #[Test]
+    public function linkToASectionKeepsTheTokenBeforeTheFragment(): void
+    {
+        $this->addTypoScriptToTheFirstSite('page.110 = TEXT' . LF . 'page.110.value = Section' . LF . 'page.110.typolink.parameter = 2' . LF . 'page.110.typolink.section = top');
+        $jwt = $this->sign();
+
+        $body = (string)$this->preview('https://first.example/', $jwt)->getBody();
+
+        self::assertStringContainsString('href="/hidden?__t3ct=' . $jwt . '#top"', $body);
+    }
+
+    /**
      * A link to a host of the preview keeps its address as it is written and only gets the
      * token: a signed address compares it byte by byte, brackets and pipes included,
      * which an URI object would encode.
@@ -1165,6 +1231,30 @@ final class PreviewAccessTest extends FunctionalTestCase
             $request = $request->withHeader($name, $value);
         }
         return $this->executeFrontendSubRequest($request);
+    }
+
+    /**
+     * Runs the middleware for a page in the frame of a site, on HTTPS or on plain HTTP; the
+     * page renders as "Rendered page"
+     */
+    private function processPreviewAccessOfSite(string $identifier, string $url, bool $https): ResponseInterface
+    {
+        // Every request starts without a backend user, as the preview builds the editor
+        unset($GLOBALS['BE_USER']);
+        parse_str((string)parse_url($url, PHP_URL_QUERY), $queryParams);
+        $site = $this->get(SiteFinder::class)->getSiteByIdentifier($identifier);
+        $request = new ServerRequest($url, 'GET', null, ['Sec-Fetch-Dest' => 'iframe', 'User-Agent' => self::USER_AGENT], array_filter(['HTTPS' => $https ? 'on' : null, 'HTTP_HOST' => (string)parse_url($url, PHP_URL_HOST)]))
+            ->withQueryParams($queryParams)
+            ->withAttribute('applicationType', SystemEnvironmentBuilder::REQUESTTYPE_FE)
+            ->withAttribute('site', $site)
+            ->withAttribute('language', $site->getDefaultLanguage());
+        $handler = new class implements RequestHandlerInterface {
+            public function handle(ServerRequestInterface $request): ResponseInterface
+            {
+                return new HtmlResponse('Rendered page');
+            }
+        };
+        return $this->get(PreviewAccess::class)->process($request->withAttribute('normalizedParams', NormalizedParams::createFromRequest($request)), $handler);
     }
 
     /**

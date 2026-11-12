@@ -22,6 +22,7 @@ use Psr\Http\Message\ResponseInterface;
 use TYPO3\CMS\Backend\Controller\PreviewController;
 use TYPO3\CMS\Backend\Routing\Route;
 use TYPO3\CMS\Core\Core\SystemEnvironmentBuilder;
+use TYPO3\CMS\Core\Database\ConnectionPool;
 use TYPO3\CMS\Core\Http\NormalizedParams;
 use TYPO3\CMS\Core\Http\ServerRequest;
 use TYPO3\CMS\Core\Localization\LanguageServiceFactory;
@@ -99,7 +100,15 @@ final class PreviewControllerTest extends FunctionalTestCase
     #[Test]
     public function editorWhoMayNotPreviewThePageGetsAMessage(): void
     {
-        $response = $this->showPreviewPage('https://first.example/', 4711);
+        $connectionPool = $this->get(ConnectionPool::class);
+        $connectionPool->getConnectionForTable('be_groups')
+            ->insert('be_groups', ['uid' => 1, 'pid' => 0, 'title' => 'Editors', 'db_mountpoints' => '7']);
+        $connectionPool->getConnectionForTable('be_users')
+            ->insert('be_users', ['uid' => 2, 'pid' => 0, 'username' => 'editor', 'admin' => 0, 'usergroup' => '1']);
+        $GLOBALS['LANG'] = $this->get(LanguageServiceFactory::class)->createFromUserPreferences($this->setUpBackendUser(2));
+
+        // Page 1 exists, but lies outside the only mount of the editor
+        $response = $this->showPreviewPage('https://first.example/', 1);
 
         self::assertSame(403, $response->getStatusCode());
         self::assertSame('private, no-store', $response->getHeaderLine('Cache-Control'));
