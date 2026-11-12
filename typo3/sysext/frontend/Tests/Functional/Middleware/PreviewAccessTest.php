@@ -27,6 +27,7 @@ use TYPO3\CMS\Core\Clock\SystemClock;
 use TYPO3\CMS\Core\Core\SystemEnvironmentBuilder;
 use TYPO3\CMS\Core\Database\ConnectionPool;
 use TYPO3\CMS\Core\Http\HtmlResponse;
+use TYPO3\CMS\Core\Http\ImmediateResponseException;
 use TYPO3\CMS\Core\Http\NormalizedParams;
 use TYPO3\CMS\Core\Http\RedirectResponse;
 use TYPO3\CMS\Core\Http\ServerRequest;
@@ -993,6 +994,30 @@ final class PreviewAccessTest extends FunctionalTestCase
 
         self::assertSame(303, $response->getStatusCode());
         self::assertSame('mailto:info@example.org?subject=Preview', $response->getHeaderLine('Location'));
+    }
+
+    /**
+     * An extension may answer with an ImmediateResponseException, which leaves the stack
+     * of middlewares at once. Its answer is still one of the preview: never cached, never
+     * indexed, and framed only by the backend that signed the token.
+     */
+    #[Test]
+    public function immediateResponseOfAnExtensionGetsTheHeadersOfThePreview(): void
+    {
+        $handler = new class implements RequestHandlerInterface {
+            public function handle(ServerRequestInterface $request): ResponseInterface
+            {
+                throw new ImmediateResponseException(new HtmlResponse('Immediate answer', 200, ['Cache-Control' => 'public, max-age=3600']), 1794491402);
+            }
+        };
+        $jwt = $this->sign();
+
+        $response = $this->processPreviewAccess('https://first.example/?__t3ct=' . $jwt, ['Sec-Fetch-Dest' => 'iframe'], $handler);
+
+        self::assertSame('Immediate answer', (string)$response->getBody());
+        self::assertSame('private, no-store', $response->getHeaderLine('Cache-Control'));
+        self::assertSame('noindex', $response->getHeaderLine('X-Robots-Tag'));
+        self::assertSame('frame-ancestors ' . self::BACKEND, $response->getHeaderLine('Content-Security-Policy'));
     }
 
     /**

@@ -30,6 +30,7 @@ use TYPO3\CMS\Core\Context\VisibilityAspect;
 use TYPO3\CMS\Core\Context\WorkspaceAspect;
 use TYPO3\CMS\Core\Domain\DateTimeFactory;
 use TYPO3\CMS\Core\Http\HtmlResponse;
+use TYPO3\CMS\Core\Http\ImmediateResponseException;
 use TYPO3\CMS\Core\Http\NormalizedParams;
 use TYPO3\CMS\Core\Http\RedirectResponse;
 use TYPO3\CMS\Core\Http\Uri;
@@ -136,6 +137,9 @@ final readonly class PreviewAccess implements MiddlewareInterface
             $response = $handler->handle($request);
         } catch (PreviewTokenRejectedException $exception) {
             return $this->createErrorResponse($request, $exception->rejection, $token);
+        } catch (ImmediateResponseException $exception) {
+            // An immediate answer, as extensions send one, is still an answer of the preview
+            $response = $exception->getResponse();
         }
         if ($response->hasHeader('Location')) {
             $response = $this->withTokenInLocation($request, $response, $token, $scope);
