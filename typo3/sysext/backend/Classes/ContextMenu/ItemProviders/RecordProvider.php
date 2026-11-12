@@ -425,7 +425,7 @@ class RecordProvider extends AbstractProvider
             $this->table,
             $this->record,
             $this->pageRecord['uid'] ?? 0
-        )->buildUri();
+        )->buildBackendPreviewUri();
     }
 
     /**

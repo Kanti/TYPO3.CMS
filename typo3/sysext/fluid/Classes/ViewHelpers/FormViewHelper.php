@@ -23,6 +23,9 @@ use TYPO3\CMS\Core\Context\SecurityAspect;
 use TYPO3\CMS\Core\Crypto\HashAlgo;
 use TYPO3\CMS\Core\Crypto\HashService;
 use TYPO3\CMS\Core\Http\ApplicationType;
+use TYPO3\CMS\Core\Preview\PreviewScope;
+use TYPO3\CMS\Core\Preview\PreviewToken;
+use TYPO3\CMS\Core\Preview\PreviewTokenService;
 use TYPO3\CMS\Core\Security\RequestToken;
 use TYPO3\CMS\Core\Utility\GeneralUtility;
 use TYPO3\CMS\Extbase\Configuration\ConfigurationManagerInterface;
@@ -33,6 +36,7 @@ use TYPO3\CMS\Extbase\Security\HashScope;
 use TYPO3\CMS\Extbase\Service\ExtensionService;
 use TYPO3\CMS\Fluid\ViewHelpers\Form\AbstractFormViewHelper;
 use TYPO3\CMS\Fluid\ViewHelpers\Form\CheckboxViewHelper;
+use TYPO3\CMS\Frontend\Middleware\PreviewAccess;
 
 /**
  * ViewHelper to generate a `<form>` tag and prepare context for
@@ -131,6 +135,7 @@ class FormViewHelper extends AbstractFormViewHelper
         } else {
             $this->tag->addAttribute('method', 'post');
         }
+        $this->addPreviewTokenToAction();
 
         if (!empty($this->arguments['name'])) {
             $this->tag->addAttribute('name', $this->arguments['name']);
@@ -157,6 +162,7 @@ class FormViewHelper extends AbstractFormViewHelper
         $content .= $this->renderAdditionalIdentityFields();
         $content .= $this->renderHiddenReferrerFields();
         $content .= $this->renderRequestTokenHiddenField();
+        $content .= $this->renderPreviewTokenHiddenField();
 
         // Render the trusted list of all properties after everything else has been rendered
         $content .= $this->renderTrustedPropertiesField();
@@ -169,6 +175,7 @@ class FormViewHelper extends AbstractFormViewHelper
         $this->removeFormObjectNameFromViewHelperVariableContainer();
         $this->removeFormFieldNamesFromViewHelperVariableContainer();
         $this->removeCheckboxFieldNamesFromViewHelperVariableContainer();
+        $this->keepPreviewInFrame();
         return $this->tag->render();
     }
 
@@ -419,6 +426,86 @@ class FormViewHelper extends AbstractFormViewHelper
         $formFieldNames = $this->renderingContext->getViewHelperVariableContainer()->get(FormViewHelper::class, 'formFieldNames');
         $requestHash = $this->mvcPropertyMappingConfigurationService->generateTrustedPropertiesToken($formFieldNames, $this->getFieldNamePrefix());
         return '<input type="hidden" name="' . htmlspecialchars($this->prefixFieldName('__trustedProperties')) . '" value="' . htmlspecialchars($requestHash) . '" ' . ($this->shouldUseXHtmlSlash() ? '/' : '') . '>';
+    }
+
+    /**
+     * A form sent via HTTP GET replaces the query of its action, including the preview
+     * token, so the token goes into a hidden field
+     */
+    protected function renderPreviewTokenHiddenField(): string
+    {
+        $previewToken = $this->getPreviewToken();
+        if ($previewToken === null) {
+            return '';
+        }
+        if ($this->tag->getAttribute('method') !== 'get') {
+            return '';
+        }
+        if (!$this->isActionOnAHostOfThePreview()) {
+            return '';
+        }
+        return '<input type="hidden" name="' . PreviewTokenService::PARAMETER . '" value="' . htmlspecialchars($previewToken->jwt) . '" ' . ($this->shouldUseXHtmlSlash() ? '/' : '') . '>';
+    }
+
+    /**
+     * A form sent via HTTP POST keeps the query of its action, so the preview token goes
+     * there, also for an action written as an address instead of built by a typolink
+     */
+    protected function addPreviewTokenToAction(): void
+    {
+        $previewToken = $this->getPreviewToken();
+        if ($previewToken === null) {
+            return;
+        }
+        if ($this->tag->getAttribute('method') !== 'post') {
+            return;
+        }
+        // The tag keeps its attributes escaped
+        $action = htmlspecialchars_decode((string)$this->tag->getAttribute('action'));
+        // Without an action the form goes to the address of the page, which carries the token
+        if ($action === '') {
+            return;
+        }
+        if (!$this->isActionOnAHostOfThePreview()) {
+            return;
+        }
+        $this->tag->addAttribute('action', PreviewTokenService::addToUrl($action, $previewToken->jwt));
+    }
+
+    /**
+     * The token travels only to the hosts of the preview, never to another host such as an
+     * external search or payment service
+     */
+    protected function isActionOnAHostOfThePreview(): bool
+    {
+        $request = $this->renderingContext->getAttribute(ServerRequestInterface::class);
+        $previewScope = $request->getAttribute(PreviewAccess::SCOPE_ATTRIBUTE);
+        if (!$previewScope instanceof PreviewScope) {
+            return false;
+        }
+        return $previewScope->allowsUrl(htmlspecialchars_decode((string)$this->tag->getAttribute('action')), $request->getUri());
+    }
+
+    /**
+     * A preview is shown in a frame of the backend, a form targeting the window around
+     * it would replace the backend with the page
+     */
+    protected function keepPreviewInFrame(): void
+    {
+        if ($this->getPreviewToken() === null) {
+            return;
+        }
+        $target = strtolower(trim((string)$this->tag->getAttribute('target')));
+        if (!in_array($target, ['_top', '_parent'], true)) {
+            return;
+        }
+        $this->tag->addAttribute('target', '_self');
+    }
+
+    protected function getPreviewToken(): ?PreviewToken
+    {
+        $previewToken = $this->renderingContext->getAttribute(ServerRequestInterface::class)->getAttribute(PreviewAccess::ATTRIBUTE);
+        return $previewToken instanceof PreviewToken ? $previewToken : null;
     }
 
     protected function renderRequestTokenHiddenField(): string

@@ -25,6 +25,7 @@ use Psr\Http\Message\UriInterface;
 use Psr\Http\Server\MiddlewareInterface;
 use Psr\Http\Server\RequestHandlerInterface;
 use Psr\Log\LoggerInterface;
+use TYPO3\CMS\Core\Preview\PreviewTokenService;
 use TYPO3\CMS\Core\Utility\HttpUtility;
 use TYPO3\CMS\Redirects\Event\RedirectWasHitEvent;
 use TYPO3\CMS\Redirects\Service\RedirectService;
@@ -57,10 +58,12 @@ class RedirectHandler implements MiddlewareInterface
     public function process(ServerRequestInterface $request, RequestHandlerInterface $handler): ResponseInterface
     {
         $port = $request->getUri()->getPort();
+        // A preview token is carried over to the target of a redirect; it selects no redirect
+        $requestUri = PreviewTokenService::withoutToken($request->getUri());
         $matchedRedirect = $this->redirectService->matchRedirect(
-            $request->getUri()->getHost() . ($port ? ':' . $port : ''),
-            $request->getUri()->getPath(),
-            $request->getUri()->getQuery()
+            $requestUri->getHost() . ($port ? ':' . $port : ''),
+            $requestUri->getPath(),
+            $requestUri->getQuery()
         );
 
         // If the matched redirect is found, resolve it, and check further
@@ -108,7 +111,9 @@ class RedirectHandler implements MiddlewareInterface
         if ($this->isEmptyRedirectUri($redirectUri)) {
             return true;
         }
-        $requestUri = $request->getUri();
+        // A preview token is carried over to the target, so it does not tell both apart
+        $requestUri = PreviewTokenService::withoutToken($request->getUri());
+        $redirectUri = PreviewTokenService::withoutToken($redirectUri);
         $redirectIsAbsolute = $redirectUri->getHost() && $redirectUri->getScheme();
         $requestUri = $this->sanitizeUriForComparison($requestUri, !$redirectIsAbsolute);
         $redirectUri = $this->sanitizeUriForComparison($redirectUri, !$redirectIsAbsolute);

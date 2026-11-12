@@ -37,12 +37,14 @@ use TYPO3\CMS\Core\Context\DateTimeAspect;
 use TYPO3\CMS\Core\Context\UserAspect;
 use TYPO3\CMS\Core\Context\VisibilityAspect;
 use TYPO3\CMS\Core\Domain\DateTimeFactory;
+use TYPO3\CMS\Core\Preview\PreviewToken;
 use TYPO3\CMS\Core\Routing\PageArguments;
 use TYPO3\CMS\Core\Utility\GeneralUtility;
 use TYPO3\CMS\Core\View\ViewFactoryData;
 use TYPO3\CMS\Core\View\ViewFactoryInterface;
 use TYPO3\CMS\Frontend\Aspect\PreviewAspect;
 use TYPO3\CMS\Frontend\Cache\CacheInstruction;
+use TYPO3\CMS\Frontend\Middleware\PreviewAccess;
 
 /**
  * Admin Panel Preview Module
@@ -94,12 +96,22 @@ class PreviewModule extends AbstractModule implements RequestEnricherInterface, 
         // Backend preview params (ADMCMD_) take precedence over configured admin panel values
         $simulateGroupByRequest = (int)($request->getQueryParams()['ADMCMD_simUser'] ?? 0);
         $simulateTimeByRequest = (int)($request->getQueryParams()['ADMCMD_simTime'] ?? 0);
+        $simulateGroup = $simulateGroupByRequest ?: (int)$this->getConfigOptionForModule('simulateUserGroup');
+        // So does the simulation a preview token of the backend carries: its frontend login
+        // is applied after the admin panel, its date is applied here again
+        $previewToken = $request->getAttribute(PreviewAccess::ATTRIBUTE);
+        if ($previewToken instanceof PreviewToken) {
+            $simulateTimeByRequest = $previewToken->profile->date;
+            if ($previewToken->profile->loggedIn) {
+                $simulateGroup = 0;
+            }
+        }
         $this->config = [
             'showHiddenPages' => (bool)$this->getConfigOptionForModule('showHiddenPages'),
             'simulateDate' => $simulateTimeByRequest ?: (int)$this->getConfigOptionForModule('simulateDate'),
             'showHiddenRecords' => (bool)$this->getConfigOptionForModule('showHiddenRecords'),
             'showScheduledRecords' => (bool)$this->getConfigOptionForModule('showScheduledRecords'),
-            'simulateUserGroup' => $simulateGroupByRequest ?: (int)$this->getConfigOptionForModule('simulateUserGroup'),
+            'simulateUserGroup' => $simulateGroup,
             'showFluidDebug' => (bool)$this->getConfigOptionForModule('showFluidDebug'),
         ];
         if ($this->config['showFluidDebug']) {

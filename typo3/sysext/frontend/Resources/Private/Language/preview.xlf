@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<xliff xmlns="urn:oasis:names:tc:xliff:document:2.0" version="2.0" srcLang="en">
+  <file id="f1">
+    <unit id="error.expired">
+      <segment>
+        <source>This preview has expired.</source>
+      </segment>
+    </unit>
+    <unit id="error.invalid">
+      <segment>
+        <source>This preview is not valid.</source>
+      </segment>
+    </unit>
+    <unit id="error.otherBrowser">
+      <segment>
+        <source>This preview belongs to another browser.</source>
+      </segment>
+    </unit>
+    <unit id="error.outOfScope">
+      <segment>
+        <source>This page is not part of the preview.</source>
+      </segment>
+    </unit>
+    <unit id="error.userNotAvailable">
+      <segment>
+        <source>Your backend account may not see this preview.</source>
+      </segment>
+    </unit>
+  </file>
+</xliff>
