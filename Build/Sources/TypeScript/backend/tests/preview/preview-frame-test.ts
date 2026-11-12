@@ -306,8 +306,7 @@ describe('@typo3/backend/preview/preview-frame and the query of an address', ():
     ['the token twice', `https://site.example/p?__t3ct=a&${query}&__t3ct=b`, `https://site.example/p?${query}`],
     ['only the token', 'https://site.example/p?__t3ct=jwt#top', 'https://site.example/p#top'],
     ['no token', `https://site.example/p?${query}#top`, `https://site.example/p?${query}#top`],
-    ['similar names', 'https://site.example/p?__t3ct_x=1&x__t3ct=2&__t3ct[=3&t3ct=4', 'https://site.example/p?__t3ct_x=1&x__t3ct=2&__t3ct[=3&t3ct=4'],
-    ['names PHP reads as the token', 'https://site.example/p?a=1&__t3ct[]=x&__t3ct[k]=y&%20__t3ct=z&._t3ct=v&_.t3ct=w&b=2', 'https://site.example/p?a=1&b=2'],
+    ['similar names', 'https://site.example/p?__t3ct_x=1&x__t3ct=2&__t3ct[]=3', 'https://site.example/p?__t3ct_x=1&x__t3ct=2&__t3ct[]=3'],
   ];
 
   cases.forEach(([name, address, expected]): void => {

@@ -31,21 +31,10 @@ const script = document.querySelector<HTMLScriptElement>('script[data-preview-ba
  */
 function isTokenPair(pair: string): boolean {
   try {
-    return phpNameOf(decodeURIComponent(pair.split('=', 1)[0].replace(/\+/g, ' '))) === parameter;
+    return decodeURIComponent(pair.split('=', 1)[0].replace(/\+/g, ' ')) === parameter;
   } catch {
     return false;
   }
-}
-
-/**
- * The name PHP gives a pair of the query, as the site reads the token with it: leading
- * spaces are dropped, "name[…]" is read as "name", dots and spaces become underscores.
- */
-function phpNameOf(name: string): string {
-  const trimmed = name.replace(/^ +/, '');
-  const bracket = trimmed.indexOf('[');
-  const base = bracket > 0 && trimmed.indexOf(']', bracket) !== -1 ? trimmed.slice(0, bracket) : trimmed;
-  return base.replace(/[ .[]/g, '_');
 }
 
 function queryPairs(url: URL): string[] {
