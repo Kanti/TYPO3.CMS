@@ -392,7 +392,7 @@ final class FormViewHelperTest extends FunctionalTestCase
             ->withAttribute('extbase', new ExtbaseRequestParameters())
             ->withAttribute('currentContentObject', $contentObject);
         if ($preview) {
-            $profile = new PreviewProfile(0, false, false, 0, []);
+            $profile = PreviewProfile::visitor();
             $serverRequest = $serverRequest
                 ->withAttribute(
                     PreviewAccess::ATTRIBUTE,

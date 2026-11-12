@@ -79,6 +79,7 @@ final class PreviewBackendUserAuthentication extends FrontendBackendUserAuthenti
      */
     public function setWorkspace($workspaceId)
     {
+        // fetchGroupData() calls it, PreviewBackendUserInitializer adds the token to a refusal
         $this->checkWorkspaceCurrent_cache = null;
         if ((int)$workspaceId !== $this->previewWorkspace) {
             throw new PreviewTokenRejectedException(PreviewRejection::UserNotAvailable, 'Only the workspace of the preview may be set', 1794239501);

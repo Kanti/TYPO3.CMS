@@ -63,7 +63,7 @@ final class PreviewTokenServiceTest extends UnitTestCase
     public function tokenWithoutUserIsAVisitorToken(): void
     {
         $subject = new PreviewTokenService(new SystemClock());
-        $visitor = new PreviewProfile(0, false, false, 0, []);
+        $visitor = PreviewProfile::visitor();
         $jwt = $subject->sign($visitor, 'https://site-a.com', self::USER_AGENT, $this->createUser(), true)->jwt;
 
         $verified = $subject->verify($jwt, self::USER_AGENT);
@@ -95,7 +95,7 @@ final class PreviewTokenServiceTest extends UnitTestCase
     #[Test]
     public function tokenWithoutUserNamesTheEditorWhoseRightsDecideWhereItIsValid(): void
     {
-        $jwt = new PreviewTokenService(new SystemClock())->sign(new PreviewProfile(0, false, false, 0, []), 'https://site-a.com', self::USER_AGENT, $this->createUser(), true)->jwt;
+        $jwt = new PreviewTokenService(new SystemClock())->sign(PreviewProfile::visitor(), 'https://site-a.com', self::USER_AGENT, $this->createUser(), true)->jwt;
 
         $claims = $this->decodeClaims($jwt);
 
@@ -118,7 +118,7 @@ final class PreviewTokenServiceTest extends UnitTestCase
     public function tokenWhoseEditorClaimsDoNotFitItsKindIsRefused(array $changes): void
     {
         $subject = new PreviewTokenService(new SystemClock());
-        $claims = $this->decodeClaims($subject->sign(new PreviewProfile(0, false, false, 0, []), 'https://site-a.com', self::USER_AGENT, $this->createUser())->jwt);
+        $claims = $this->decodeClaims($subject->sign(PreviewProfile::visitor(), 'https://site-a.com', self::USER_AGENT, $this->createUser())->jwt);
         foreach ($changes as $name => $value) {
             if ($value === null) {
                 unset($claims[$name]);

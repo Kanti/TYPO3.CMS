@@ -22,4 +22,4 @@ use TYPO3\CMS\Backend\Exception;
 /**
  * @internal
  */
-final class PreviewAccessDeniedException extends Exception {}
+class PreviewAccessDeniedException extends Exception {}

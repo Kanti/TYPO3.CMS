@@ -136,6 +136,7 @@ final readonly class PreviewAccess implements MiddlewareInterface
         try {
             $response = $handler->handle($request);
         } catch (PreviewTokenRejectedException $exception) {
+            // PreviewAccessScope refuses the page and its groups further down the stack
             return $this->createErrorResponse($request, $exception->rejection, $token);
         } catch (ImmediateResponseException $exception) {
             // An immediate answer, as extensions send one, is still an answer of the preview

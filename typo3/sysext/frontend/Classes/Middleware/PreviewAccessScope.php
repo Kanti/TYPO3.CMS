@@ -83,6 +83,7 @@ final readonly class PreviewAccessScope implements MiddlewareInterface
             $rootline = [];
         }
         $groups = [];
+        // A refusal leaves the stack through PreviewAccess, which answers with the error page
         if ($token->userId !== null) {
             $user = $GLOBALS['BE_USER'] ?? null;
             if (!$user instanceof BackendUserAuthentication) {

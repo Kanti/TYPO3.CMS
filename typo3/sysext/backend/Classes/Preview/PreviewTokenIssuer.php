@@ -46,7 +46,6 @@ use TYPO3\CMS\Core\Utility\GeneralUtility;
  */
 final readonly class PreviewTokenIssuer
 {
-    public const ADDRESS_OUTSIDE_PREVIEW = 1793265780;
     /**
      * Preview parameters an address may already carry: the ADMCMD_ parameters, whose
      * simulation moves into the token, and the token of an earlier preview
@@ -101,7 +100,7 @@ final readonly class PreviewTokenIssuer
         UriInterface $frontendUri,
         int $pageId,
     ): IssuedPreview {
-        return $this->sign($request, $user, $frontendUri, $pageId, new PreviewProfile(0, false, false, 0, []), true);
+        return $this->sign($request, $user, $frontendUri, $pageId, PreviewProfile::visitor(), true);
     }
 
     /**
@@ -201,7 +200,7 @@ final readonly class PreviewTokenIssuer
             throw new PreviewAccessDeniedException('No site is accessible', 1793265779);
         }
         if (!$scope->allowsUri($frontendUri)) {
-            throw new PreviewAccessDeniedException('Address is not part of the preview', 1793265780);
+            throw new AddressOutsidePreviewException('Address is not part of the preview', 1793265780);
         }
         $token = $this->tokenService->sign(
             $profile,

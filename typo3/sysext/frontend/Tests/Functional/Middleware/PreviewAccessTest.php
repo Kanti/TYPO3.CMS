@@ -561,7 +561,7 @@ final class PreviewAccessTest extends FunctionalTestCase
     #[Test]
     public function requestedHiddenPageIsShownAsWithABackendLogin(): void
     {
-        $onlyRequested = new PreviewProfile(0, false, false, 0, []);
+        $onlyRequested = PreviewProfile::visitor();
 
         self::assertSame(200, $this->preview('https://first.example/hidden', $this->signForEditor($onlyRequested))->getStatusCode());
         self::assertStringNotContainsString('href="/hidden', (string)$this->preview('https://first.example/', $this->signForEditor($onlyRequested))->getBody());
@@ -1318,13 +1318,13 @@ final class PreviewAccessTest extends FunctionalTestCase
     private function signForVisitor(?PreviewProfile $profile = null, int $editorId = 1): string
     {
         return new PreviewTokenService(new SystemClock())
-            ->sign($profile ?? new PreviewProfile(0, false, false, 0, []), self::BACKEND, self::USER_AGENT, $editorId, true)
+            ->sign($profile ?? PreviewProfile::visitor(), self::BACKEND, self::USER_AGENT, $editorId, true)
             ->jwt;
     }
 
     private function createProfileWithoutSimulation(): PreviewProfile
     {
-        return new PreviewProfile(0, false, false, 0, []);
+        return PreviewProfile::visitor();
     }
 
     private function createProfile(): PreviewProfile
