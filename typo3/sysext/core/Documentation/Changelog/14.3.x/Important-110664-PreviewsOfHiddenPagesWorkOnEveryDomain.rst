@@ -174,10 +174,16 @@ Links, redirects and forms
 *   A small script keeps the token in navigations started by scripts and asks
     the backend for a token when a navigation leads to another host of the
     preview.
+*   When the backend renews the token, the script puts the new one into the
+    links, the form actions and the token fields of the page. An address a
+    script of the site keeps elsewhere, for example in a data attribute for
+    fetch or XHR requests, keeps the token it was rendered with and is refused
+    once that token expired.
 *   Forms rendered with :html:`<f:form>` stay in the frame: a target
     :html:`_top` or :html:`_parent`, as the login form of
     :composer:`typo3/cms-felogin` uses, becomes :html:`_self`, and a form sent
-    via HTTP GET carries the token in a hidden field.
+    via HTTP GET to a host of the preview carries the token in a hidden
+    field.
 *   Other forms get no token of their own: a form sent via HTTP POST without
     the token in its action shows the page without the preview.
 

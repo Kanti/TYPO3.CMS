@@ -63,7 +63,12 @@ final readonly class PreviewController
     {
         $query = $request->getQueryParams();
         $pageId = (int)($query['page'] ?? 0);
-        $frontendUri = new Uri(is_string($query['url'] ?? null) ? $query['url'] : '');
+        try {
+            $frontendUri = new Uri(is_string($query['url'] ?? null) ? $query['url'] : '');
+        } catch (\InvalidArgumentException) {
+            // A malformed address, as a hand-edited or truncated link may carry
+            return $this->createDeniedResponse();
+        }
         try {
             $preview = $this->issuer->issue($request, $this->getBackendUser(), $frontendUri, $pageId);
         } catch (PreviewAccessDeniedException $exception) {
@@ -72,11 +77,7 @@ final readonly class PreviewController
                 // decoupled frontend, opens as it is, without a token
                 return new RedirectResponse(PreviewTokenService::withoutToken($frontendUri), 303);
             }
-            return new HtmlResponse(
-                htmlspecialchars($this->getLanguageService()->sL('backend.preview:error.denied')),
-                403,
-                ['Cache-Control' => 'private, no-store']
-            );
+            return $this->createDeniedResponse();
         }
         foreach ($preview->scope->getOrigins() as $origin) {
             $this->policyRegistry->appendMutationCollection(new MutationCollection(
@@ -119,6 +120,15 @@ final readonly class PreviewController
         return new JsonResponse(
             ['url' => $settings['url'], 'expiresIn' => $settings['expiresIn'], 'hosts' => $settings['hosts']],
             200,
+            ['Cache-Control' => 'private, no-store']
+        );
+    }
+
+    private function createDeniedResponse(): ResponseInterface
+    {
+        return new HtmlResponse(
+            htmlspecialchars($this->getLanguageService()->sL('backend.preview:error.denied')),
+            403,
             ['Cache-Control' => 'private, no-store']
         );
     }

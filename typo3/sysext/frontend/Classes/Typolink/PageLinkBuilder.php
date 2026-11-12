@@ -17,7 +17,6 @@ declare(strict_types=1);
 
 namespace TYPO3\CMS\Frontend\Typolink;
 
-use GuzzleHttp\Psr7\UriResolver;
 use Psr\EventDispatcher\EventDispatcherInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use Psr\Http\Message\UriInterface;
@@ -323,11 +322,10 @@ class PageLinkBuilder extends AbstractTypolinkBuilder implements TypolinkBuilder
         $previewToken = $request->getAttribute(PreviewAccess::ATTRIBUTE);
         $previewScope = $request->getAttribute(PreviewAccess::SCOPE_ATTRIBUTE);
         if ($previewToken instanceof PreviewToken && $previewScope instanceof PreviewScope) {
-            $linkUri = new Uri($result->getUrl());
-            $linkUri = $previewScope->allowsUri(UriResolver::resolve($request->getUri(), $linkUri))
-                ? PreviewTokenService::withToken($linkUri, $previewToken->jwt)
-                : PreviewTokenService::withoutToken($linkUri);
-            $result = $result->withAttribute('href', (string)$linkUri);
+            $url = $previewScope->allowsUrl($result->getUrl(), $request->getUri())
+                ? PreviewTokenService::addToUrl($result->getUrl(), $previewToken->jwt)
+                : PreviewTokenService::removeFromUrl($result->getUrl());
+            $result = $result->withAttribute('href', $url);
         }
 
         $this->addPageCacheTag($request, $resolvedPage);

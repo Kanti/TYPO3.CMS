@@ -17,7 +17,6 @@ declare(strict_types=1);
 
 namespace TYPO3\CMS\Frontend\Middleware;
 
-use GuzzleHttp\Psr7\UriResolver;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use Psr\Http\Server\MiddlewareInterface;
@@ -151,13 +150,12 @@ final readonly class PreviewAccess implements MiddlewareInterface
      */
     private function withTokenInLocation(ServerRequestInterface $request, ResponseInterface $response, PreviewToken $token, PreviewScope $scope): ResponseInterface
     {
-        $location = new Uri($response->getHeaderLine('Location'));
-        $target = UriResolver::resolve($request->getUri(), $location);
-        if ($scope->allowsUri($target)) {
-            return $response->withHeader('Location', (string)PreviewTokenService::withToken($target, $token->jwt));
+        $location = $response->getHeaderLine('Location');
+        if ($scope->allowsUrl($location, $request->getUri())) {
+            return $response->withHeader('Location', PreviewTokenService::addToUrl($location, $token->jwt));
         }
-        $withoutToken = PreviewTokenService::withoutToken($location);
-        return $withoutToken === $location ? $response : $response->withHeader('Location', (string)$withoutToken);
+        $withoutToken = PreviewTokenService::removeFromUrl($location);
+        return $withoutToken === $location ? $response : $response->withHeader('Location', $withoutToken);
     }
 
     #[AsEventListener('typo3-frontend/preview-access/frame-ancestors')]
@@ -326,9 +324,13 @@ final readonly class PreviewAccess implements MiddlewareInterface
         if ($token === null) {
             return $response;
         }
-        if ($response->hasHeader('Content-Security-Policy')) {
-            return $response;
+        foreach ($response->getHeader('Content-Security-Policy') as $policy) {
+            if (preg_match('/(^|;)\s*frame-ancestors(\s|;|$)/i', $policy) === 1) {
+                return $response;
+            }
         }
-        return $response->withHeader('Content-Security-Policy', 'frame-ancestors ' . $token->backendOrigin);
+        // A policy of the site without frame-ancestors gets the backend as a second policy,
+        // browsers enforce both
+        return $response->withAddedHeader('Content-Security-Policy', 'frame-ancestors ' . $token->backendOrigin);
     }
 }

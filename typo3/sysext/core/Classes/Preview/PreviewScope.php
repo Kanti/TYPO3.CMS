@@ -17,7 +17,9 @@ declare(strict_types=1);
 
 namespace TYPO3\CMS\Core\Preview;
 
+use GuzzleHttp\Psr7\UriResolver;
 use Psr\Http\Message\UriInterface;
+use TYPO3\CMS\Core\Http\Uri;
 
 /**
  * The sites and hosts a preview token is valid on. It is not part of the token:
@@ -77,9 +79,41 @@ final readonly class PreviewScope
         return $this->allowsHost(self::hostOf($uri));
     }
 
+    /**
+     * Whether an address as it is written in a link, a form or a redirect leads to a host
+     * of the scope. A relative address is resolved against the address of the request; an
+     * address of another scheme, such as mailto: or tel:, or a malformed one never does.
+     */
+    public function allowsUrl(string $url, UriInterface $base): bool
+    {
+        $scheme = parse_url($url, PHP_URL_SCHEME);
+        if (is_string($scheme) && !in_array(strtolower($scheme), ['http', 'https'], true)) {
+            return false;
+        }
+        try {
+            $uri = new Uri($url);
+        } catch (\InvalidArgumentException) {
+            return false;
+        }
+        return $this->allowsUri(UriResolver::resolve($base, $uri));
+    }
+
     public static function hostOf(UriInterface $uri): string
     {
-        $host = strtolower($uri->getHost());
+        $host = self::normalizeHost($uri->getHost());
         return $uri->getPort() !== null ? $host . ':' . $uri->getPort() : $host;
+    }
+
+    /**
+     * The host in lower case and, for an internationalized domain name, in its ASCII form:
+     * browsers send that form, and the site matching of TYPO3 compares it.
+     */
+    public static function normalizeHost(string $host): string
+    {
+        if ($host === '') {
+            return '';
+        }
+        $asciiHost = idn_to_ascii($host);
+        return strtolower($asciiHost === false ? $host : $asciiHost);
     }
 }

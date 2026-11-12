@@ -26,6 +26,9 @@ use TYPO3\CMS\Core\Http\NormalizedParams;
 use TYPO3\CMS\Core\Http\ServerRequest;
 use TYPO3\CMS\Core\Localization\LanguageServiceFactory;
 use TYPO3\CMS\Core\Preview\PreviewTokenService;
+use TYPO3\CMS\Core\Security\ContentSecurityPolicy\Directive;
+use TYPO3\CMS\Core\Security\ContentSecurityPolicy\PolicyRegistry;
+use TYPO3\CMS\Core\Security\ContentSecurityPolicy\UriValue;
 use TYPO3\CMS\Core\Tests\Functional\SiteHandling\SiteBasedTestTrait;
 use TYPO3\TestingFramework\Core\Functional\FunctionalTestCase;
 
@@ -100,6 +103,50 @@ final class PreviewControllerTest extends FunctionalTestCase
 
         self::assertSame(403, $response->getStatusCode());
         self::assertSame('private, no-store', $response->getHeaderLine('Cache-Control'));
+    }
+
+    /**
+     * The address of the frame comes from the query of the preview page. One that cannot
+     * be parsed, as a hand-edited or truncated link may carry, gets the message instead
+     * of an error, and no cache keeps it.
+     */
+    #[Test]
+    public function malformedAddressGetsAMessage(): void
+    {
+        $response = $this->showPreviewPage('https://[first.example/');
+
+        self::assertSame(403, $response->getStatusCode());
+        self::assertSame('private, no-store', $response->getHeaderLine('Cache-Control'));
+    }
+
+    /**
+     * The frame shows the site on its own origin, which the Content-Security-Policy of
+     * the backend page has to allow as frame source, together with the other origins
+     * the editor may navigate to in the frame.
+     */
+    #[Test]
+    public function frameMayShowTheOriginsOfThePreview(): void
+    {
+        $this->writeSiteConfiguration('second', $this->buildSiteConfiguration(7, 'https://second.example:8443/'), [
+            $this->buildDefaultLanguageConfiguration('EN', '/'),
+        ]);
+
+        $this->showPreviewPage('https://first.example/');
+
+        $frameSources = [];
+        foreach ($this->get(PolicyRegistry::class)->getMutationCollections() as $collection) {
+            foreach ($collection->mutations as $mutation) {
+                if ($mutation->directive !== Directive::FrameSrc) {
+                    continue;
+                }
+                foreach ($mutation->sources as $source) {
+                    if ($source instanceof UriValue) {
+                        $frameSources[] = (string)$source;
+                    }
+                }
+            }
+        }
+        self::assertSame(['https://first.example', 'https://second.example:8443'], $frameSources);
     }
 
     #[Test]

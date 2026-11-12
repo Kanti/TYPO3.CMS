@@ -22,6 +22,7 @@ use Psr\Log\LoggerAwareInterface;
 use Psr\Log\LoggerAwareTrait;
 use TYPO3\CMS\Core\Http\CookieScopeTrait;
 use TYPO3\CMS\Core\Http\NormalizedParams;
+use TYPO3\CMS\Core\Preview\PreviewScope;
 
 /**
  * Says whether the backend login cookie reaches the host of a frontend address,
@@ -38,12 +39,12 @@ final class BackendLoginCookieScope implements LoggerAwareInterface
 
     public function reaches(NormalizedParams $backendRequest, UriInterface $frontendUri): bool
     {
-        $host = strtolower($frontendUri->getHost());
+        $host = PreviewScope::normalizeHost($frontendUri->getHost());
         if ($host === '') {
             return true;
         }
         $scope = $this->getCookieScope($backendRequest);
-        $domain = strtolower($scope->domain);
+        $domain = PreviewScope::normalizeHost($scope->domain);
         if ($host === $domain) {
             return true;
         }

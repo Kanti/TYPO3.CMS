@@ -28,6 +28,7 @@ use TYPO3\CMS\Core\Core\SystemEnvironmentBuilder;
 use TYPO3\CMS\Core\Database\ConnectionPool;
 use TYPO3\CMS\Core\Http\HtmlResponse;
 use TYPO3\CMS\Core\Http\NormalizedParams;
+use TYPO3\CMS\Core\Http\RedirectResponse;
 use TYPO3\CMS\Core\Http\ServerRequest;
 use TYPO3\CMS\Core\Preview\PreviewProfile;
 use TYPO3\CMS\Core\Preview\PreviewTokenService;
@@ -90,6 +91,9 @@ final class PreviewAccessTest extends FunctionalTestCase
             . 'page.40 = TEXT' . LF . 'page.40.value = Outside' . LF . 'page.40.typolink.parameter = https://outside.example/' . LF
             . 'page.50 = CONTENT' . LF . 'page.50.table = tt_content' . LF . 'page.50.select.pidInList = 1' . LF
             . 'page.50.renderObj = TEXT' . LF . 'page.50.renderObj.field = header' . LF
+            . 'page.70 = TEXT' . LF . 'page.70.value = Mail' . LF . 'page.70.typolink.parameter = 40' . LF
+            . 'page.80 = TEXT' . LF . 'page.80.value = Phone' . LF . 'page.80.typolink.parameter = 41' . LF
+            . 'page.90 = TEXT' . LF . 'page.90.value = Signed' . LF . 'page.90.typolink.parameter = 42' . LF
             . 'config.admPanel = 1' . LF
             . '[backend.user.userId == 1]' . LF . 'page.60 = TEXT' . LF . 'page.60.value = Backend user 1' . LF . '[END]' . LF
             . '[backend.user.userId == 2]' . LF . 'page.60 = TEXT' . LF . 'page.60.value = Backend user 2' . LF . '[END]' . LF;
@@ -905,7 +909,7 @@ final class PreviewAccessTest extends FunctionalTestCase
     #[Test]
     public function redirectToAHostOfThePreviewKeepsTheQueryAndAddsOnlyTheToken(): void
     {
-        $target = 'https://second.example/?utm.source=x&id=1&id=2&flag&sig=ab%2bcd';
+        $target = 'https://second.example/?utm.source=x&id=1&id=2&flag&items[]=1&a|b=2&sig=ab%2bcd';
         $this->get(ConnectionPool::class)->getConnectionForTable('pages')
             ->insert('pages', ['uid' => 9, 'pid' => 1, 'title' => 'Second', 'slug' => '/to-second', 'doktype' => 3, 'link' => $target]);
         $jwt = $this->sign();
@@ -924,6 +928,141 @@ final class PreviewAccessTest extends FunctionalTestCase
         $response = $this->preview('https://first.example/leak', $this->sign());
 
         self::assertSame('https://outside.example/?flag&q=a+b', $response->getHeaderLine('Location'));
+    }
+
+    /**
+     * Menus link pages of the type "Link to external URL", and such a page may link a mail
+     * address or a phone number, as a contact page does. These links name no web address:
+     * they get no token, and the page around them renders as for a backend login.
+     */
+    #[Test]
+    public function linksToMailAddressesAndPhoneNumbersAreRenderedWithoutToken(): void
+    {
+        $pages = $this->get(ConnectionPool::class)->getConnectionForTable('pages');
+        $pages->insert('pages', ['uid' => 40, 'pid' => 1, 'title' => 'Contact', 'slug' => '/contact', 'doktype' => 3, 'link' => 'mailto:info@example.org']);
+        $pages->insert('pages', ['uid' => 41, 'pid' => 1, 'title' => 'Hotline', 'slug' => '/hotline', 'doktype' => 3, 'link' => 'tel:+49123456']);
+
+        $response = $this->preview('https://first.example/hidden', $this->sign());
+
+        self::assertSame(200, $response->getStatusCode());
+        $body = (string)$response->getBody();
+        self::assertStringContainsString('Dummy 1-2', $body);
+        self::assertStringContainsString('href="mailto:info@example.org"', $body);
+        self::assertStringContainsString('href="tel:+49123456"', $body);
+    }
+
+    /**
+     * A redirect of an extension may lead to an address of another scheme, such as a mail
+     * address. It names no web address and keeps it as it is.
+     */
+    #[Test]
+    public function redirectToAMailAddressKeepsItsAddress(): void
+    {
+        $handler = new class implements RequestHandlerInterface {
+            public function handle(ServerRequestInterface $request): ResponseInterface
+            {
+                return new RedirectResponse('mailto:info@example.org?subject=Preview', 303);
+            }
+        };
+        $jwt = $this->sign();
+
+        $response = $this->processPreviewAccess('https://first.example/contact?__t3ct=' . $jwt, $jwt, ['Sec-Fetch-Dest' => 'iframe'], $handler);
+
+        self::assertSame(303, $response->getStatusCode());
+        self::assertSame('mailto:info@example.org?subject=Preview', $response->getHeaderLine('Location'));
+    }
+
+    /**
+     * A redirect relative to the page stays relative and keeps its query as it is
+     * written; only the token is added, as the target is on the host of the preview.
+     */
+    #[Test]
+    public function relativeRedirectKeepsItsAddressAndOnlyGetsTheToken(): void
+    {
+        $this->addTypoScriptToTheFirstSite(
+            'config.additionalHeaders.10.header = Location: /hidden?items[]=1&a|b=2' . LF
+            . 'config.additionalHeaders.10.httpResponseCode = 303'
+        );
+        $jwt = $this->sign();
+
+        $response = $this->preview('https://first.example/', $jwt);
+
+        self::assertSame(303, $response->getStatusCode());
+        self::assertSame('/hidden?items[]=1&a|b=2&__t3ct=' . $jwt, $response->getHeaderLine('Location'));
+    }
+
+    /**
+     * A link to a host of the preview keeps its address as it is written and only gets the
+     * token: a signed address compares it byte by byte, brackets and pipes included,
+     * which an URI object would encode.
+     */
+    #[Test]
+    public function linkToAHostOfThePreviewKeepsItsAddressAndOnlyGetsTheToken(): void
+    {
+        $target = 'https://second.example/?utm.source=x&id=1&id=2&flag&items[]=1&a|b=2&sig=ab%2bcd';
+        $this->get(ConnectionPool::class)->getConnectionForTable('pages')
+            ->insert('pages', ['uid' => 42, 'pid' => 1, 'title' => 'Signed', 'slug' => '/signed', 'doktype' => 3, 'link' => $target]);
+        $jwt = $this->sign();
+
+        $body = (string)$this->preview('https://first.example/', $jwt)->getBody();
+
+        self::assertStringContainsString('href="' . htmlspecialchars($target . '&__t3ct=' . $jwt) . '"', $body);
+    }
+
+    /**
+     * The base of a site may name an internationalized domain name as editors write it,
+     * while browsers request the ASCII form of the host. Such a site is previewed like
+     * any other: on the host the browser requests, with the token in its links.
+     */
+    #[Test]
+    public function siteWithAnInternationalizedDomainNameIsPreviewedOnTheHostTheBrowserRequests(): void
+    {
+        $pages = $this->get(ConnectionPool::class)->getConnectionForTable('pages');
+        $pages->insert('pages', ['uid' => 50, 'pid' => 0, 'title' => 'Books', 'slug' => '/', 'is_siteroot' => 1, 'perms_everybody' => 15]);
+        $pages->insert('pages', ['uid' => 51, 'pid' => 50, 'title' => 'Hidden books', 'slug' => '/hidden', 'hidden' => 1, 'perms_everybody' => 15]);
+        $this->setUpFrontendRootPage(50, [], ['config' => 'page = PAGE' . LF . 'page.10 = TEXT' . LF . 'page.10.data = page:title' . LF . 'page.20 = TEXT' . LF . 'page.20.value = Home' . LF . 'page.20.typolink.parameter = 50']);
+        $this->writeSiteConfiguration('books', $this->buildSiteConfiguration(50, 'https://bücher.example/'), [$this->buildDefaultLanguageConfiguration('EN', '/')]);
+        $jwt = $this->sign();
+
+        $response = $this->preview('https://xn--bcher-kva.example/hidden', $jwt);
+
+        self::assertSame(200, $response->getStatusCode());
+        $body = (string)$response->getBody();
+        self::assertStringContainsString('Hidden books', $body);
+        self::assertStringContainsString('href="/?__t3ct=' . $jwt . '"', $body);
+        self::assertContains('xn--bcher-kva.example', $this->getNavigationHosts($response));
+    }
+
+    /**
+     * A Content-Security-Policy the site sends itself, such as one of
+     * config.additionalHeaders, may lack a frame-ancestors directive. The preview adds
+     * one with the backend as a second policy, which browsers enforce beside the first,
+     * so the page is not left open to be framed by any origin.
+     */
+    #[Test]
+    public function policyOfTheSiteWithoutFrameAncestorsGetsTheBackendAsASecondPolicy(): void
+    {
+        $this->addTypoScriptToTheFirstSite('config.additionalHeaders.10.header = Content-Security-Policy: img-src \'self\'');
+
+        $response = $this->preview('https://first.example/', $this->sign());
+
+        self::assertSame(200, $response->getStatusCode());
+        self::assertSame(["img-src 'self'", 'frame-ancestors ' . self::BACKEND], $response->getHeader('Content-Security-Policy'));
+        self::assertFalse($response->hasHeader('X-Frame-Options'));
+    }
+
+    /**
+     * A frame-ancestors directive the site sends itself is its decision on who may frame
+     * the page; the preview adds none beside it.
+     */
+    #[Test]
+    public function frameAncestorsOfThePolicyOfTheSiteAreLeftAsTheyAre(): void
+    {
+        $this->addTypoScriptToTheFirstSite('config.additionalHeaders.10.header = Content-Security-Policy: img-src \'self\'; frame-ancestors https://editor.example');
+
+        $response = $this->preview('https://first.example/', $this->sign());
+
+        self::assertSame(["img-src 'self'; frame-ancestors https://editor.example"], $response->getHeader('Content-Security-Policy'));
     }
 
     #[Test]
@@ -956,6 +1095,13 @@ final class PreviewAccessTest extends FunctionalTestCase
         return $this->executeFrontendSubRequest($request, $context);
     }
 
+    private function addTypoScriptToTheFirstSite(string $typoScript): void
+    {
+        $templates = $this->get(ConnectionPool::class)->getConnectionForTable('sys_template');
+        $config = (string)$templates->select(['config'], 'sys_template', ['pid' => 1])->fetchOne();
+        $templates->update('sys_template', ['config' => $config . LF . $typoScript], ['pid' => 1]);
+    }
+
     private function assertRejected(string $reason, ResponseInterface $response): void
     {
         self::assertSame(403, $response->getStatusCode());
@@ -973,7 +1119,7 @@ final class PreviewAccessTest extends FunctionalTestCase
         return $this->executeFrontendSubRequest($request);
     }
 
-    private function processPreviewAccess(string $url, string $jwt, array $headers): ResponseInterface
+    private function processPreviewAccess(string $url, string $jwt, array $headers, ?RequestHandlerInterface $handler = null): ResponseInterface
     {
         $site = $this->get(SiteFinder::class)->getSiteByIdentifier('first');
         $request = new ServerRequest($url, 'GET', null, $headers + ['User-Agent' => self::USER_AGENT], ['HTTPS' => 'on', 'HTTP_HOST' => 'first.example'])
@@ -981,7 +1127,7 @@ final class PreviewAccessTest extends FunctionalTestCase
             ->withAttribute('applicationType', SystemEnvironmentBuilder::REQUESTTYPE_FE)
             ->withAttribute('site', $site)
             ->withAttribute('language', $site->getDefaultLanguage());
-        $handler = new class implements RequestHandlerInterface {
+        $handler ??= new class implements RequestHandlerInterface {
             public function handle(ServerRequestInterface $request): ResponseInterface
             {
                 throw new \LogicException('A top-level navigation with a token reaches no page', 1794328963);

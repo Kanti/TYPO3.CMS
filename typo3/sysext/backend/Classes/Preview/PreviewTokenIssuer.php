@@ -33,7 +33,6 @@ use TYPO3\CMS\Core\Preview\PreviewTokenRejectedException;
 use TYPO3\CMS\Core\Preview\PreviewTokenService;
 use TYPO3\CMS\Core\Type\Bitmask\Permission;
 use TYPO3\CMS\Core\Utility\GeneralUtility;
-use TYPO3\CMS\Core\Utility\HttpUtility;
 
 /**
  * Signs a preview token for the logged-in editor from the existing rights:
@@ -187,11 +186,10 @@ final readonly class PreviewTokenIssuer
         }
 
         $backendUri = $this->getBackendUri($request);
-        parse_str($frontendUri->getQuery(), $query);
         // Sites without a host in their base link relative to the backend host
         $frontendUri = UriResolver::resolve(
             $backendUri,
-            $frontendUri->withQuery(HttpUtility::buildQueryString(array_diff_key($query, array_flip(self::PREVIEW_PARAMETERS))))
+            $frontendUri->withQuery(PreviewTokenService::withoutParameters($frontendUri->getQuery(), self::PREVIEW_PARAMETERS))
         );
         $scope = $this->scopeResolver->resolve($user, $backendUri);
         if ($scope->isEmpty()) {

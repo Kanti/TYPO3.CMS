@@ -218,7 +218,7 @@ readonly class PreviewSimulator implements MiddlewareInterface
      *
      * @param list<int> $groups
      */
-    protected function replaceUserGroups(ServerRequestInterface $request, array $groups): void
+    private function replaceUserGroups(ServerRequestInterface $request, array $groups): void
     {
         $frontendUser = $request->getAttribute('frontend.user');
         if (!is_array($frontendUser->user)) {

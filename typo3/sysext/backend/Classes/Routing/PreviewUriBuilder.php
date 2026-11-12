@@ -69,7 +69,7 @@ class PreviewUriBuilder
     public const OPTION_WINDOW_SCOPE_GLOBAL = 'global';
 
     protected array $record = [];
-    protected array $previewedRecord = [];
+    private array $previewedRecord = [];
     protected string $table = 'pages';
     protected int $pageId;
     protected int $languageId = LanguageMarker::DEFAULT_LANGUAGE;

@@ -331,6 +331,92 @@ final class PreviewTokenServiceTest extends UnitTestCase
         self::assertSame($uri, PreviewTokenService::withoutToken($uri));
     }
 
+    public static function addressesAsWrittenDataProvider(): \Generator
+    {
+        yield 'brackets and a pipe, which an URI object would encode' => [
+            'https://site-b.com/p?items[]=1&a|b=2#top',
+            'https://site-b.com/p?items[]=1&a|b=2&__t3ct=new#top',
+            'https://site-b.com/p?items[]=1&a|b=2#top',
+        ];
+        yield 'a query and a fragment of "0", which an URI object would drop' => [
+            'https://site-b.com/p?0#0',
+            'https://site-b.com/p?0&__t3ct=new#0',
+            'https://site-b.com/p?0#0',
+        ];
+        yield 'flags, repeated names, a dot in a name and encoded values' => [
+            'https://site-b.com/p?utm.source=x&id=1&id=2&flag&q=a+b&sig=ab%2bcd&__t3ct=old',
+            'https://site-b.com/p?utm.source=x&id=1&id=2&flag&q=a+b&sig=ab%2bcd&__t3ct=new',
+            'https://site-b.com/p?utm.source=x&id=1&id=2&flag&q=a+b&sig=ab%2bcd',
+        ];
+        yield 'a relative address' => [
+            '/news/article?page=2',
+            '/news/article?page=2&__t3ct=new',
+            '/news/article?page=2',
+        ];
+        yield 'an address relative to the scheme' => [
+            '//site-b.com/p',
+            '//site-b.com/p?__t3ct=new',
+            '//site-b.com/p',
+        ];
+        yield 'an empty query' => [
+            'https://site-b.com/p?',
+            'https://site-b.com/p?__t3ct=new',
+            'https://site-b.com/p?',
+        ];
+        yield 'only the token' => [
+            'https://site-b.com/p?__t3ct=old#top',
+            'https://site-b.com/p?__t3ct=new#top',
+            'https://site-b.com/p#top',
+        ];
+        yield 'a question mark in the fragment' => [
+            'https://site-b.com/p#section?__t3ct=fragment',
+            'https://site-b.com/p?__t3ct=new#section?__t3ct=fragment',
+            'https://site-b.com/p#section?__t3ct=fragment',
+        ];
+    }
+
+    /**
+     * Links, forms and redirects are written by the site, by editors and by external
+     * services. Some of them compare the address byte by byte, such as signed download
+     * links or the return address of a login service, so the token is added to the
+     * address as it is written instead of to an URI object built from it.
+     */
+    #[Test]
+    #[DataProvider('addressesAsWrittenDataProvider')]
+    public function tokenIsAddedToAnAddressAsWritten(string $address, string $withToken, string $withoutToken): void
+    {
+        self::assertSame($withToken, PreviewTokenService::addToUrl($address, 'new'));
+    }
+
+    #[Test]
+    #[DataProvider('addressesAsWrittenDataProvider')]
+    public function tokenIsRemovedFromAnAddressAsWritten(string $address, string $withToken, string $withoutToken): void
+    {
+        self::assertSame($withoutToken, PreviewTokenService::removeFromUrl($address));
+    }
+
+    /**
+     * A link to a mail address or a phone number names no web address; removing the token
+     * from it leaves it as it is, whatever its query looks like.
+     */
+    #[Test]
+    public function addressesOfOtherSchemesKeepTheirBytesWithoutToken(): void
+    {
+        self::assertSame('mailto:info@example.org?subject=Hello%20there&body=a+b', PreviewTokenService::removeFromUrl('mailto:info@example.org?subject=Hello%20there&body=a+b'));
+        self::assertSame('tel:+49-123-456', PreviewTokenService::removeFromUrl('tel:+49-123-456'));
+    }
+
+    #[Test]
+    public function namedParametersAreRemovedFromAQueryThatKeepsItsBytes(): void
+    {
+        self::assertSame(
+            'utm.source=x&id=1&id=2&flag&items[]=1&sig=ab%2bcd&x',
+            PreviewTokenService::withoutParameters('utm.source=x&ADMCMD_simTime=1&id=1&id=2&flag&items[]=1&ADMCMD_simUser=5&sig=ab%2bcd&x&__t3ct=jwt', ['ADMCMD_simTime', 'ADMCMD_simUser', '__t3ct'])
+        );
+        self::assertSame('', PreviewTokenService::withoutParameters('__t3ct=jwt', ['__t3ct']));
+        self::assertSame('', PreviewTokenService::withoutParameters('', ['__t3ct']));
+    }
+
     private function createProfile(): PreviewProfile
     {
         return new PreviewProfile(

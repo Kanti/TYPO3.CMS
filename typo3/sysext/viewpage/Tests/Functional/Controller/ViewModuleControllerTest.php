@@ -35,6 +35,9 @@ use TYPO3\CMS\Core\Http\ServerRequest;
 use TYPO3\CMS\Core\Http\Uri;
 use TYPO3\CMS\Core\Localization\LanguageServiceFactory;
 use TYPO3\CMS\Core\Preview\PreviewTokenService;
+use TYPO3\CMS\Core\Security\ContentSecurityPolicy\Directive;
+use TYPO3\CMS\Core\Security\ContentSecurityPolicy\PolicyRegistry;
+use TYPO3\CMS\Core\Security\ContentSecurityPolicy\UriValue;
 use TYPO3\CMS\Core\Site\SiteFinder;
 use TYPO3\CMS\Core\Tests\Functional\SiteHandling\SiteBasedTestTrait;
 use TYPO3\CMS\Viewpage\Controller\ViewModuleController;
@@ -280,6 +283,60 @@ final class ViewModuleControllerTest extends FunctionalTestCase
         self::assertSame('https://backend.example.org/headless/page?a=1', $settings['url']);
         self::assertSame([], $settings['hosts']);
         self::assertSame('', $settings['renewUrl']);
+    }
+
+    /**
+     * The frame shows the site on its own origin, which the Content-Security-Policy of
+     * the module has to allow as frame source.
+     */
+    #[Test]
+    public function frameMayShowTheOriginsOfThePreview(): void
+    {
+        $this->get(ViewModuleController::class)->handleRequest($this->createRequest(1));
+
+        self::assertSame(['https://example.com'], $this->getFrameSources());
+    }
+
+    /**
+     * An address outside the sites of the installation is shown as it is, from its own
+     * origin, which the Content-Security-Policy of the module has to allow instead.
+     */
+    #[Test]
+    public function frameMayShowTheOriginOfAnAddressOutsideTheSitesOfTheInstallation(): void
+    {
+        $container = $this->get('service_container');
+        $container->set(
+            'headless-preview-uri-listener',
+            static function (BeforePagePreviewUriGeneratedEvent $event): void {
+                $event->setPreviewUri(new Uri('https://headless.example/page'));
+            }
+        );
+        $container->get(ListenerProvider::class)->addListener(BeforePagePreviewUriGeneratedEvent::class, 'headless-preview-uri-listener');
+
+        $this->get(ViewModuleController::class)->handleRequest($this->createRequest(1));
+
+        self::assertSame(['https://headless.example/page'], $this->getFrameSources());
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function getFrameSources(): array
+    {
+        $sources = [];
+        foreach ($this->get(PolicyRegistry::class)->getMutationCollections() as $collection) {
+            foreach ($collection->mutations as $mutation) {
+                if ($mutation->directive !== Directive::FrameSrc) {
+                    continue;
+                }
+                foreach ($mutation->sources as $source) {
+                    if ($source instanceof UriValue) {
+                        $sources[] = (string)$source;
+                    }
+                }
+            }
+        }
+        return $sources;
     }
 
     private function previewSettingsOf(ResponseInterface $response): array

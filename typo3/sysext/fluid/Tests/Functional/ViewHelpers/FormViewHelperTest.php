@@ -23,6 +23,7 @@ use Psr\Http\Message\ServerRequestInterface;
 use TYPO3\CMS\Core\Core\SystemEnvironmentBuilder;
 use TYPO3\CMS\Core\Http\ServerRequest;
 use TYPO3\CMS\Core\Preview\PreviewProfile;
+use TYPO3\CMS\Core\Preview\PreviewScope;
 use TYPO3\CMS\Core\Preview\PreviewToken;
 use TYPO3\CMS\Core\Tests\Functional\SiteHandling\SiteBasedTestTrait;
 use TYPO3\CMS\Core\TypoScript\AST\Node\RootNode;
@@ -260,14 +261,54 @@ final class FormViewHelperTest extends FunctionalTestCase
         self::assertStringContainsString('target="_top"', new TemplateView($context)->render());
     }
 
+    public static function previewTokenIsAddedToFormsSentViaGetToHostsOfThePreviewDataProvider(): array
+    {
+        return [
+            'address relative to the page' => ['/search'],
+            'address on the host of the page' => ['https://site.example/search'],
+            'address on another host of the preview' => ['https://other.example/search'],
+            'address relative to the scheme on another host of the preview' => ['//other.example/search'],
+        ];
+    }
+
+    /**
+     * A form sent via HTTP GET replaces the query of its action, so the token travels in a
+     * hidden field to the hosts of the preview, where it keeps the page in the frame.
+     */
+    #[DataProvider('previewTokenIsAddedToFormsSentViaGetToHostsOfThePreviewDataProvider')]
     #[Test]
-    public function previewTokenIsAddedToFormsSentViaGet(): void
+    public function previewTokenIsAddedToFormsSentViaGetToHostsOfThePreview(string $action): void
     {
         $request = $this->createRequest(true);
         $context = $this->get(RenderingContextFactory::class)->create([], $request);
-        $context->getTemplatePaths()->setTemplateSource('<f:form actionUri="/search" method="get" />');
+        $context->getTemplatePaths()->setTemplateSource('<f:form actionUri="' . $action . '" method="get" />');
         $this->get(ConfigurationManagerInterface::class)->setRequest($request);
         self::assertStringContainsString('<input type="hidden" name="__t3ct" value="preview-jwt" >', new TemplateView($context)->render());
+    }
+
+    public static function previewTokenIsNotAddedToFormsSentViaGetToOtherHostsDataProvider(): array
+    {
+        return [
+            'external search service' => ['https://search.outside.example/'],
+            'address relative to the scheme on another host' => ['//outside.example/search'],
+            'host of the preview with user information' => ['https://editor@site.example/search'],
+        ];
+    }
+
+    /**
+     * A form sent via HTTP GET to another host, such as an external search or newsletter
+     * service, never carries the token: in a new window, or in a browser that cannot keep
+     * the navigation in the frame, the token would reach that host.
+     */
+    #[DataProvider('previewTokenIsNotAddedToFormsSentViaGetToOtherHostsDataProvider')]
+    #[Test]
+    public function previewTokenIsNotAddedToFormsSentViaGetToOtherHosts(string $action): void
+    {
+        $request = $this->createRequest(true);
+        $context = $this->get(RenderingContextFactory::class)->create([], $request);
+        $context->getTemplatePaths()->setTemplateSource('<f:form actionUri="' . $action . '" method="get" target="_blank" />');
+        $this->get(ConfigurationManagerInterface::class)->setRequest($request);
+        self::assertStringNotContainsString('__t3ct', new TemplateView($context)->render());
     }
 
     public static function previewTokenIsNotAddedDataProvider(): array
@@ -296,17 +337,22 @@ final class FormViewHelperTest extends FunctionalTestCase
         $frontendTypoScript->setSetupArray([]);
         $frontendTypoScript->setConfigArray([]);
         $contentObject = $this->get(ContentObjectRenderer::class);
-        $serverRequest = new ServerRequest()
+        $serverRequest = new ServerRequest($preview ? 'https://site.example/page' : null)
             ->withAttribute('applicationType', SystemEnvironmentBuilder::REQUESTTYPE_FE)
             ->withAttribute('frontend.typoscript', $frontendTypoScript)
             ->withAttribute('extbase', new ExtbaseRequestParameters())
             ->withAttribute('currentContentObject', $contentObject);
         if ($preview) {
             $profile = new PreviewProfile(0, false, false, 0, []);
-            $serverRequest = $serverRequest->withAttribute(
-                PreviewAccess::ATTRIBUTE,
-                new PreviewToken('preview-jwt', $profile, 'https://backend.example.com', time() + 60, 1)
-            );
+            $serverRequest = $serverRequest
+                ->withAttribute(
+                    PreviewAccess::ATTRIBUTE,
+                    new PreviewToken('preview-jwt', $profile, 'https://backend.example.com', time() + 60, 1)
+                )
+                ->withAttribute(PreviewAccess::SCOPE_ATTRIBUTE, new PreviewScope([
+                    ['site' => 'main', 'host' => 'site.example', 'origin' => 'https://site.example'],
+                    ['site' => 'other', 'host' => 'other.example', 'origin' => 'https://other.example'],
+                ]));
         }
         return new Request($serverRequest);
     }

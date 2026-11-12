@@ -62,6 +62,14 @@ function withoutToken(url: URL): URL {
   return clean;
 }
 
+function parseUrl(address: string, base?: string): URL | null {
+  try {
+    return new URL(address, base);
+  } catch {
+    return null;
+  }
+}
+
 function withToken(url: URL, value: string): URL {
   const target = withoutToken(url);
   const query = target.search.slice(1);
@@ -105,20 +113,35 @@ if (script && window.parent !== window) {
     if (typeof event.data.token !== 'string') {
       return;
     }
+    if (event.data.token === token) {
+      return;
+    }
     const previous = token;
     token = event.data.token;
     window.history.replaceState(window.history.state, '', withToken(new URL(window.location.href), token));
-    document.querySelectorAll<HTMLAnchorElement>('a[href]').forEach((link: HTMLAnchorElement): void => {
-      const url = new URL(link.href);
-      if (readToken(url) === previous) {
-        link.href = withToken(url, token).href;
+    document.querySelectorAll('a[href], area[href]').forEach((link: Element): void => {
+      // A link of an inline SVG has no address to rewrite
+      if (!(link instanceof HTMLAnchorElement) && !(link instanceof HTMLAreaElement)) {
+        return;
       }
+      const url = parseUrl(link.href);
+      if (url === null) {
+        return;
+      }
+      if (readToken(url) !== previous) {
+        return;
+      }
+      link.href = withToken(url, token).href;
     });
     document.querySelectorAll<HTMLFormElement>('form[action]').forEach((form: HTMLFormElement): void => {
-      const action = new URL(form.action, document.baseURI);
-      if (readToken(action) === previous) {
-        form.action = withToken(action, token).href;
+      const action = parseUrl(form.action, document.baseURI);
+      if (action === null) {
+        return;
       }
+      if (readToken(action) !== previous) {
+        return;
+      }
+      form.action = withToken(action, token).href;
     });
     document.querySelectorAll<HTMLInputElement>(`input[type="hidden"][name="${parameter}"]`).forEach((field: HTMLInputElement): void => {
       if (field.value === previous) {
@@ -141,21 +164,28 @@ if (script && window.parent !== window) {
     if (event.destination.sameDocument) {
       return;
     }
+    // A form sent via HTTP POST goes as it is: f:form puts the token into its action, any
+    // other form shows the page without the preview
+    if (event.formData !== null) {
+      return;
+    }
     const url = new URL(event.destination.url);
+    const destinationToken = readToken(url);
+    // A token this page does not hold is a fresh one of the page around the frame: on the
+    // origin of this page, browsers tell this page about the addresses that page loads
+    if (destinationToken !== null && destinationToken !== token) {
+      return;
+    }
     if (url.origin !== window.location.origin) {
       // The page around the frame decides: a host of the preview with a fresh token, any other in a new tab
       event.preventDefault();
       post({ type: 'typo3:preview:navigate', url: withoutToken(url).href });
       return;
     }
-    // POST forms rendered with f:form carry the token in their action already
-    if (event.formData !== null) {
-      return;
-    }
     if (!isPreviewHost(url)) {
       return;
     }
-    if (readToken(url) === token) {
+    if (destinationToken === token) {
       return;
     }
     if (!event.canIntercept) {

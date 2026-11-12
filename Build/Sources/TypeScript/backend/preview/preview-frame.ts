@@ -73,7 +73,7 @@ export default class PreviewFrame {
   private expiresAt: number;
   private timer: number = 0;
   private renewal: Promise<string> | null = null;
-  private readonly failures = new Set<string>();
+  private readonly failures = new Map<string, Set<string>>();
   private readonly listeners = new AbortController();
 
   public constructor(
@@ -159,6 +159,10 @@ export default class PreviewFrame {
         if (url.origin === origin.origin) {
           this.address = PreviewFrame.withoutToken(url);
           this.page = Number.isInteger(event.data.page) ? event.data.page : this.page;
+          // The page was shown, so a later refusal at its address is recovered again
+          this.failures.delete(this.address.href);
+          // A renewal posted while the frame was loading this page reached the page before it
+          this.frame.contentWindow?.postMessage({ type: 'typo3:preview:token', token: this.token }, origin.origin);
           this.callbacks.onLocation?.(this.address, this.page);
         }
         break;
@@ -222,16 +226,17 @@ export default class PreviewFrame {
   }
 
   /**
-   * Reloads the frame once per address and reason with a fresh token; a second
-   * failure stops, so a token the site keeps refusing never loops.
+   * Reloads the frame with a fresh token once per address and reason until the page is
+   * shown there; a second refusal before that stops, so a token the site keeps refusing
+   * never loops.
    */
   private recover(address: URL, reason: string): void {
-    const key = reason + ' ' + address.href;
-    if (this.failures.has(key)) {
+    const reasons = this.failures.get(address.href) ?? new Set<string>();
+    if (reasons.has(reason)) {
       this.fail();
       return;
     }
-    this.failures.add(key);
+    this.failures.set(address.href, reasons.add(reason));
     this.load(address);
   }
 

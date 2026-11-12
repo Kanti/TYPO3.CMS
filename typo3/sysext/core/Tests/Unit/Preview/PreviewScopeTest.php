@@ -65,4 +65,48 @@ final class PreviewScopeTest extends UnitTestCase
     {
         self::assertSame($allowed, $this->createScope()->allowsUri(new Uri($address)));
     }
+
+    public static function addressesAsWrittenDataProvider(): \Generator
+    {
+        yield 'absolute address of a host of the scope' => ['https://example.de/page', true];
+        yield 'address relative to the request' => ['/page?a=1', true];
+        yield 'address relative to the scheme on a host of the scope' => ['//example.de/page', true];
+        yield 'address relative to the scheme on another host' => ['//example.org/page', false];
+        yield 'address of another host' => ['https://example.org/page', false];
+        yield 'mail address' => ['mailto:info@example.com?subject=Hello', false];
+        yield 'phone number' => ['tel:+49-123-456', false];
+        yield 'script' => ['javascript:alert(1)', false];
+        yield 'malformed address' => ['https://[example.com/', false];
+    }
+
+    /**
+     * Links, forms and redirects carry addresses as written: relative to the request, of
+     * another scheme or malformed. Only addresses on a host of the scope may carry the
+     * token, and no address may stop the page from rendering.
+     */
+    #[Test]
+    #[DataProvider('addressesAsWrittenDataProvider')]
+    public function addressesAsWrittenAreAllowedOnlyOnHostsOfTheScope(string $address, bool $allowed): void
+    {
+        self::assertSame($allowed, $this->createScope()->allowsUrl($address, new Uri('https://example.com/current')));
+    }
+
+    /**
+     * A site whose base names an internationalized domain name is requested by browsers
+     * with the ASCII form of the host, as the site matching of TYPO3 compares it.
+     */
+    #[Test]
+    public function internationalizedDomainNamesAreComparedInTheirAsciiForm(): void
+    {
+        $base = new Uri('https://Bücher.example:8443/');
+        $scope = new PreviewScope([
+            ['site' => 'books', 'host' => PreviewScope::hostOf($base), 'origin' => 'https://xn--bcher-kva.example:8443'],
+        ]);
+
+        self::assertSame('xn--bcher-kva.example:8443', PreviewScope::hostOf($base));
+        self::assertSame('xn--bcher-kva.example', PreviewScope::normalizeHost('BÜCHER.example'));
+        self::assertTrue($scope->allowsUri(new Uri('https://xn--bcher-kva.example:8443/page')));
+        self::assertTrue($scope->allowsUri(new Uri('https://bücher.example:8443/page')));
+        self::assertFalse($scope->allowsUri(new Uri('https://xn--bcher-kva.example/page')));
+    }
 }

@@ -173,7 +173,8 @@ final readonly class PreviewController
         } catch (PreviewAccessDeniedException) {
             return new HtmlResponse(
                 htmlspecialchars($this->languageServiceFactory->createFromUserPreferences($backendUser)->sL('backend.preview:error.denied')),
-                403
+                403,
+                ['Cache-Control' => 'private, no-store']
             );
         }
         $view->assignMultiple([
@@ -199,15 +200,32 @@ final readonly class PreviewController
      */
     private function signFrame(ServerRequestInterface $request, string $url, int $pageUid, ?int $workspace): string
     {
-        $preview = $workspace === null
-            ? $this->previewTokenIssuer->issueForVisitor($request, $this->getBackendUser(), new Uri($url), $pageUid)
-            : $this->previewTokenIssuer->issue($request, $this->getBackendUser(), new Uri($url), $pageUid, $workspace);
+        $uri = new Uri($url);
+        try {
+            $preview = $workspace === null
+                ? $this->previewTokenIssuer->issueForVisitor($request, $this->getBackendUser(), $uri, $pageUid)
+                : $this->previewTokenIssuer->issue($request, $this->getBackendUser(), $uri, $pageUid, $workspace);
+        } catch (PreviewAccessDeniedException $exception) {
+            if ($exception->getCode() !== PreviewTokenIssuer::ADDRESS_OUTSIDE_PREVIEW) {
+                throw $exception;
+            }
+            // An address the preview signs no token for opens as it is, as in the Preview module
+            if ($uri->getScheme() !== '' && $uri->getHost() !== '') {
+                $this->allowFrameSource(UriValue::fromUri($uri));
+            }
+            return json_encode($this->previewTokenIssuer->getPlainFrameSettings($request, $uri, $pageUid), JSON_THROW_ON_ERROR);
+        }
         foreach ($preview->scope->getOrigins() as $origin) {
-            $this->policyRegistry->appendMutationCollection(new MutationCollection(
-                new Mutation(MutationMode::Extend, Directive::FrameSrc, new UriValue($origin))
-            ));
+            $this->allowFrameSource(new UriValue($origin));
         }
         return json_encode($this->previewTokenIssuer->getFrameSettings($preview, $pageUid), JSON_THROW_ON_ERROR);
+    }
+
+    private function allowFrameSource(UriValue $source): void
+    {
+        $this->policyRegistry->appendMutationCollection(new MutationCollection(
+            new Mutation(MutationMode::Extend, Directive::FrameSrc, $source)
+        ));
     }
 
     private function getBackendUser(): BackendUserAuthentication

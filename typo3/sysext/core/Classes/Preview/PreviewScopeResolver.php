@@ -61,6 +61,7 @@ final readonly class PreviewScopeResolver
                 if ($base->getHost() === '') {
                     continue;
                 }
+                $base = $base->withHost(PreviewScope::normalizeHost($base->getHost()));
                 $bases[] = [
                     'site' => $site->getIdentifier(),
                     'host' => PreviewScope::hostOf($base),

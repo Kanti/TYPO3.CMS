@@ -12,83 +12,120 @@
  */
 
 import PreviewFrame from '@typo3/backend/preview/preview-frame.js';
-import AjaxRequest from '@typo3/core/ajax/ajax-request.js';
-import type { AjaxResponse } from '@typo3/core/ajax/ajax-response.js';
 import { expect, waitUntil } from '@open-wc/testing';
 import { stub, useFakeTimers, type SinonStub } from 'sinon';
 import type { } from 'mocha';
 
-describe('@typo3/backend/preview/preview-frame', (): void => {
+type Renewal = { previewToken: string, url: string, page: string };
+
+type Backend = {
+  fetch: SinonStub,
+  renewals: Renewal[],
+  adminPanelRequests: Array<{ url: string, fields: Array<[string, string]> }>,
+};
+
+/**
+ * Answers the requests of the backend page as the backend does: the token endpoint signs
+ * the requested address with the next token and names the hosts of the preview, the
+ * endpoints of the admin panel store its settings.
+ */
+function stubBackend(hosts: string[] = ['site.example']): Backend {
+  const backend: Backend = { fetch: null, renewals: [], adminPanelRequests: [] };
+  backend.fetch = stub(window, 'fetch').callsFake(async (input: RequestInfo | URL): Promise<Response> => {
+    const request = input as Request;
+    const path = new URL(request.url).pathname;
+    const fields = request.method === 'POST' ? [...(await request.formData()).entries()] as Array<[string, string]> : [];
+    if (path === '/renew') {
+      const renewal = Object.fromEntries(fields) as Renewal;
+      backend.renewals.push(renewal);
+      const signed = new URL(renewal.url);
+      signed.searchParams.set('__t3ct', 'token-' + backend.renewals.length);
+      return new Response(JSON.stringify({ url: signed.href, expiresIn: 900, hosts }), { headers: { 'Content-Type': 'application/json' } });
+    }
+    backend.adminPanelRequests.push({ url: path, fields });
+    return new Response('{}', { headers: { 'Content-Type': 'application/json' } });
+  });
+  return backend;
+}
+
+/**
+ * The frame loads a site the test cannot reach. A second frame on the origin of the test
+ * stands in for the page in it, so the test sees what the backend page posts to the page.
+ */
+function standInForThePageIn(frame: HTMLIFrameElement): Window {
+  const standIn = document.createElement('iframe');
+  standIn.dataset.standIn = '';
+  document.body.append(standIn);
+  Object.defineProperty(frame, 'contentWindow', { value: standIn.contentWindow, configurable: true });
+  return standIn.contentWindow;
+}
+
+function send(frame: HTMLIFrameElement, data: Record<string, unknown>, source: Window = frame.contentWindow, origin: string = 'https://site.example'): void {
+  window.dispatchEvent(new MessageEvent('message', { data, source, origin }));
+}
+
+describe('@typo3/backend/preview/preview-frame and the admin panel in its frame', (): void => {
   let frame: HTMLIFrameElement;
   let preview: PreviewFrame;
-  let reload: SinonStub;
-  let postStub: SinonStub;
-  let getStub: SinonStub;
-
-  function send(data: Record<string, unknown>, source: Window = frame.contentWindow, origin: string = 'https://site.example'): void {
-    window.dispatchEvent(new MessageEvent('message', { data, source, origin }));
-  }
+  let backend: Backend;
 
   beforeEach((): void => {
     window.TYPO3 = window.TYPO3 || {} as typeof window.TYPO3;
     window.TYPO3.settings = { ajaxUrls: { adminPanel_saveForm: '/typo3/ajax/adminpanel/form/save', adminPanel_toggle: '/typo3/ajax/adminpanel/toggleActiveState' } } as unknown as typeof window.TYPO3.settings;
-    postStub = stub(AjaxRequest.prototype, 'post').resolves({} as AjaxResponse);
-    getStub = stub(AjaxRequest.prototype, 'get').resolves({} as AjaxResponse);
+    backend = stubBackend();
     frame = document.createElement('iframe');
     document.body.append(frame);
-    preview = new PreviewFrame(frame, { url: 'https://site.example/?__t3ct=token', renewUrl: '/renew', page: 1, hosts: ['site.example'], expiresIn: 900 });
-    reload = stub(preview, 'reload');
+    preview = new PreviewFrame(frame, { url: 'https://site.example/news?__t3ct=token', renewUrl: '/renew', page: 1, hosts: ['site.example'], expiresIn: 900 });
   });
 
   afterEach((): void => {
     preview.dispose();
     frame.remove();
-    postStub.restore();
-    getStub.restore();
+    backend.fetch.restore();
   });
 
-  it('stores the settings of the admin panel in the frame with the backend session and reloads the frame', async (): Promise<void> => {
-    send({ type: 'typo3:preview:admin-panel', url: 'https://site.example/', action: 'save', fields: [['TSFE_ADMIN_PANEL[preview_showHiddenRecords]', '1'], ['invalid', 1]] });
+  it('stores the settings of the admin panel with the backend session and loads the page again with a fresh token', async (): Promise<void> => {
+    send(frame, { type: 'typo3:preview:admin-panel', url: 'https://site.example/news', action: 'save', fields: [['TSFE_ADMIN_PANEL[preview_showHiddenRecords]', '1'], ['invalid', 1]] });
 
-    await waitUntil((): boolean => reload.called);
-    const data: FormData = postStub.firstCall.args[0];
-    expect([...data.entries()]).to.deep.equal([['TSFE_ADMIN_PANEL[preview_showHiddenRecords]', '1']]);
+    await waitUntil((): boolean => frame.getAttribute('src') === 'https://site.example/news?__t3ct=token-1');
+    expect(backend.adminPanelRequests).to.deep.equal([
+      { url: '/typo3/ajax/adminpanel/form/save', fields: [['TSFE_ADMIN_PANEL[preview_showHiddenRecords]', '1']] },
+    ]);
+    expect(backend.renewals).to.deep.equal([{ previewToken: 'token', url: 'https://site.example/news', page: '1' }]);
   });
 
-  it('toggles the admin panel in the frame with the backend session and reloads the frame', async (): Promise<void> => {
-    send({ type: 'typo3:preview:admin-panel', url: 'https://site.example/', action: 'toggle', fields: [] });
+  it('toggles the admin panel with the backend session and loads the page again with a fresh token', async (): Promise<void> => {
+    send(frame, { type: 'typo3:preview:admin-panel', url: 'https://site.example/news', action: 'toggle', fields: [] });
 
-    await waitUntil((): boolean => reload.called);
-    expect(getStub.calledOnce).to.equal(true);
+    await waitUntil((): boolean => frame.getAttribute('src') === 'https://site.example/news?__t3ct=token-1');
+    expect(backend.adminPanelRequests).to.deep.equal([{ url: '/typo3/ajax/adminpanel/toggleActiveState', fields: [] }]);
   });
 
   it('ignores admin panel messages that do not come from the frame of a preview host', async (): Promise<void> => {
-    send({ type: 'typo3:preview:admin-panel', url: 'https://site.example/', action: 'toggle', fields: [] }, window);
-    send({ type: 'typo3:preview:admin-panel', url: 'https://outside.example/', action: 'toggle', fields: [] }, frame.contentWindow, 'https://outside.example');
-    send({ type: 'typo3:preview:admin-panel', url: 'https://site.example/', action: 'delete', fields: [] });
+    send(frame, { type: 'typo3:preview:admin-panel', url: 'https://site.example/news', action: 'toggle', fields: [] }, window);
+    send(frame, { type: 'typo3:preview:admin-panel', url: 'https://outside.example/', action: 'toggle', fields: [] }, frame.contentWindow, 'https://outside.example');
+    send(frame, { type: 'typo3:preview:admin-panel', url: 'https://site.example/news', action: 'delete', fields: [] });
 
     await new Promise((resolve): number => window.setTimeout(resolve, 50));
-    expect(getStub.called).to.equal(false);
-    expect(postStub.called).to.equal(false);
-    expect(reload.called).to.equal(false);
+    expect(backend.fetch.called).to.equal(false);
+    expect(frame.getAttribute('src')).to.equal('https://site.example/news?__t3ct=token');
   });
 });
 
 describe('@typo3/backend/preview/preview-frame and its token', (): void => {
   let frame: HTMLIFrameElement;
-  let postStub: SinonStub;
+  let backend: Backend;
 
   beforeEach((): void => {
-    postStub = stub(AjaxRequest.prototype, 'post').resolves({
-      resolve: (): Promise<unknown> => Promise.resolve({ url: 'https://site.example/?__t3ct=renewed', expiresIn: 900 }),
-    } as unknown as AjaxResponse);
+    backend = stubBackend();
     frame = document.createElement('iframe');
     document.body.append(frame);
   });
 
   afterEach((): void => {
     frame.remove();
-    postStub.restore();
+    document.querySelectorAll('iframe[data-stand-in]').forEach((standIn: Element): void => standIn.remove());
+    backend.fetch.restore();
   });
 
   it('renews the token before it expires', async (): Promise<void> => {
@@ -96,8 +133,33 @@ describe('@typo3/backend/preview/preview-frame and its token', (): void => {
     const preview = new PreviewFrame(frame, { url: 'https://site.example/?__t3ct=token', renewUrl: '/renew', page: 3, hosts: ['site.example'], expiresIn: 90 });
     try {
       await clock.tickAsync(31_000);
-      expect(postStub.calledOnce).to.equal(true);
-      expect(postStub.firstCall.args[0]).to.deep.equal({ previewToken: 'token', url: 'https://site.example/', page: 3 });
+      await waitUntil((): boolean => backend.renewals.length === 1);
+      expect(backend.renewals).to.deep.equal([{ previewToken: 'token', url: 'https://site.example/', page: '3' }]);
+    } finally {
+      preview.dispose();
+      clock.restore();
+    }
+  });
+
+  /**
+   * The page posts its address whenever it is shown. A renewal the backend page posted
+   * while the frame was loading the next page reached the page that was about to go,
+   * so the backend page hands its token to every page that reports its address.
+   */
+  it('hands its current token to a page that reports its address', async (): Promise<void> => {
+    const clock = useFakeTimers({ shouldAdvanceTime: true });
+    const page = standInForThePageIn(frame);
+    // Typed loosely: the typings offer only the overload with options for a stub of postMessage
+    const postMessage = stub(page, 'postMessage') as unknown as SinonStub;
+    const preview = new PreviewFrame(frame, { url: 'https://site.example/one?__t3ct=token', renewUrl: '/renew', page: 3, hosts: ['site.example'], expiresIn: 90 });
+    try {
+      await clock.tickAsync(31_000);
+      await waitUntil((): boolean => postMessage.calledWith({ type: 'typo3:preview:token', token: 'token-1' }, 'https://site.example'));
+      postMessage.resetHistory();
+
+      send(frame, { type: 'typo3:preview:location', url: 'https://site.example/two', page: 4, expires: 1 });
+
+      expect(postMessage.calledOnceWith({ type: 'typo3:preview:token', token: 'token-1' }, 'https://site.example')).to.equal(true);
     } finally {
       preview.dispose();
       clock.restore();
@@ -105,32 +167,69 @@ describe('@typo3/backend/preview/preview-frame and its token', (): void => {
   });
 
   it('takes the hosts of the preview from every renewal', async (): Promise<void> => {
-    postStub.resolves({
-      resolve: (): Promise<unknown> => Promise.resolve({ url: 'https://site.example/?__t3ct=renewed', expiresIn: 900, hosts: ['site.example', 'other.example'] }),
-    } as unknown as AjaxResponse);
+    backend.fetch.restore();
+    backend = stubBackend(['site.example', 'other.example']);
     const open = stub(window, 'open');
     const preview = new PreviewFrame(frame, { url: 'https://site.example/?__t3ct=token', renewUrl: '/renew', page: 3, hosts: ['site.example'], expiresIn: 900 });
-    function navigate(): void {
-      window.dispatchEvent(new MessageEvent('message', {
-        data: { type: 'typo3:preview:navigate', url: 'https://other.example/page' },
-        source: frame.contentWindow,
-        origin: 'https://site.example',
-      }));
-    }
+    const navigate = (): void => send(frame, { type: 'typo3:preview:navigate', url: 'https://other.example/page' });
     try {
       navigate();
       expect(open.calledOnce).to.equal(true);
 
       preview.reload();
-      await waitUntil((): boolean => frame.getAttribute('src') === 'https://site.example/?__t3ct=renewed');
+      await waitUntil((): boolean => frame.getAttribute('src') === 'https://site.example/?__t3ct=token-1');
       navigate();
 
-      await waitUntil((): boolean => postStub.calledTwice);
-      expect(postStub.secondCall.args[0]).to.deep.equal({ previewToken: 'renewed', url: 'https://other.example/page', page: 3 });
+      await waitUntil((): boolean => backend.renewals.length === 2);
+      expect(backend.renewals[1]).to.deep.equal({ previewToken: 'token-1', url: 'https://other.example/page', page: '3' });
       expect(open.calledOnce).to.equal(true);
     } finally {
       preview.dispose();
       open.restore();
+    }
+  });
+
+  /**
+   * A page the editor returns to through the history may carry a token that expired.
+   * The page is loaded again with a fresh token, and once it was shown there, a later
+   * expiry at the same address is recovered the same way.
+   */
+  it('loads an expired address again each time the page was shown there in between', async (): Promise<void> => {
+    const failure = stub();
+    const preview = new PreviewFrame(frame, { url: 'https://site.example/one?__t3ct=token', renewUrl: '/renew', page: 3, hosts: ['site.example'], expiresIn: 900 }, { onFailure: failure });
+    const expired = (): void => send(frame, { type: 'typo3:preview:expired', url: 'https://site.example/one?__t3ct=token', reason: 'expired' });
+    try {
+      expired();
+      await waitUntil((): boolean => frame.getAttribute('src') === 'https://site.example/one?__t3ct=token-1');
+      send(frame, { type: 'typo3:preview:location', url: 'https://site.example/one', page: 3, expires: 1 });
+
+      expired();
+
+      await waitUntil((): boolean => frame.getAttribute('src') === 'https://site.example/one?__t3ct=token-2');
+      expect(failure.called).to.equal(false);
+    } finally {
+      preview.dispose();
+    }
+  });
+
+  /**
+   * A token the site keeps refusing at an address would load the page again and again;
+   * a second expiry before the page was shown there stops the preview with its notice.
+   */
+  it('stops when an address expires again before the page was shown there', async (): Promise<void> => {
+    const failure = stub();
+    const preview = new PreviewFrame(frame, { url: 'https://site.example/one?__t3ct=token', renewUrl: '/renew', page: 3, hosts: ['site.example'], expiresIn: 900 }, { onFailure: failure });
+    const expired = (): void => send(frame, { type: 'typo3:preview:expired', url: 'https://site.example/one?__t3ct=token', reason: 'expired' });
+    try {
+      expired();
+      await waitUntil((): boolean => frame.getAttribute('src') === 'https://site.example/one?__t3ct=token-1');
+
+      expired();
+
+      expect(failure.calledOnce).to.equal(true);
+      expect(backend.renewals.length).to.equal(1);
+    } finally {
+      preview.dispose();
     }
   });
 
@@ -148,7 +247,7 @@ describe('@typo3/backend/preview/preview-frame and its token', (): void => {
     preview.reload();
 
     expect(frame.getAttribute('src')).to.equal('https://headless.example/page');
-    expect(postStub.called).to.equal(false);
+    expect(backend.fetch.called).to.equal(false);
     preview.dispose();
   });
 
@@ -157,7 +256,7 @@ describe('@typo3/backend/preview/preview-frame and its token', (): void => {
     const preview = new PreviewFrame(frame, { url: 'https://headless.example/page', renewUrl: '', page: 3, hosts: [], expiresIn: 0 });
     try {
       await clock.tickAsync(20 * 60_000);
-      expect(postStub.called).to.equal(false);
+      expect(backend.fetch.called).to.equal(false);
     } finally {
       preview.dispose();
       clock.restore();

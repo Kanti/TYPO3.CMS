@@ -23,6 +23,7 @@ use TYPO3\CMS\Core\Context\SecurityAspect;
 use TYPO3\CMS\Core\Crypto\HashAlgo;
 use TYPO3\CMS\Core\Crypto\HashService;
 use TYPO3\CMS\Core\Http\ApplicationType;
+use TYPO3\CMS\Core\Preview\PreviewScope;
 use TYPO3\CMS\Core\Preview\PreviewToken;
 use TYPO3\CMS\Core\Preview\PreviewTokenService;
 use TYPO3\CMS\Core\Security\RequestToken;
@@ -427,15 +428,25 @@ class FormViewHelper extends AbstractFormViewHelper
     }
 
     /**
-     * A form sent via HTTP GET replaces the query of its action, including the preview token
+     * A form sent via HTTP GET replaces the query of its action, including the preview
+     * token. The token travels only to the hosts of the preview, never to another host
+     * such as an external search service.
      */
-    protected function renderPreviewTokenHiddenField(): string
+    private function renderPreviewTokenHiddenField(): string
     {
         $previewToken = $this->getPreviewToken();
         if ($previewToken === null) {
             return '';
         }
         if ($this->tag->getAttribute('method') !== 'get') {
+            return '';
+        }
+        $request = $this->renderingContext->getAttribute(ServerRequestInterface::class);
+        $previewScope = $request->getAttribute(PreviewAccess::SCOPE_ATTRIBUTE);
+        if (!$previewScope instanceof PreviewScope) {
+            return '';
+        }
+        if (!$previewScope->allowsUrl((string)$this->tag->getAttribute('action'), $request->getUri())) {
             return '';
         }
         return '<input type="hidden" name="' . PreviewTokenService::PARAMETER . '" value="' . htmlspecialchars($previewToken->jwt) . '" ' . ($this->shouldUseXHtmlSlash() ? '/' : '') . '>';
@@ -445,7 +456,7 @@ class FormViewHelper extends AbstractFormViewHelper
      * A preview is shown in a frame of the backend, a form targeting the window around
      * it would replace the backend with the page
      */
-    protected function keepPreviewInFrame(): void
+    private function keepPreviewInFrame(): void
     {
         if ($this->getPreviewToken() === null) {
             return;
@@ -457,7 +468,7 @@ class FormViewHelper extends AbstractFormViewHelper
         $this->tag->addAttribute('target', '_self');
     }
 
-    protected function getPreviewToken(): ?PreviewToken
+    private function getPreviewToken(): ?PreviewToken
     {
         $previewToken = $this->renderingContext->getAttribute(ServerRequestInterface::class)->getAttribute(PreviewAccess::ATTRIBUTE);
         return $previewToken instanceof PreviewToken ? $previewToken : null;

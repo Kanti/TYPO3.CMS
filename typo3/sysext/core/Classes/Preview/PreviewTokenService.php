@@ -146,12 +146,69 @@ final readonly class PreviewTokenService
     public static function withoutToken(UriInterface $uri): UriInterface
     {
         $query = $uri->getQuery();
+        $kept = self::withoutParameters($query, [self::PARAMETER]);
+        return $kept === $query ? $uri : $uri->withQuery($kept);
+    }
+
+    /**
+     * Replaces the token of an address as it is written in a link, a form or a redirect,
+     * relative or absolute. No URI object is built from it, which would encode brackets
+     * or drop a query "0": every byte besides the token stays as it is.
+     */
+    public static function addToUrl(string $url, string $jwt): string
+    {
+        [$address, $query, $fragment] = self::splitUrl($url);
+        $query = self::withoutParameters($query ?? '', [self::PARAMETER]);
+        return $address . '?' . ($query === '' ? '' : $query . '&') . self::PARAMETER . '=' . rawurlencode($jwt) . $fragment;
+    }
+
+    /**
+     * Removes the token from an address as it is written and keeps every other byte of it.
+     * An address without token is returned as it is.
+     */
+    public static function removeFromUrl(string $url): string
+    {
+        [$address, $query, $fragment] = self::splitUrl($url);
+        if ($query === null) {
+            return $url;
+        }
+        $kept = self::withoutParameters($query, [self::PARAMETER]);
+        if ($kept === $query) {
+            return $url;
+        }
+        return $address . ($kept === '' ? '' : '?' . $kept) . $fragment;
+    }
+
+    /**
+     * Removes the pairs with one of the names from a query and keeps the bytes of every
+     * other pair.
+     *
+     * @param list<string> $names
+     */
+    public static function withoutParameters(string $query, array $names): string
+    {
         if ($query === '') {
-            return $uri;
+            return '';
         }
         $pairs = explode('&', $query);
-        $kept = array_filter($pairs, static fn(string $pair): bool => rawurldecode(str_replace('+', ' ', explode('=', $pair, 2)[0])) !== self::PARAMETER);
-        return count($kept) === count($pairs) ? $uri : $uri->withQuery(implode('&', $kept));
+        $kept = array_filter($pairs, static fn(string $pair): bool => !in_array(rawurldecode(str_replace('+', ' ', explode('=', $pair, 2)[0])), $names, true));
+        return count($kept) === count($pairs) ? $query : implode('&', $kept);
+    }
+
+    /**
+     * @return array{0: string, 1: string|null, 2: string} the address up to its query, the
+     *         query without "?" or null if there is none, and the fragment with its "#"
+     */
+    private static function splitUrl(string $url): array
+    {
+        $fragmentStart = strpos($url, '#');
+        $fragment = $fragmentStart === false ? '' : substr($url, $fragmentStart);
+        $address = $fragmentStart === false ? $url : substr($url, 0, $fragmentStart);
+        $queryStart = strpos($address, '?');
+        if ($queryStart === false) {
+            return [$address, null, $fragment];
+        }
+        return [substr($address, 0, $queryStart), substr($address, $queryStart + 1), $fragment];
     }
 
     private function createToken(string $jwt, array $claims): ?PreviewToken

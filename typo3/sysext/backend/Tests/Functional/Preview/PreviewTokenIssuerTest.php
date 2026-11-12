@@ -483,6 +483,49 @@ final class PreviewTokenIssuerTest extends FunctionalTestCase
         self::assertSame('https://first.example/page?x=1&__t3ct=' . $preview->token->jwt, (string)$preview->uri);
     }
 
+    /**
+     * The frontend address keeps its query as it is written: only the simulation of the
+     * legacy parameters moves into the token. Repeated names, flags, dots in names and
+     * encoded values reach the frame unchanged, as signed addresses compare them.
+     */
+    #[Test]
+    public function frontendAddressKeepsTheBytesOfItsQuery(): void
+    {
+        $user = $this->setUpBackendUser(1);
+
+        $preview = $this->get(PreviewTokenIssuer::class)->issue(
+            $this->createRequest(),
+            $user,
+            new Uri('https://first.example/page?utm.source=x&ADMCMD_simTime=1796083200&id=1&id=2&flag&q=a+b&ADMCMD_simUser=5&sig=ab%2bcd&ADMCMD_prev=IGNORE&x'),
+            2
+        );
+
+        self::assertSame(1796083200, $preview->token->profile->date);
+        self::assertSame([5], $preview->token->profile->groups);
+        self::assertSame('https://first.example/page?utm.source=x&id=1&id=2&flag&q=a+b&sig=ab%2bcd&x&__t3ct=' . $preview->token->jwt, (string)$preview->uri);
+    }
+
+    /**
+     * The base of a site may name an internationalized domain name as editors write it,
+     * while browsers request and frame the ASCII form of the host. The hosts and origins
+     * of the preview, which the frame-src directive and the navigation script use, are
+     * the ASCII form.
+     */
+    #[Test]
+    public function hostsWithInternationalizedDomainNamesAreListedInTheirAsciiForm(): void
+    {
+        $this->writeSiteConfiguration('second', $this->buildSiteConfiguration(7, 'https://Bücher.example:8443/'), [
+            $this->buildDefaultLanguageConfiguration('EN', '/'),
+        ]);
+        $user = $this->setUpBackendUser(1);
+
+        $preview = $this->get(PreviewTokenIssuer::class)->issue($this->createRequest(), $user, new Uri('https://bücher.example:8443/'), 7);
+
+        self::assertSame(['first.example', 'xn--bcher-kva.example:8443'], $preview->scope->getHosts());
+        self::assertSame(['https://first.example', 'https://xn--bcher-kva.example:8443'], $preview->scope->getOrigins());
+        self::assertStringStartsWith('https://bücher.example:8443/?__t3ct=', (string)$preview->uri);
+    }
+
     private function allowEditorToReadFrontendUserGroups(): void
     {
         $this->get(ConnectionPool::class)->getConnectionForTable('be_groups')
