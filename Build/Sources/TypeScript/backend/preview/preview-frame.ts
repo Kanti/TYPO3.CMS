@@ -33,6 +33,14 @@ const renewBefore = 60_000;
  * The query is handled as text: only pairs named like the token are touched, all other
  * pairs keep their bytes, as signed addresses and redirects compare the query as it is.
  */
+function isTokenPair(pair: string): boolean {
+  try {
+    return phpNameOf(decodeURIComponent(pair.split('=', 1)[0].replace(/\+/g, ' '))) === parameter;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * The name PHP gives a pair of the query, as the site reads the token with it: leading
  * spaces are dropped, "name[…]" is read as "name", dots and spaces become underscores.
@@ -42,14 +50,6 @@ function phpNameOf(name: string): string {
   const bracket = trimmed.indexOf('[');
   const base = bracket > 0 && trimmed.indexOf(']', bracket) !== -1 ? trimmed.slice(0, bracket) : trimmed;
   return base.replace(/[ .[]/g, '_');
-}
-
-function isTokenPair(pair: string): boolean {
-  try {
-    return phpNameOf(decodeURIComponent(pair.split('=', 1)[0].replace(/\+/g, ' '))) === parameter;
-  } catch {
-    return false;
-  }
 }
 
 function queryPairs(url: URL): string[] {

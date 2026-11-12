@@ -25,8 +25,18 @@ const script = document.querySelector<HTMLScriptElement>('script[data-preview-ba
 /**
  * The query is handled as text, as in @typo3/backend/preview/preview-frame: only pairs
  * named like the token are touched, all other pairs keep their bytes. This module runs
- * on the site without the import map of the backend, so it carries its own copy.
+ * on the site as one script with the nonce or hash of the page. The site has no import
+ * map of the backend, and an import would be a second script that a policy allowing
+ * scripts only by nonce or hash blocks, so the module carries its own copy.
  */
+function isTokenPair(pair: string): boolean {
+  try {
+    return phpNameOf(decodeURIComponent(pair.split('=', 1)[0].replace(/\+/g, ' '))) === parameter;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * The name PHP gives a pair of the query, as the site reads the token with it: leading
  * spaces are dropped, "name[…]" is read as "name", dots and spaces become underscores.
@@ -36,14 +46,6 @@ function phpNameOf(name: string): string {
   const bracket = trimmed.indexOf('[');
   const base = bracket > 0 && trimmed.indexOf(']', bracket) !== -1 ? trimmed.slice(0, bracket) : trimmed;
   return base.replace(/[ .[]/g, '_');
-}
-
-function isTokenPair(pair: string): boolean {
-  try {
-    return phpNameOf(decodeURIComponent(pair.split('=', 1)[0].replace(/\+/g, ' '))) === parameter;
-  } catch {
-    return false;
-  }
 }
 
 function queryPairs(url: URL): string[] {
