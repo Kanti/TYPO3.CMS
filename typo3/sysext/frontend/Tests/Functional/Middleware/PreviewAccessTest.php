@@ -27,6 +27,7 @@ use TYPO3\CMS\Core\Clock\SystemClock;
 use TYPO3\CMS\Core\Core\SystemEnvironmentBuilder;
 use TYPO3\CMS\Core\Database\ConnectionPool;
 use TYPO3\CMS\Core\Http\HtmlResponse;
+use TYPO3\CMS\Core\Http\ImmediateResponseException;
 use TYPO3\CMS\Core\Http\NormalizedParams;
 use TYPO3\CMS\Core\Http\RedirectResponse;
 use TYPO3\CMS\Core\Http\ServerRequest;
@@ -304,7 +305,7 @@ final class PreviewAccessTest extends FunctionalTestCase
     {
         foreach ([$this->sign(), 'invalid', ''] as $jwt) {
             $GLOBALS['BE_USER'] = null;
-            $response = $this->processPreviewAccess('https://first.example/page?flag&q=a+b&__t3ct=' . $jwt . '&id=1&id=2', $jwt, $headers);
+            $response = $this->processPreviewAccess('https://first.example/page?flag&q=a+b&__t3ct=' . $jwt . '&id=1&id=2', $headers);
 
             self::assertSame(303, $response->getStatusCode());
             self::assertSame('https://first.example/page?flag&q=a+b&id=1&id=2', $response->getHeaderLine('Location'));
@@ -312,6 +313,29 @@ final class PreviewAccessTest extends FunctionalTestCase
             self::assertSame('', (string)$response->getBody());
             self::assertNull($GLOBALS['BE_USER']);
         }
+    }
+
+    public static function namesPhpReadsAsTheTokenDataProvider(): \Generator
+    {
+        yield 'an array' => ['__t3ct%5B%5D=x'];
+        yield 'an array with a key' => ['__t3ct%5Bk%5D=x'];
+        yield 'a leading space' => ['%20__t3ct=x'];
+        yield 'a dot' => ['._t3ct=x'];
+    }
+
+    /**
+     * PHP reads "__t3ct[]", " __t3ct" and "._t3ct" as "__t3ct". A window opened with such
+     * a pair is redirected to the address without it, so the redirect never leads back to
+     * itself.
+     */
+    #[Test]
+    #[DataProvider('namesPhpReadsAsTheTokenDataProvider')]
+    public function topLevelNavigationWithANamePhpReadsAsTheTokenIsRedirectedWithoutIt(string $pair): void
+    {
+        $response = $this->processPreviewAccess('https://first.example/hidden?a=1&' . $pair . '&b=2', ['Sec-Fetch-Dest' => 'document', 'Sec-Fetch-Mode' => 'navigate']);
+
+        self::assertSame(303, $response->getStatusCode());
+        self::assertSame('https://first.example/hidden?a=1&b=2', $response->getHeaderLine('Location'));
     }
 
     #[Test]
@@ -537,7 +561,7 @@ final class PreviewAccessTest extends FunctionalTestCase
     #[Test]
     public function requestedHiddenPageIsShownAsWithABackendLogin(): void
     {
-        $onlyRequested = new PreviewProfile(0, false, false, 0, []);
+        $onlyRequested = PreviewProfile::visitor();
 
         self::assertSame(200, $this->preview('https://first.example/hidden', $this->signForEditor($onlyRequested))->getStatusCode());
         self::assertStringNotContainsString('href="/hidden', (string)$this->preview('https://first.example/', $this->signForEditor($onlyRequested))->getBody());
@@ -632,6 +656,57 @@ final class PreviewAccessTest extends FunctionalTestCase
 
         $this->assertRejected('userNotAvailable', $previewAccess->process($request($this->signForEditor()), $handler));
         self::assertSame('Rendered page', (string)$previewAccess->process($request($this->signForVisitor()), $handler)->getBody());
+    }
+
+    /**
+     * With lockSSL the backend is reachable via HTTPS only, and so is the preview of an
+     * editor: a site on plain HTTP refuses the token, a site on HTTPS shows the page.
+     */
+    #[Test]
+    public function backendLockedToHttpsShowsThePreviewOfAnEditorOnHttpsOnly(): void
+    {
+        $GLOBALS['TYPO3_CONF_VARS']['BE']['lockSSL'] = true;
+        $jwt = $this->sign();
+
+        $plainHttp = $this->processPreviewAccessOfSite('second', 'http://second.example/?__t3ct=' . $jwt, false);
+        $https = $this->processPreviewAccessOfSite('first', 'https://first.example/?__t3ct=' . $jwt, true);
+
+        $this->assertRejected('userNotAvailable', $plainHttp);
+        self::assertSame('Rendered page', (string)$https->getBody());
+    }
+
+    public static function lockedBackendDataProvider(): \Generator
+    {
+        yield 'locked for everybody' => [-1, false, false];
+        yield 'open to administrators only' => [1, true, false];
+        yield 'open to everybody' => [0, true, true];
+    }
+
+    /**
+     * A backend locked with adminOnly locks the preview of the editors it locks out: a
+     * locked backend shows no preview at all, one open to administrators only shows it to
+     * them alone.
+     */
+    #[Test]
+    #[DataProvider('lockedBackendDataProvider')]
+    public function lockedBackendShowsThePreviewOnlyToTheEditorsItLetsIn(int $adminOnly, bool $administratorSeesIt, bool $editorSeesIt): void
+    {
+        $GLOBALS['TYPO3_CONF_VARS']['BE']['adminOnly'] = $adminOnly;
+
+        $administrator = $this->processPreviewAccessOfSite('first', 'https://first.example/?__t3ct=' . $this->sign(), true);
+        $editor = $this->processPreviewAccessOfSite('first', 'https://first.example/?__t3ct=' . $this->signForEditor(), true);
+
+        $this->assertShownOrRefused($administratorSeesIt, $administrator);
+        $this->assertShownOrRefused($editorSeesIt, $editor);
+    }
+
+    private function assertShownOrRefused(bool $shown, ResponseInterface $response): void
+    {
+        if (!$shown) {
+            $this->assertRejected('userNotAvailable', $response);
+            return;
+        }
+        self::assertSame('Rendered page', (string)$response->getBody());
     }
 
     #[Test]
@@ -966,10 +1041,34 @@ final class PreviewAccessTest extends FunctionalTestCase
         };
         $jwt = $this->sign();
 
-        $response = $this->processPreviewAccess('https://first.example/contact?__t3ct=' . $jwt, $jwt, ['Sec-Fetch-Dest' => 'iframe'], $handler);
+        $response = $this->processPreviewAccess('https://first.example/contact?__t3ct=' . $jwt, ['Sec-Fetch-Dest' => 'iframe'], $handler);
 
         self::assertSame(303, $response->getStatusCode());
         self::assertSame('mailto:info@example.org?subject=Preview', $response->getHeaderLine('Location'));
+    }
+
+    /**
+     * An extension may answer with an ImmediateResponseException, which leaves the stack
+     * of middlewares at once. Its answer is still one of the preview: never cached, never
+     * indexed, and framed only by the backend that signed the token.
+     */
+    #[Test]
+    public function immediateResponseOfAnExtensionGetsTheHeadersOfThePreview(): void
+    {
+        $handler = new class implements RequestHandlerInterface {
+            public function handle(ServerRequestInterface $request): ResponseInterface
+            {
+                throw new ImmediateResponseException(new HtmlResponse('Immediate answer', 200, ['Cache-Control' => 'public, max-age=3600']), 1794491402);
+            }
+        };
+        $jwt = $this->sign();
+
+        $response = $this->processPreviewAccess('https://first.example/?__t3ct=' . $jwt, ['Sec-Fetch-Dest' => 'iframe'], $handler);
+
+        self::assertSame('Immediate answer', (string)$response->getBody());
+        self::assertSame('private, no-store', $response->getHeaderLine('Cache-Control'));
+        self::assertSame('noindex', $response->getHeaderLine('X-Robots-Tag'));
+        self::assertSame('frame-ancestors ' . self::BACKEND, $response->getHeaderLine('Content-Security-Policy'));
     }
 
     /**
@@ -989,6 +1088,21 @@ final class PreviewAccessTest extends FunctionalTestCase
 
         self::assertSame(303, $response->getStatusCode());
         self::assertSame('/hidden?items[]=1&a|b=2&__t3ct=' . $jwt, $response->getHeaderLine('Location'));
+    }
+
+    /**
+     * A link to a section of a page carries the token in its query, before the fragment,
+     * so the browser sends it and scrolls to the section (thread 530).
+     */
+    #[Test]
+    public function linkToASectionKeepsTheTokenBeforeTheFragment(): void
+    {
+        $this->addTypoScriptToTheFirstSite('page.110 = TEXT' . LF . 'page.110.value = Section' . LF . 'page.110.typolink.parameter = 2' . LF . 'page.110.typolink.section = top');
+        $jwt = $this->sign();
+
+        $body = (string)$this->preview('https://first.example/', $jwt)->getBody();
+
+        self::assertStringContainsString('href="/hidden?__t3ct=' . $jwt . '#top"', $body);
     }
 
     /**
@@ -1119,11 +1233,40 @@ final class PreviewAccessTest extends FunctionalTestCase
         return $this->executeFrontendSubRequest($request);
     }
 
-    private function processPreviewAccess(string $url, string $jwt, array $headers, ?RequestHandlerInterface $handler = null): ResponseInterface
+    /**
+     * Runs the middleware for a page in the frame of a site, on HTTPS or on plain HTTP; the
+     * page renders as "Rendered page"
+     */
+    private function processPreviewAccessOfSite(string $identifier, string $url, bool $https): ResponseInterface
     {
+        // Every request starts without a backend user, as the preview builds the editor
+        unset($GLOBALS['BE_USER']);
+        parse_str((string)parse_url($url, PHP_URL_QUERY), $queryParams);
+        $site = $this->get(SiteFinder::class)->getSiteByIdentifier($identifier);
+        $request = new ServerRequest($url, 'GET', null, ['Sec-Fetch-Dest' => 'iframe', 'User-Agent' => self::USER_AGENT], array_filter(['HTTPS' => $https ? 'on' : null, 'HTTP_HOST' => (string)parse_url($url, PHP_URL_HOST)]))
+            ->withQueryParams($queryParams)
+            ->withAttribute('applicationType', SystemEnvironmentBuilder::REQUESTTYPE_FE)
+            ->withAttribute('site', $site)
+            ->withAttribute('language', $site->getDefaultLanguage());
+        $handler = new class implements RequestHandlerInterface {
+            public function handle(ServerRequestInterface $request): ResponseInterface
+            {
+                return new HtmlResponse('Rendered page');
+            }
+        };
+        return $this->get(PreviewAccess::class)->process($request->withAttribute('normalizedParams', NormalizedParams::createFromRequest($request)), $handler);
+    }
+
+    /**
+     * Runs the middleware on the address as a browser sends it: the query keeps its bytes,
+     * and the query parameters are the names PHP gives its pairs.
+     */
+    private function processPreviewAccess(string $url, array $headers, ?RequestHandlerInterface $handler = null): ResponseInterface
+    {
+        parse_str((string)parse_url($url, PHP_URL_QUERY), $queryParams);
         $site = $this->get(SiteFinder::class)->getSiteByIdentifier('first');
         $request = new ServerRequest($url, 'GET', null, $headers + ['User-Agent' => self::USER_AGENT], ['HTTPS' => 'on', 'HTTP_HOST' => 'first.example'])
-            ->withQueryParams([PreviewTokenService::PARAMETER => $jwt])
+            ->withQueryParams($queryParams)
             ->withAttribute('applicationType', SystemEnvironmentBuilder::REQUESTTYPE_FE)
             ->withAttribute('site', $site)
             ->withAttribute('language', $site->getDefaultLanguage());
@@ -1175,13 +1318,13 @@ final class PreviewAccessTest extends FunctionalTestCase
     private function signForVisitor(?PreviewProfile $profile = null, int $editorId = 1): string
     {
         return new PreviewTokenService(new SystemClock())
-            ->sign($profile ?? new PreviewProfile(0, false, false, 0, []), self::BACKEND, self::USER_AGENT, $editorId, true)
+            ->sign($profile ?? PreviewProfile::visitor(), self::BACKEND, self::USER_AGENT, $editorId, true)
             ->jwt;
     }
 
     private function createProfileWithoutSimulation(): PreviewProfile
     {
-        return new PreviewProfile(0, false, false, 0, []);
+        return PreviewProfile::visitor();
     }
 
     private function createProfile(): PreviewProfile

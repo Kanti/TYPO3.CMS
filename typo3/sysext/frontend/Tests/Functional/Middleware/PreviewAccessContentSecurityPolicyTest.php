@@ -335,7 +335,7 @@ final class PreviewAccessContentSecurityPolicyTest extends FunctionalTestCase
 
     private function createProfile(): PreviewProfile
     {
-        return new PreviewProfile(0, false, false, 0, []);
+        return PreviewProfile::visitor();
     }
 
     /**

@@ -25,7 +25,9 @@ const script = document.querySelector<HTMLScriptElement>('script[data-preview-ba
 /**
  * The query is handled as text, as in @typo3/backend/preview/preview-frame: only pairs
  * named like the token are touched, all other pairs keep their bytes. This module runs
- * on the site without the import map of the backend, so it carries its own copy.
+ * on the site as one script with the nonce or hash of the page. The site has no import
+ * map of the backend, and an import would be a second script that a policy allowing
+ * scripts only by nonce or hash blocks, so the module carries its own copy.
  */
 function isTokenPair(pair: string): boolean {
   try {
@@ -150,6 +152,19 @@ if (script && window.parent !== window) {
     });
   });
 
+  // A link to the window around the frame would replace the backend with the page; it
+  // stays in the frame, as forms rendered with f:form do
+  document.addEventListener('click', (event: MouseEvent): void => {
+    const link = event.target instanceof Element ? event.target.closest('a[target], area[target]') : null;
+    if (!(link instanceof HTMLAnchorElement) && !(link instanceof HTMLAreaElement)) {
+      return;
+    }
+    if (!['_top', '_parent'].includes(link.target.trim().toLowerCase())) {
+      return;
+    }
+    link.target = '_self';
+  }, { capture: true });
+
   const navigation = 'navigation' in window ? window.navigation : null;
   navigation?.addEventListener('navigate', (event: NavigateEvent): void => {
     if (!event.cancelable) {
@@ -164,8 +179,8 @@ if (script && window.parent !== window) {
     if (event.destination.sameDocument) {
       return;
     }
-    // A form sent via HTTP POST goes as it is: f:form puts the token into its action, any
-    // other form shows the page without the preview
+    // A form sent via HTTP POST goes as it is: f:form puts the token into its action on the
+    // hosts of the preview, any other form shows the page without the preview
     if (event.formData !== null) {
       return;
     }

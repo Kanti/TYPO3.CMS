@@ -20,6 +20,7 @@ namespace TYPO3\CMS\Backend\Controller;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use TYPO3\CMS\Backend\Attribute\AsController;
+use TYPO3\CMS\Backend\Preview\AddressOutsidePreviewException;
 use TYPO3\CMS\Backend\Preview\PreviewAccessDeniedException;
 use TYPO3\CMS\Backend\Preview\PreviewTokenIssuer;
 use TYPO3\CMS\Backend\Template\PageRendererBackendSetupTrait;
@@ -71,12 +72,11 @@ final readonly class PreviewController
         }
         try {
             $preview = $this->issuer->issue($request, $this->getBackendUser(), $frontendUri, $pageId);
-        } catch (PreviewAccessDeniedException $exception) {
-            if ($exception->getCode() === PreviewTokenIssuer::ADDRESS_OUTSIDE_PREVIEW) {
-                // A frontend address an event listener changed to a host outside the preview, such as a
-                // decoupled frontend, opens as it is, without a token
-                return new RedirectResponse(PreviewTokenService::withoutToken($frontendUri), 303);
-            }
+        } catch (AddressOutsidePreviewException) {
+            // A frontend address an event listener changed to a host outside the preview, such as a
+            // decoupled frontend, opens as it is, without a token
+            return new RedirectResponse(PreviewTokenService::withoutToken($frontendUri), 303);
+        } catch (PreviewAccessDeniedException) {
             return $this->createDeniedResponse();
         }
         foreach ($preview->scope->getOrigins() as $origin) {

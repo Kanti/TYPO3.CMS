@@ -63,7 +63,7 @@ final class PreviewTokenServiceTest extends UnitTestCase
     public function tokenWithoutUserIsAVisitorToken(): void
     {
         $subject = new PreviewTokenService(new SystemClock());
-        $visitor = new PreviewProfile(0, false, false, 0, []);
+        $visitor = PreviewProfile::visitor();
         $jwt = $subject->sign($visitor, 'https://site-a.com', self::USER_AGENT, $this->createUser(), true)->jwt;
 
         $verified = $subject->verify($jwt, self::USER_AGENT);
@@ -95,7 +95,7 @@ final class PreviewTokenServiceTest extends UnitTestCase
     #[Test]
     public function tokenWithoutUserNamesTheEditorWhoseRightsDecideWhereItIsValid(): void
     {
-        $jwt = new PreviewTokenService(new SystemClock())->sign(new PreviewProfile(0, false, false, 0, []), 'https://site-a.com', self::USER_AGENT, $this->createUser(), true)->jwt;
+        $jwt = new PreviewTokenService(new SystemClock())->sign(PreviewProfile::visitor(), 'https://site-a.com', self::USER_AGENT, $this->createUser(), true)->jwt;
 
         $claims = $this->decodeClaims($jwt);
 
@@ -118,7 +118,7 @@ final class PreviewTokenServiceTest extends UnitTestCase
     public function tokenWhoseEditorClaimsDoNotFitItsKindIsRefused(array $changes): void
     {
         $subject = new PreviewTokenService(new SystemClock());
-        $claims = $this->decodeClaims($subject->sign(new PreviewProfile(0, false, false, 0, []), 'https://site-a.com', self::USER_AGENT, $this->createUser())->jwt);
+        $claims = $this->decodeClaims($subject->sign(PreviewProfile::visitor(), 'https://site-a.com', self::USER_AGENT, $this->createUser())->jwt);
         foreach ($changes as $name => $value) {
             if ($value === null) {
                 unset($claims[$name]);
@@ -294,9 +294,16 @@ final class PreviewTokenServiceTest extends UnitTestCase
         yield 'only the token' => ['https://site-b.com/p?__t3ct=jwt#top', 'https://site-b.com/p#top'];
         yield 'no token' => ['https://site-b.com/p?' . $query . '#top', 'https://site-b.com/p?' . $query . '#top'];
         yield 'no query' => ['https://site-b.com/p#top', 'https://site-b.com/p#top'];
-        yield 'similar names are kept' => ['https://site-b.com/p?__t3ct_x=1&x__t3ct=2&__t3ct[]=3', 'https://site-b.com/p?__t3ct_x=1&x__t3ct=2&__t3ct[]=3'];
+        yield 'similar names are kept' => ['https://site-b.com/p?__t3ct_x=1&x__t3ct=2&__t3ct[=3&t3ct=4', 'https://site-b.com/p?__t3ct_x=1&x__t3ct=2&__t3ct[=3&t3ct=4'];
+        yield 'names PHP reads as the token' => ['https://site-b.com/p?a=1&__t3ct[]=x&__t3ct[k]=y&%20__t3ct=z&._t3ct=v&_.t3ct=w&b=2', 'https://site-b.com/p?a=1&b=2'];
     }
 
+    /**
+     * The site reads the token with the names PHP gives the pairs of a query: "__t3ct[]",
+     * " __t3ct" and "._t3ct" all become "__t3ct". Such a pair is removed like the token
+     * itself, so the address of a redirect without the token carries none of them and the
+     * redirect never leads back to itself.
+     */
     #[Test]
     #[DataProvider('queryWithoutTokenDataProvider')]
     public function withoutTokenRemovesOnlyTheTokenFromTheQuery(string $uri, string $expected): void
@@ -368,6 +375,11 @@ final class PreviewTokenServiceTest extends UnitTestCase
             'https://site-b.com/p?__t3ct=new#top',
             'https://site-b.com/p#top',
         ];
+        yield 'names PHP reads as the token' => [
+            'https://site-b.com/p?a=1&__t3ct[]=x&._t3ct=y&%20__t3ct=z',
+            'https://site-b.com/p?a=1&__t3ct=new',
+            'https://site-b.com/p?a=1',
+        ];
         yield 'a question mark in the fragment' => [
             'https://site-b.com/p#section?__t3ct=fragment',
             'https://site-b.com/p?__t3ct=new#section?__t3ct=fragment',
@@ -411,7 +423,7 @@ final class PreviewTokenServiceTest extends UnitTestCase
     {
         self::assertSame(
             'utm.source=x&id=1&id=2&flag&items[]=1&sig=ab%2bcd&x',
-            PreviewTokenService::withoutParameters('utm.source=x&ADMCMD_simTime=1&id=1&id=2&flag&items[]=1&ADMCMD_simUser=5&sig=ab%2bcd&x&__t3ct=jwt', ['ADMCMD_simTime', 'ADMCMD_simUser', '__t3ct'])
+            PreviewTokenService::withoutParameters('utm.source=x&ADMCMD_simTime=1&id=1&id=2&flag&items[]=1&ADMCMD.simUser=5&sig=ab%2bcd&x&__t3ct[]=jwt', ['ADMCMD_simTime', 'ADMCMD_simUser', '__t3ct'])
         );
         self::assertSame('', PreviewTokenService::withoutParameters('__t3ct=jwt', ['__t3ct']));
         self::assertSame('', PreviewTokenService::withoutParameters('', ['__t3ct']));

@@ -167,11 +167,7 @@ export default class PreviewFrame {
         }
         break;
       case 'typo3:preview:navigate':
-        if (this.allows(url)) {
-          this.load(url);
-        } else {
-          window.open(PreviewFrame.withoutToken(url).href, '_blank', 'noopener,noreferrer');
-        }
+        this.navigate(url);
         break;
       case 'typo3:preview:expired':
         if (url.origin === origin.origin) {
@@ -185,6 +181,22 @@ export default class PreviewFrame {
         break;
     }
   };
+
+  /**
+   * A host of the preview loads in the frame with a fresh token, another address of the
+   * web opens in a new tab. A script of the site can ask for any address, so nothing
+   * else opens, such as javascript: or data:.
+   */
+  private navigate(url: URL): void {
+    if (this.allows(url)) {
+      this.load(url);
+      return;
+    }
+    if (!['http:', 'https:'].includes(url.protocol)) {
+      return;
+    }
+    window.open(PreviewFrame.withoutToken(url).href, '_blank', 'noopener,noreferrer');
+  }
 
   /**
    * The admin panel in the frame cannot reach the backend: the frame has no backend

@@ -20,6 +20,7 @@ namespace TYPO3\CMS\Workspaces\Controller;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use TYPO3\CMS\Backend\Attribute\AsController;
+use TYPO3\CMS\Backend\Preview\AddressOutsidePreviewException;
 use TYPO3\CMS\Backend\Preview\PreviewAccessDeniedException;
 use TYPO3\CMS\Backend\Preview\PreviewTokenIssuer;
 use TYPO3\CMS\Backend\Routing\PreviewUriBuilder;
@@ -136,7 +137,8 @@ final readonly class PreviewController
                 $rootline
             );
             if (!$this->workspaceService->isNewPage($pageUid)) {
-                $parameters = array_merge($queryParameters, $queryParametersLive);
+                // The live frame shows the page as a visitor sees it, without a simulated group
+                $parameters = $queryParameters;
                 // temporarily set workspace aspect to live (0) to generate the live URL
                 $liveWorkspaceContext = clone $this->context;
                 $liveWorkspaceContext->setAspect('workspace', new WorkspaceAspect(0));
@@ -205,10 +207,7 @@ final readonly class PreviewController
             $preview = $workspace === null
                 ? $this->previewTokenIssuer->issueForVisitor($request, $this->getBackendUser(), $uri, $pageUid)
                 : $this->previewTokenIssuer->issue($request, $this->getBackendUser(), $uri, $pageUid, $workspace);
-        } catch (PreviewAccessDeniedException $exception) {
-            if ($exception->getCode() !== PreviewTokenIssuer::ADDRESS_OUTSIDE_PREVIEW) {
-                throw $exception;
-            }
+        } catch (AddressOutsidePreviewException) {
             // An address the preview signs no token for opens as it is, as in the Preview module
             if ($uri->getScheme() !== '' && $uri->getHost() !== '') {
                 $this->allowFrameSource(UriValue::fromUri($uri));

@@ -257,6 +257,17 @@ class PreviewUriBuilder
         if ($uri === null) {
             return null;
         }
+        return $this->buildBackendPreviewUriFor($uri);
+    }
+
+    /**
+     * Builds the preview page of the backend for a preview URI that buildUri() of this
+     * builder returned already, so its events do not run a second time.
+     *
+     * @internal only to be used by the TYPO3 Core
+     */
+    public function buildBackendPreviewUriFor(UriInterface $uri): UriInterface
+    {
         if (!$this->requiresPreviewToken($uri)) {
             return $uri;
         }

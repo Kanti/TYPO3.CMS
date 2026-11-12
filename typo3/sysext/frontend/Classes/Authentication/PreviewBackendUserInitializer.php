@@ -97,6 +97,7 @@ final readonly class PreviewBackendUserInitializer
             // Resolves groups, TSconfig and mounts, and enters the workspace of the token
             $user->fetchGroupData();
         } catch (PreviewTokenRejectedException $exception) {
+            // PreviewBackendUserAuthentication::setWorkspace() refuses a workspace the editor may not enter
             throw new PreviewTokenRejectedException($exception->rejection, $exception->getMessage(), 1794224122, $exception, $token);
         }
         $user->backendSetUC();

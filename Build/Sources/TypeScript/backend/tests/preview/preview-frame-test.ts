@@ -190,6 +190,30 @@ describe('@typo3/backend/preview/preview-frame and its token', (): void => {
   });
 
   /**
+   * The page in the frame asks for other hosts to open in a new tab. A script of the site
+   * can send that message for any address, so only addresses of the web open, never
+   * javascript:, data: or other schemes the backend page would run or show.
+   */
+  it('opens only addresses of the web in a new tab', (): void => {
+    const open = stub(window, 'open');
+    const preview = new PreviewFrame(frame, { url: 'https://site.example/?__t3ct=token', renewUrl: '/renew', page: 3, hosts: ['site.example'], expiresIn: 900 });
+    try {
+      ['javascript:alert(document.domain)', 'data:text/html,<p>page</p>', 'mailto:editor@site.example', 'blob:https://site.example/1'].forEach((url: string): void => {
+        send(frame, { type: 'typo3:preview:navigate', url });
+      });
+      expect(open.called).to.equal(false);
+
+      send(frame, { type: 'typo3:preview:navigate', url: 'https://outside.example/page?__t3ct=token' });
+
+      expect(open.calledOnceWith('https://outside.example/page', '_blank', 'noopener,noreferrer')).to.equal(true);
+      expect(backend.fetch.called).to.equal(false);
+    } finally {
+      preview.dispose();
+      open.restore();
+    }
+  });
+
+  /**
    * A page the editor returns to through the history may carry a token that expired.
    * The page is loaded again with a fresh token, and once it was shown there, a later
    * expiry at the same address is recovered the same way.

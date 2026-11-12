@@ -115,6 +115,7 @@ async function serve(context: BrowserContext, options: ServeOptions = {}): Promi
       contentType: 'text/html', body: `<!doctype html><h1>${url.host}${url.pathname}</h1>
         ${unreadableLinks}
         <a href="${url.origin}/two?__t3ct=${token}">Two</a>
+        <a href="${url.origin}/two?__t3ct=${token}" target="_top">Two in the window</a>
         <form id="login" method="post" action="${url.origin}/posted?__t3ct=${token}"><button>Log in</button></form>
         <form id="search" method="get" action="${url.origin}/searched"><input type="hidden" name="__t3ct" value="${token}"><button>Search</button></form>
         <form id="elsewhere" method="post" action="${second}/posted?__t3ct=${token}"><input type="hidden" name="q" value="x"><button>Order elsewhere</button></form>
@@ -154,7 +155,7 @@ test.describe('Preview page around the frame', () => {
     await expect.poll(() => site.renewals.length, { timeout: 5000 }).toBe(1);
     expect(site.previousTokens).toEqual(['token-1']);
     await expect.poll(() => frameUrl(page).searchParams.get('__t3ct')).toBe('token-2');
-    await expect(frame.getByRole('link', { name: 'Two' })).toHaveAttribute('href', /__t3ct=token-2$/);
+    await expect(frame.getByRole('link', { name: 'Two', exact: true })).toHaveAttribute('href', /__t3ct=token-2$/);
     await expect(frame.locator('#login')).toHaveAttribute('action', /__t3ct=token-2$/);
     await expect(frame.locator('#search input[name="__t3ct"]')).toHaveValue('token-2');
     expect(await frame.locator('body').evaluate(() => (window as unknown as { notReloaded?: boolean }).notReloaded)).toBe(true);
@@ -299,10 +300,31 @@ test.describe('Preview page around the frame', () => {
     await expect(frame.getByRole('heading')).toHaveText('preview-first.example/unreadable-links');
 
     await expect.poll(() => site.renewals.length, { timeout: 5000 }).toBe(1);
-    await expect(frame.getByRole('link', { name: 'Two' })).toHaveAttribute('href', /__t3ct=token-2$/);
+    await expect(frame.getByRole('link', { name: 'Two', exact: true })).toHaveAttribute('href', /__t3ct=token-2$/);
     await expect(frame.locator('#login')).toHaveAttribute('action', /__t3ct=token-2$/);
     await expect(frame.locator('#search input[name="__t3ct"]')).toHaveValue('token-2');
     await expect(frame.getByRole('link', { name: 'Broken' })).toHaveAttribute('href', 'http://[broken');
+    await context.close();
+  });
+
+  /**
+   * A link of the site may target the window around the frame, as target="_top" does.
+   * In the preview it would replace the backend with the page; it stays in the frame,
+   * as forms rendered with f:form do.
+   */
+  test('keeps a link that targets the window around the frame in the frame', async ({ browser }) => {
+    const context = await browser.newContext();
+    await serve(context);
+    const page = await context.newPage();
+    await page.goto(backendOrigin + '/typo3/preview?page=1');
+    const frame = page.locator('iframe').contentFrame();
+    await expect(frame.getByRole('heading')).toHaveText('preview-first.example/one');
+
+    await frame.getByRole('link', { name: 'Two in the window' }).click();
+
+    await expect(frame.getByRole('heading')).toHaveText('preview-first.example/two');
+    expect(new URL(page.url()).origin).toBe(backendOrigin);
+    expect(frameUrl(page).searchParams.get('__t3ct')).toBe('token-1');
     await context.close();
   });
 

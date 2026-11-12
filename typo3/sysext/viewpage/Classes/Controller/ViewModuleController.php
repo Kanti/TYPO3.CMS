@@ -23,6 +23,7 @@ use TYPO3\CMS\Backend\Attribute\AsController;
 use TYPO3\CMS\Backend\Context\PageContext;
 use TYPO3\CMS\Backend\Context\PageContextFactory;
 use TYPO3\CMS\Backend\Domain\Model\Language\LanguageItem;
+use TYPO3\CMS\Backend\Preview\AddressOutsidePreviewException;
 use TYPO3\CMS\Backend\Preview\PreviewAccessDeniedException;
 use TYPO3\CMS\Backend\Preview\PreviewTokenIssuer;
 use TYPO3\CMS\Backend\Routing\PreviewUriBuilder;
@@ -116,7 +117,7 @@ final class ViewModuleController
             return $view->assign('info', $languageService->sL('LLL:EXT:viewpage/Resources/Private/Language/locallang.xlf:noValidPageSelected'))->renderResponse('Empty');
         }
 
-        $this->registerDocHeader($view, $previewLanguages, $languageId, (string)$previewUriBuilder->buildBackendPreviewUri(), $targetUrl);
+        $this->registerDocHeader($view, $previewLanguages, $languageId, (string)$previewUriBuilder->buildBackendPreviewUriFor($targetUri), $targetUrl);
         $moduleData = $request->getAttribute('moduleData');
         $current = $moduleData->get('States')['current'] ?? [];
         $current['label'] = ($current['label'] ?? $languageService->sL('LLL:EXT:viewpage/Resources/Private/Language/locallang.xlf:custom'));
@@ -133,14 +134,13 @@ final class ViewModuleController
             $preview = $this->previewTokenIssuer->issue($request, $this->getBackendUser(), $targetUri, $this->pageContext->pageId);
             $previewSettings = $this->previewTokenIssuer->getFrameSettings($preview, $this->pageContext->pageId);
             $frameSources = array_map(static fn(string $origin): UriValue => new UriValue($origin), $preview->scope->getOrigins());
-        } catch (PreviewAccessDeniedException $exception) {
-            if ($exception->getCode() !== PreviewTokenIssuer::ADDRESS_OUTSIDE_PREVIEW) {
-                return $view->assign('info', $languageService->sL('backend.preview:error.denied'))->renderResponse('Empty');
-            }
+        } catch (AddressOutsidePreviewException) {
             // A frontend address an event listener changed to a host outside the preview, such as a
             // decoupled frontend, opens as it is, without a token
             $previewSettings = $this->previewTokenIssuer->getPlainFrameSettings($request, $targetUri, $this->pageContext->pageId);
             $frameSources = $targetUri->getScheme() !== '' && $targetUri->getHost() !== '' ? [UriValue::fromUri($targetUri)] : [];
+        } catch (PreviewAccessDeniedException) {
+            return $view->assign('info', $languageService->sL('backend.preview:error.denied'))->renderResponse('Empty');
         }
 
         $view->assignMultiple([

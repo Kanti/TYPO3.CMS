@@ -276,9 +276,10 @@ final class PreviewTokenIssuerTest extends FunctionalTestCase
     {
         $user = $this->setUpBackendUser(9);
 
+        // Page 7 is the root of the second site, outside the mounts of the editor
         $this->expectException(PreviewAccessDeniedException::class);
-        $this->expectExceptionCode(1793265780);
-        $this->get(PreviewTokenIssuer::class)->issueForVisitor($this->createRequest(), $user, new Uri('https://second.example:8443/'), 0);
+        $this->expectExceptionCode(1793265778);
+        $this->get(PreviewTokenIssuer::class)->issueForVisitor($this->createRequest(), $user, new Uri('https://second.example:8443/'), 7);
     }
 
     #[Test]
@@ -394,13 +395,47 @@ final class PreviewTokenIssuerTest extends FunctionalTestCase
     #[Test]
     public function renewalChecksRightsAgain(): void
     {
-        $user = $this->setUpBackendUser(9);
         $issuer = $this->get(PreviewTokenIssuer::class);
-        $previous = $issuer->issue($this->createRequest(), $user, new Uri('https://first.example/'), 2);
+        $previous = $issuer->issue($this->createRequest(), $this->setUpBackendUser(9), new Uri('https://first.example/'), 2);
+        // The editor loses the mount of the page before the token is renewed, for the same page
+        $this->get(ConnectionPool::class)->getConnectionForTable('be_groups')->update('be_groups', ['db_mountpoints' => '7'], ['uid' => 9]);
+        $editorWithOtherRights = $this->setUpBackendUser(9);
 
         $this->expectException(PreviewAccessDeniedException::class);
         $this->expectExceptionCode(1793265778);
-        $issuer->renew($this->createRequest(), $user, $previous->token->jwt, new Uri('https://first.example/'), 7);
+        $issuer->renew($this->createRequest(), $editorWithOtherRights, $previous->token->jwt, new Uri('https://first.example/'), 2);
+    }
+
+    /**
+     * The page around the frame renews the token of the editor who opened it. Another
+     * editor logged in to the same browser in the meantime gets no token from the
+     * simulation of the previous one; the preview page opens again for this editor.
+     */
+    #[Test]
+    public function renewalRefusesTheTokenOfAnotherEditor(): void
+    {
+        $issuer = $this->get(PreviewTokenIssuer::class);
+        $previous = $issuer->issue($this->createRequest(), $this->setUpBackendUser(1), new Uri('https://first.example/'), 2);
+        $editor = $this->setUpBackendUser(9);
+
+        $this->expectException(PreviewAccessDeniedException::class);
+        $this->expectExceptionCode(1794491403);
+        $issuer->renew($this->createRequest(), $editor, $previous->token->jwt, new Uri('https://first.example/'), 2);
+    }
+
+    /**
+     * The same holds for the visitor token of the live frame next to a workspace preview.
+     */
+    #[Test]
+    public function renewalRefusesTheVisitorTokenOfAnotherEditor(): void
+    {
+        $issuer = $this->get(PreviewTokenIssuer::class);
+        $previous = $issuer->issueForVisitor($this->createRequest(), $this->setUpBackendUser(1), new Uri('https://first.example/'), 2);
+        $editor = $this->setUpBackendUser(9);
+
+        $this->expectException(PreviewAccessDeniedException::class);
+        $this->expectExceptionCode(1794491403);
+        $issuer->renew($this->createRequest(), $editor, $previous->token->jwt, new Uri('https://first.example/'), 2);
     }
 
     #[Test]

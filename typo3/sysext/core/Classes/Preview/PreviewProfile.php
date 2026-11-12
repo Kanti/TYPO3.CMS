@@ -45,6 +45,15 @@ final readonly class PreviewProfile
     }
 
     /**
+     * The pages as a visitor sees them now: live, without hidden records, at the current
+     * time and without a frontend login
+     */
+    public static function visitor(): self
+    {
+        return new self(0, false, false, 0, []);
+    }
+
+    /**
      * Whether the pages are shown as a visitor sees them now: live, without
      * hidden records, at the current time and without a frontend login.
      */

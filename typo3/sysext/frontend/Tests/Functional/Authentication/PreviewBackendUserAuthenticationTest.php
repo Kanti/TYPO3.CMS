@@ -178,7 +178,7 @@ final class PreviewBackendUserAuthenticationTest extends FunctionalTestCase
     private function initializePreviewUser(int $userId): BackendUserAuthentication
     {
         $token = new PreviewTokenService(new SystemClock())->sign(
-            new PreviewProfile(0, false, false, 0, []),
+            PreviewProfile::visitor(),
             'https://backend.example',
             'Mozilla/5.0',
             $userId
