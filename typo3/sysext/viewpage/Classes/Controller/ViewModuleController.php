@@ -116,7 +116,7 @@ final class ViewModuleController
             return $view->assign('info', $languageService->sL('LLL:EXT:viewpage/Resources/Private/Language/locallang.xlf:noValidPageSelected'))->renderResponse('Empty');
         }
 
-        $this->registerDocHeader($view, $previewLanguages, $languageId, (string)$previewUriBuilder->buildBackendPreviewUri(), $targetUrl);
+        $this->registerDocHeader($view, $previewLanguages, $languageId, (string)$previewUriBuilder->buildBackendPreviewUriFor($targetUri), $targetUrl);
         $moduleData = $request->getAttribute('moduleData');
         $current = $moduleData->get('States')['current'] ?? [];
         $current['label'] = ($current['label'] ?? $languageService->sL('LLL:EXT:viewpage/Resources/Private/Language/locallang.xlf:custom'));

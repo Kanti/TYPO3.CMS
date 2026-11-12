@@ -286,6 +286,29 @@ final class ViewModuleControllerTest extends FunctionalTestCase
     }
 
     /**
+     * The module builds the address of the page once, for the frame and for the View
+     * button, so listeners of the preview events run once per request.
+     */
+    #[Test]
+    public function previewEventsAreDispatchedOncePerRequest(): void
+    {
+        $calls = [];
+        $container = $this->get('service_container');
+        $container->set('count-before-listener', static function (BeforePagePreviewUriGeneratedEvent $event) use (&$calls): void {
+            $calls[] = 'before';
+        });
+        $container->set('count-after-listener', static function (AfterPagePreviewUriGeneratedEvent $event) use (&$calls): void {
+            $calls[] = 'after';
+        });
+        $container->get(ListenerProvider::class)->addListener(BeforePagePreviewUriGeneratedEvent::class, 'count-before-listener');
+        $container->get(ListenerProvider::class)->addListener(AfterPagePreviewUriGeneratedEvent::class, 'count-after-listener');
+
+        $this->get(ViewModuleController::class)->handleRequest($this->createRequest(1));
+
+        self::assertSame(['before', 'after'], $calls);
+    }
+
+    /**
      * The frame shows the site on its own origin, which the Content-Security-Policy of
      * the module has to allow as frame source.
      */
