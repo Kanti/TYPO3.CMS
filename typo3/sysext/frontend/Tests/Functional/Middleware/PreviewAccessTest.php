@@ -304,7 +304,7 @@ final class PreviewAccessTest extends FunctionalTestCase
     {
         foreach ([$this->sign(), 'invalid', ''] as $jwt) {
             $GLOBALS['BE_USER'] = null;
-            $response = $this->processPreviewAccess('https://first.example/page?flag&q=a+b&__t3ct=' . $jwt . '&id=1&id=2', $jwt, $headers);
+            $response = $this->processPreviewAccess('https://first.example/page?flag&q=a+b&__t3ct=' . $jwt . '&id=1&id=2', $headers);
 
             self::assertSame(303, $response->getStatusCode());
             self::assertSame('https://first.example/page?flag&q=a+b&id=1&id=2', $response->getHeaderLine('Location'));
@@ -312,6 +312,29 @@ final class PreviewAccessTest extends FunctionalTestCase
             self::assertSame('', (string)$response->getBody());
             self::assertNull($GLOBALS['BE_USER']);
         }
+    }
+
+    public static function namesPhpReadsAsTheTokenDataProvider(): \Generator
+    {
+        yield 'an array' => ['__t3ct%5B%5D=x'];
+        yield 'an array with a key' => ['__t3ct%5Bk%5D=x'];
+        yield 'a leading space' => ['%20__t3ct=x'];
+        yield 'a dot' => ['._t3ct=x'];
+    }
+
+    /**
+     * PHP reads "__t3ct[]", " __t3ct" and "._t3ct" as "__t3ct". A window opened with such
+     * a pair is redirected to the address without it, so the redirect never leads back to
+     * itself.
+     */
+    #[Test]
+    #[DataProvider('namesPhpReadsAsTheTokenDataProvider')]
+    public function topLevelNavigationWithANamePhpReadsAsTheTokenIsRedirectedWithoutIt(string $pair): void
+    {
+        $response = $this->processPreviewAccess('https://first.example/hidden?a=1&' . $pair . '&b=2', ['Sec-Fetch-Dest' => 'document', 'Sec-Fetch-Mode' => 'navigate']);
+
+        self::assertSame(303, $response->getStatusCode());
+        self::assertSame('https://first.example/hidden?a=1&b=2', $response->getHeaderLine('Location'));
     }
 
     #[Test]
@@ -966,7 +989,7 @@ final class PreviewAccessTest extends FunctionalTestCase
         };
         $jwt = $this->sign();
 
-        $response = $this->processPreviewAccess('https://first.example/contact?__t3ct=' . $jwt, $jwt, ['Sec-Fetch-Dest' => 'iframe'], $handler);
+        $response = $this->processPreviewAccess('https://first.example/contact?__t3ct=' . $jwt, ['Sec-Fetch-Dest' => 'iframe'], $handler);
 
         self::assertSame(303, $response->getStatusCode());
         self::assertSame('mailto:info@example.org?subject=Preview', $response->getHeaderLine('Location'));
@@ -1119,11 +1142,16 @@ final class PreviewAccessTest extends FunctionalTestCase
         return $this->executeFrontendSubRequest($request);
     }
 
-    private function processPreviewAccess(string $url, string $jwt, array $headers, ?RequestHandlerInterface $handler = null): ResponseInterface
+    /**
+     * Runs the middleware on the address as a browser sends it: the query keeps its bytes,
+     * and the query parameters are the names PHP gives its pairs.
+     */
+    private function processPreviewAccess(string $url, array $headers, ?RequestHandlerInterface $handler = null): ResponseInterface
     {
+        parse_str((string)parse_url($url, PHP_URL_QUERY), $queryParams);
         $site = $this->get(SiteFinder::class)->getSiteByIdentifier('first');
         $request = new ServerRequest($url, 'GET', null, $headers + ['User-Agent' => self::USER_AGENT], ['HTTPS' => 'on', 'HTTP_HOST' => 'first.example'])
-            ->withQueryParams([PreviewTokenService::PARAMETER => $jwt])
+            ->withQueryParams($queryParams)
             ->withAttribute('applicationType', SystemEnvironmentBuilder::REQUESTTYPE_FE)
             ->withAttribute('site', $site)
             ->withAttribute('language', $site->getDefaultLanguage());

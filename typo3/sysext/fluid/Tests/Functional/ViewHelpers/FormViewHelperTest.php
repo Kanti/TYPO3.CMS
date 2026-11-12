@@ -311,10 +311,59 @@ final class FormViewHelperTest extends FunctionalTestCase
         self::assertStringNotContainsString('__t3ct', new TemplateView($context)->render());
     }
 
+    public static function previewTokenIsAddedToTheActionOfFormsSentViaPostDataProvider(): array
+    {
+        return [
+            'address relative to the page' => ['/order', '/order?__t3ct=preview-jwt'],
+            'address with a query and a fragment' => ['/order?step=2&items[]=1#form', '/order?step=2&items[]=1&__t3ct=preview-jwt#form'],
+            'address on another host of the preview' => ['https://other.example/order', 'https://other.example/order?__t3ct=preview-jwt'],
+            'address that carries an older token' => ['/order?__t3ct=older-jwt', '/order?__t3ct=preview-jwt'],
+        ];
+    }
+
+    /**
+     * A form sent via HTTP POST keeps the query of its action, so the token goes there and
+     * the answer stays in the preview. That holds for an action written as an address, as
+     * a plugin passes it in actionUri, as well as for one built by a typolink.
+     */
+    #[DataProvider('previewTokenIsAddedToTheActionOfFormsSentViaPostDataProvider')]
+    #[Test]
+    public function previewTokenIsAddedToTheActionOfFormsSentViaPost(string $action, string $expectedAction): void
+    {
+        $request = $this->createRequest(true);
+        $context = $this->get(RenderingContextFactory::class)->create([], $request);
+        $context->getTemplatePaths()->setTemplateSource('<f:form actionUri="' . $action . '" method="post" />');
+        $this->get(ConfigurationManagerInterface::class)->setRequest($request);
+        self::assertStringContainsString('action="' . htmlspecialchars($expectedAction) . '"', new TemplateView($context)->render());
+    }
+
+    public static function previewTokenIsNotAddedToTheActionOfFormsSentViaPostToOtherHostsDataProvider(): array
+    {
+        return [
+            'payment service' => ['https://payment.outside.example/checkout'],
+            'address relative to the scheme on another host' => ['//outside.example/order'],
+        ];
+    }
+
+    /**
+     * A form sent via HTTP POST to another host, such as a payment or newsletter service,
+     * never carries the token in its action.
+     */
+    #[DataProvider('previewTokenIsNotAddedToTheActionOfFormsSentViaPostToOtherHostsDataProvider')]
+    #[Test]
+    public function previewTokenIsNotAddedToTheActionOfFormsSentViaPostToOtherHosts(string $action): void
+    {
+        $request = $this->createRequest(true);
+        $context = $this->get(RenderingContextFactory::class)->create([], $request);
+        $context->getTemplatePaths()->setTemplateSource('<f:form actionUri="' . $action . '" method="post" />');
+        $this->get(ConfigurationManagerInterface::class)->setRequest($request);
+        self::assertStringNotContainsString('__t3ct', new TemplateView($context)->render());
+    }
+
     public static function previewTokenIsNotAddedDataProvider(): array
     {
         return [
-            'post in preview' => ['post', true],
+            'post without preview' => ['post', false],
             'get without preview' => ['get', false],
         ];
     }

@@ -190,6 +190,30 @@ describe('@typo3/backend/preview/preview-frame and its token', (): void => {
   });
 
   /**
+   * The page in the frame asks for other hosts to open in a new tab. A script of the site
+   * can send that message for any address, so only addresses of the web open, never
+   * javascript:, data: or other schemes the backend page would run or show.
+   */
+  it('opens only addresses of the web in a new tab', (): void => {
+    const open = stub(window, 'open');
+    const preview = new PreviewFrame(frame, { url: 'https://site.example/?__t3ct=token', renewUrl: '/renew', page: 3, hosts: ['site.example'], expiresIn: 900 });
+    try {
+      ['javascript:alert(document.domain)', 'data:text/html,<p>page</p>', 'mailto:editor@site.example', 'blob:https://site.example/1'].forEach((url: string): void => {
+        send(frame, { type: 'typo3:preview:navigate', url });
+      });
+      expect(open.called).to.equal(false);
+
+      send(frame, { type: 'typo3:preview:navigate', url: 'https://outside.example/page?__t3ct=token' });
+
+      expect(open.calledOnceWith('https://outside.example/page', '_blank', 'noopener,noreferrer')).to.equal(true);
+      expect(backend.fetch.called).to.equal(false);
+    } finally {
+      preview.dispose();
+      open.restore();
+    }
+  });
+
+  /**
    * A page the editor returns to through the history may carry a token that expired.
    * The page is loaded again with a fresh token, and once it was shown there, a later
    * expiry at the same address is recovered the same way.
@@ -282,7 +306,8 @@ describe('@typo3/backend/preview/preview-frame and the query of an address', ():
     ['the token twice', `https://site.example/p?__t3ct=a&${query}&__t3ct=b`, `https://site.example/p?${query}`],
     ['only the token', 'https://site.example/p?__t3ct=jwt#top', 'https://site.example/p#top'],
     ['no token', `https://site.example/p?${query}#top`, `https://site.example/p?${query}#top`],
-    ['similar names', 'https://site.example/p?__t3ct_x=1&x__t3ct=2&__t3ct[]=3', 'https://site.example/p?__t3ct_x=1&x__t3ct=2&__t3ct[]=3'],
+    ['similar names', 'https://site.example/p?__t3ct_x=1&x__t3ct=2&__t3ct[=3&t3ct=4', 'https://site.example/p?__t3ct_x=1&x__t3ct=2&__t3ct[=3&t3ct=4'],
+    ['names PHP reads as the token', 'https://site.example/p?a=1&__t3ct[]=x&__t3ct[k]=y&%20__t3ct=z&._t3ct=v&_.t3ct=w&b=2', 'https://site.example/p?a=1&b=2'],
   ];
 
   cases.forEach(([name, address, expected]): void => {

@@ -181,7 +181,8 @@ final readonly class PreviewTokenService
 
     /**
      * Removes the pairs with one of the names from a query and keeps the bytes of every
-     * other pair.
+     * other pair. A pair counts by the name PHP gives it, as the site reads the query
+     * that way: "__t3ct[]", " __t3ct" and "._t3ct" are all "__t3ct".
      *
      * @param list<string> $names
      */
@@ -191,7 +192,10 @@ final readonly class PreviewTokenService
             return '';
         }
         $pairs = explode('&', $query);
-        $kept = array_filter($pairs, static fn(string $pair): bool => !in_array(rawurldecode(str_replace('+', ' ', explode('=', $pair, 2)[0])), $names, true));
+        $kept = array_filter($pairs, static function (string $pair) use ($names): bool {
+            parse_str(explode('=', $pair, 2)[0], $parameters);
+            return !in_array((string)array_key_first($parameters), $names, true);
+        });
         return count($kept) === count($pairs) ? $query : implode('&', $kept);
     }
 

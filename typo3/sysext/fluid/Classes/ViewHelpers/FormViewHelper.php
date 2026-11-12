@@ -135,6 +135,7 @@ class FormViewHelper extends AbstractFormViewHelper
         } else {
             $this->tag->addAttribute('method', 'post');
         }
+        $this->addPreviewTokenToAction();
 
         if (!empty($this->arguments['name'])) {
             $this->tag->addAttribute('name', $this->arguments['name']);
@@ -429,8 +430,7 @@ class FormViewHelper extends AbstractFormViewHelper
 
     /**
      * A form sent via HTTP GET replaces the query of its action, including the preview
-     * token. The token travels only to the hosts of the preview, never to another host
-     * such as an external search service.
+     * token, so the token goes into a hidden field
      */
     protected function renderPreviewTokenHiddenField(): string
     {
@@ -441,15 +441,49 @@ class FormViewHelper extends AbstractFormViewHelper
         if ($this->tag->getAttribute('method') !== 'get') {
             return '';
         }
-        $request = $this->renderingContext->getAttribute(ServerRequestInterface::class);
-        $previewScope = $request->getAttribute(PreviewAccess::SCOPE_ATTRIBUTE);
-        if (!$previewScope instanceof PreviewScope) {
-            return '';
-        }
-        if (!$previewScope->allowsUrl((string)$this->tag->getAttribute('action'), $request->getUri())) {
+        if (!$this->isActionOnAHostOfThePreview()) {
             return '';
         }
         return '<input type="hidden" name="' . PreviewTokenService::PARAMETER . '" value="' . htmlspecialchars($previewToken->jwt) . '" ' . ($this->shouldUseXHtmlSlash() ? '/' : '') . '>';
+    }
+
+    /**
+     * A form sent via HTTP POST keeps the query of its action, so the preview token goes
+     * there, also for an action written as an address instead of built by a typolink
+     */
+    protected function addPreviewTokenToAction(): void
+    {
+        $previewToken = $this->getPreviewToken();
+        if ($previewToken === null) {
+            return;
+        }
+        if ($this->tag->getAttribute('method') !== 'post') {
+            return;
+        }
+        // The tag keeps its attributes escaped
+        $action = htmlspecialchars_decode((string)$this->tag->getAttribute('action'));
+        // Without an action the form goes to the address of the page, which carries the token
+        if ($action === '') {
+            return;
+        }
+        if (!$this->isActionOnAHostOfThePreview()) {
+            return;
+        }
+        $this->tag->addAttribute('action', PreviewTokenService::addToUrl($action, $previewToken->jwt));
+    }
+
+    /**
+     * The token travels only to the hosts of the preview, never to another host such as an
+     * external search or payment service
+     */
+    protected function isActionOnAHostOfThePreview(): bool
+    {
+        $request = $this->renderingContext->getAttribute(ServerRequestInterface::class);
+        $previewScope = $request->getAttribute(PreviewAccess::SCOPE_ATTRIBUTE);
+        if (!$previewScope instanceof PreviewScope) {
+            return false;
+        }
+        return $previewScope->allowsUrl(htmlspecialchars_decode((string)$this->tag->getAttribute('action')), $request->getUri());
     }
 
     /**

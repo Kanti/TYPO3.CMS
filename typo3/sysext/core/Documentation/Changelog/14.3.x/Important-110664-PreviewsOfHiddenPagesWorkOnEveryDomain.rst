@@ -181,9 +181,11 @@ Links, redirects and forms
     once that token expired.
 *   Forms rendered with :html:`<f:form>` stay in the frame: a target
     :html:`_top` or :html:`_parent`, as the login form of
-    :composer:`typo3/cms-felogin` uses, becomes :html:`_self`, and a form sent
-    via HTTP GET to a host of the preview carries the token in a hidden
-    field.
+    :composer:`typo3/cms-felogin` uses, becomes :html:`_self`. A form to a
+    host of the preview carries the token in its action when it is sent via
+    HTTP POST, and in a hidden field when it is sent via HTTP GET.
+*   Links with the target :html:`_top` or :html:`_parent` open in the frame
+    as well.
 *   Other forms get no token of their own: a form sent via HTTP POST without
     the token in its action shows the page without the preview.
 
