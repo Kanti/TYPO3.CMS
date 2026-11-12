@@ -59,11 +59,40 @@ final class BackendLoginCookieScopeTest extends UnitTestCase
     {
         $GLOBALS['TYPO3_CONF_VARS']['SYS']['cookieDomain'] = '';
         $GLOBALS['TYPO3_CONF_VARS']['BE']['cookieDomain'] = $cookieDomain;
-        $backendRequest = NormalizedParams::createFromServerParams([
-            'HTTP_HOST' => $backendHost,
-            'HTTPS' => 'on',
-            'SCRIPT_NAME' => '/typo3/index.php',
-        ]);
+        $backendRequest = new NormalizedParams(['HTTP_HOST' => $backendHost, 'HTTPS' => 'on', 'SCRIPT_NAME' => '/typo3/index.php'], [], '/var/www/html/typo3/index.php', '/var/www/html');
+
+        self::assertSame($reaches, new BackendLoginCookieScope()->reaches($backendRequest, new Uri($site)));
+    }
+
+    public static function pathsAndSchemesDataProvider(): \Generator
+    {
+        yield 'site below the path of an installation in a subdirectory' => ['/cms/typo3/index.php', true, 'https://backend.example/cms/page', true];
+        yield 'site outside the path of an installation in a subdirectory' => ['/cms/typo3/index.php', true, 'https://backend.example/page', false];
+        yield 'site whose path only starts like the path of the cookie' => ['/cms/typo3/index.php', true, 'https://backend.example/cms-shop/page', false];
+        yield 'relative address below the path of the cookie' => ['/cms/typo3/index.php', true, '/cms/page', true];
+        yield 'site on plain HTTP with a backend on HTTPS' => ['/typo3/index.php', true, 'http://backend.example/page', false];
+        yield 'site on plain HTTP with a backend on plain HTTP' => ['/typo3/index.php', false, 'http://backend.example/page', true];
+    }
+
+    /**
+     * Without a cookie domain, the backend sets its login cookie for the path of the
+     * installation, and as a secure cookie when it runs on HTTPS. A browser sends it to no
+     * other path and to no plain HTTP address, so such a site needs a preview token.
+     */
+    #[Test]
+    #[DataProvider('pathsAndSchemesDataProvider')]
+    public function loginCookieReachesOnlyThePathsAndSchemesTheBrowserSendsItTo(string $scriptName, bool $https, string $site, bool $reaches): void
+    {
+        $GLOBALS['TYPO3_CONF_VARS']['SYS']['cookieDomain'] = '';
+        $GLOBALS['TYPO3_CONF_VARS']['BE']['cookieDomain'] = '';
+        // The installation lives in /var/www/html, which the web server serves below the
+        // path the script name starts with
+        $backendRequest = new NormalizedParams(
+            array_filter(['HTTP_HOST' => 'backend.example', 'HTTPS' => $https ? 'on' : null, 'SCRIPT_NAME' => $scriptName]),
+            [],
+            '/var/www/html/typo3/index.php',
+            '/var/www/html'
+        );
 
         self::assertSame($reaches, new BackendLoginCookieScope()->reaches($backendRequest, new Uri($site)));
     }

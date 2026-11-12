@@ -39,11 +39,18 @@ final class BackendLoginCookieScope implements LoggerAwareInterface
 
     public function reaches(NormalizedParams $backendRequest, UriInterface $frontendUri): bool
     {
+        // The backend sets a secure cookie on HTTPS, which browsers never send to plain HTTP
+        if ($backendRequest->isHttps() && $frontendUri->getScheme() === 'http') {
+            return false;
+        }
+        $scope = $this->getCookieScope($backendRequest);
+        if (!$this->reachesPath($scope->path, $frontendUri->getPath())) {
+            return false;
+        }
         $host = PreviewScope::normalizeHost($frontendUri->getHost());
         if ($host === '') {
             return true;
         }
-        $scope = $this->getCookieScope($backendRequest);
         $domain = PreviewScope::normalizeHost($scope->domain);
         if ($host === $domain) {
             return true;
@@ -52,5 +59,20 @@ final class BackendLoginCookieScope implements LoggerAwareInterface
             return false;
         }
         return str_ends_with($host, '.' . $domain);
+    }
+
+    /**
+     * A cookie reaches its own path and the paths below it, see RFC 6265, section 5.1.4
+     */
+    private function reachesPath(string $cookiePath, string $path): bool
+    {
+        $path = $path === '' ? '/' : $path;
+        if ($path === $cookiePath) {
+            return true;
+        }
+        if (!str_starts_with($path, $cookiePath)) {
+            return false;
+        }
+        return str_ends_with($cookiePath, '/') || $path[strlen($cookiePath)] === '/';
     }
 }
