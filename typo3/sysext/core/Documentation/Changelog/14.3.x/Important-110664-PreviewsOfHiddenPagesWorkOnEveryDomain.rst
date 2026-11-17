@@ -248,7 +248,9 @@ forms of the page carry the token; the module :guilabel:`Content > Preview`
 therefore renders every page without the page cache. The responses are sent
 with :http:`Cache-Control: private, no-store`, :http:`X-Robots-Tag: noindex`
 and :http:`Referrer-Policy: no-referrer`, and their :http:`frame-ancestors`
-directive allows only the backend that signed the token.
+directive allows only the backend that signed the token and the site itself.
+Browsers check every ancestor of a frame, so a page of the site may still
+frame another page of its own site in the preview.
 
 Server configuration
 --------------------
@@ -268,7 +270,8 @@ Server configuration
             headers make an HTTPS site refuse every token.
     *   -   :http:`Content-Security-Policy` of the web server
         -   A :http:`frame-ancestors` directive must allow the backend origin,
-            otherwise a frame on another origin stays empty. A
+            otherwise a frame on another origin stays empty, and
+            :code:`'self'` where a page frames a page of its own site. A
             :http:`script-src` that allows scripts only by nonce or hash blocks
             the script of the preview and the script of its error page:
             navigations started by scripts then lose the token, and an expired

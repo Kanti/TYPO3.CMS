@@ -43,6 +43,7 @@ use TYPO3\CMS\Core\Preview\PreviewTokenRejectedException;
 use TYPO3\CMS\Core\Preview\PreviewTokenService;
 use TYPO3\CMS\Core\Security\ContentSecurityPolicy\Directive;
 use TYPO3\CMS\Core\Security\ContentSecurityPolicy\Event\PolicyMutatedEvent;
+use TYPO3\CMS\Core\Security\ContentSecurityPolicy\SourceKeyword;
 use TYPO3\CMS\Core\Security\ContentSecurityPolicy\UriValue;
 use TYPO3\CMS\Core\Site\Entity\Site;
 use TYPO3\CMS\Core\Site\Entity\SiteLanguage;
@@ -163,13 +164,17 @@ final readonly class PreviewAccess implements MiddlewareInterface
         return $withoutToken === $location ? $response : $response->withHeader('Location', $withoutToken);
     }
 
+    /**
+     * Browsers check every ancestor of a frame: a page of the site may frame another page
+     * of its own site, which then has the site and the backend as ancestors.
+     */
     #[AsEventListener('typo3-frontend/preview-access/frame-ancestors')]
     public function allowBackendToFrame(PolicyMutatedEvent $event): void
     {
         $token = $event->request?->getAttribute(self::ATTRIBUTE);
         if ($token instanceof PreviewToken) {
             $event->setCurrentPolicy(
-                $event->getCurrentPolicy()->set(Directive::FrameAncestors, new UriValue($token->backendOrigin))
+                $event->getCurrentPolicy()->set(Directive::FrameAncestors, SourceKeyword::self, new UriValue($token->backendOrigin))
             );
         }
     }
@@ -334,8 +339,8 @@ final readonly class PreviewAccess implements MiddlewareInterface
                 return $response;
             }
         }
-        // A policy of the site without frame-ancestors gets the backend as a second policy,
-        // browsers enforce both
-        return $response->withAddedHeader('Content-Security-Policy', 'frame-ancestors ' . $token->backendOrigin);
+        // A policy of the site without frame-ancestors gets the site and the backend as a
+        // second policy, browsers enforce both
+        return $response->withAddedHeader('Content-Security-Policy', "frame-ancestors 'self' " . $token->backendOrigin);
     }
 }

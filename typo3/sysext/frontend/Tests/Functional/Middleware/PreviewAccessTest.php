@@ -46,6 +46,7 @@ final class PreviewAccessTest extends FunctionalTestCase
 
     private const USER_AGENT = 'Mozilla/5.0 (X11; Linux x86_64) Firefox/140.0';
     private const BACKEND = 'https://backend.example';
+    private const FRAME_ANCESTORS = "frame-ancestors 'self' " . self::BACKEND;
 
     protected const LANGUAGE_PRESETS = [
         'EN' => ['id' => 0, 'title' => 'English', 'locale' => 'en_US.UTF8'],
@@ -129,7 +130,7 @@ final class PreviewAccessTest extends FunctionalTestCase
         self::assertSame('private, no-store', $response->getHeaderLine('Cache-Control'));
         self::assertSame('noindex', $response->getHeaderLine('X-Robots-Tag'));
         self::assertSame('no-referrer', $response->getHeaderLine('Referrer-Policy'));
-        self::assertSame('frame-ancestors ' . self::BACKEND, $response->getHeaderLine('Content-Security-Policy'));
+        self::assertSame(self::FRAME_ANCESTORS, $response->getHeaderLine('Content-Security-Policy'));
         self::assertFalse($response->hasHeader('Set-Cookie'));
         self::assertFalse($response->hasHeader('ETag'));
         self::assertStringContainsString('preview-navigation.js', (string)$response->getBody());
@@ -154,14 +155,38 @@ final class PreviewAccessTest extends FunctionalTestCase
         self::assertStringNotContainsString('Hidden content', (string)$response->getBody());
     }
 
+    /**
+     * Browsers check every ancestor of a frame. A page of the site may frame another page
+     * of its own site, which then has the backend and the site as ancestors, so the policy
+     * of the site allows both to frame a page of the preview and no other origin.
+     */
     #[Test]
-    public function siteContentSecurityPolicyAllowsOnlyTheBackendToFrame(): void
+    public function siteContentSecurityPolicyAllowsOnlyTheSiteAndTheBackendToFrame(): void
     {
         $response = $this->preview('http://second.example/', $this->sign(), null);
 
         self::assertSame(200, $response->getStatusCode());
-        self::assertStringContainsString('frame-ancestors ' . self::BACKEND, $response->getHeaderLine('Content-Security-Policy'));
-        self::assertStringNotContainsString("frame-ancestors 'self'", $response->getHeaderLine('Content-Security-Policy'));
+        self::assertStringContainsString(self::FRAME_ANCESTORS . ';', $response->getHeaderLine('Content-Security-Policy') . ';');
+    }
+
+    /**
+     * A previewed page may frame another page of its own site through a link TYPO3
+     * renders with the token. That page is framed by the site and, above it, by the
+     * backend, and both are allowed.
+     */
+    #[Test]
+    public function pageFramedByAPageOfItsOwnSiteMayBeShownInThePreview(): void
+    {
+        $request = new InternalRequest('https://first.example/hidden?__t3ct=' . $this->sign());
+        $request = $request
+            ->withHeader('User-Agent', self::USER_AGENT)
+            ->withHeader('Sec-Fetch-Dest', 'iframe')
+            ->withHeader('Sec-Fetch-Site', 'same-origin');
+
+        $response = $this->executeFrontendSubRequest($request);
+
+        self::assertSame(200, $response->getStatusCode());
+        self::assertSame(self::FRAME_ANCESTORS, $response->getHeaderLine('Content-Security-Policy'));
     }
 
     public static function invalidTokenDataProvider(): \Generator
@@ -197,7 +222,7 @@ final class PreviewAccessTest extends FunctionalTestCase
         $this->assertRejected('expired', $response);
         self::assertStringContainsString('typo3:preview:expired', (string)$response->getBody());
         self::assertStringContainsString('"https://backend.example"', (string)$response->getBody());
-        self::assertSame('frame-ancestors ' . self::BACKEND, $response->getHeaderLine('Content-Security-Policy'));
+        self::assertSame(self::FRAME_ANCESTORS, $response->getHeaderLine('Content-Security-Policy'));
     }
 
     #[Test]
@@ -1071,7 +1096,7 @@ final class PreviewAccessTest extends FunctionalTestCase
     /**
      * An extension may answer with an ImmediateResponseException, which leaves the stack
      * of middlewares at once. Its answer is still one of the preview: never cached, never
-     * indexed, and framed only by the backend that signed the token.
+     * indexed, and framed only by the backend that signed the token and by its own site.
      */
     #[Test]
     public function immediateResponseOfAnExtensionGetsTheHeadersOfThePreview(): void
@@ -1089,7 +1114,7 @@ final class PreviewAccessTest extends FunctionalTestCase
         self::assertSame('Immediate answer', (string)$response->getBody());
         self::assertSame('private, no-store', $response->getHeaderLine('Cache-Control'));
         self::assertSame('noindex', $response->getHeaderLine('X-Robots-Tag'));
-        self::assertSame('frame-ancestors ' . self::BACKEND, $response->getHeaderLine('Content-Security-Policy'));
+        self::assertSame(self::FRAME_ANCESTORS, $response->getHeaderLine('Content-Security-Policy'));
     }
 
     /**
@@ -1205,8 +1230,8 @@ final class PreviewAccessTest extends FunctionalTestCase
     /**
      * A Content-Security-Policy the site sends itself, such as one of
      * config.additionalHeaders, may lack a frame-ancestors directive. The preview adds
-     * one with the backend as a second policy, which browsers enforce beside the first,
-     * so the page is not left open to be framed by any origin.
+     * one with the site and the backend as a second policy, which browsers enforce
+     * beside the first, so the page is not left open to be framed by any origin.
      */
     #[Test]
     public function policyOfTheSiteWithoutFrameAncestorsGetsTheBackendAsASecondPolicy(): void
@@ -1216,7 +1241,7 @@ final class PreviewAccessTest extends FunctionalTestCase
         $response = $this->preview('https://first.example/', $this->sign());
 
         self::assertSame(200, $response->getStatusCode());
-        self::assertSame(["img-src 'self'", 'frame-ancestors ' . self::BACKEND], $response->getHeader('Content-Security-Policy'));
+        self::assertSame(["img-src 'self'", self::FRAME_ANCESTORS], $response->getHeader('Content-Security-Policy'));
         self::assertFalse($response->hasHeader('X-Frame-Options'));
     }
 

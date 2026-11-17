@@ -162,7 +162,7 @@ final class PreviewAccessContentSecurityPolicyTest extends FunctionalTestCase
         foreach ($response->getHeader('Content-Security-Policy') as $policy) {
             self::assertTrue(self::allowsScript($policy, $url, $script), 'Blocked by "' . $policy . '": ' . json_encode($script));
         }
-        self::assertTrue($this->allowsFrameByBackend($response), 'frame-ancestors misses the backend');
+        self::assertTrue($this->allowsFrameBySiteAndBackend($response), 'frame-ancestors misses the site or the backend');
     }
 
     #[Test]
@@ -180,7 +180,7 @@ final class PreviewAccessContentSecurityPolicyTest extends FunctionalTestCase
         foreach ($response->getHeader('Content-Security-Policy') as $policy) {
             self::assertTrue(self::allowsScript($policy, $url, [], $matches[1]), 'Blocked by "' . $policy . '"');
         }
-        self::assertTrue($this->allowsFrameByBackend($response), 'frame-ancestors misses the backend');
+        self::assertTrue($this->allowsFrameBySiteAndBackend($response), 'frame-ancestors misses the site or the backend');
     }
 
     public static function reportedPoliciesDataProvider(): \Generator
@@ -204,7 +204,7 @@ final class PreviewAccessContentSecurityPolicyTest extends FunctionalTestCase
             self::assertStringContainsString('script-src', $policy);
             self::assertTrue(self::allowsScript($policy, $url, $script), 'Reported by "' . $policy . '"');
         }
-        self::assertTrue($this->allowsFrameByBackend($response), 'an enforced frame-ancestors with the backend is missing');
+        self::assertTrue($this->allowsFrameBySiteAndBackend($response), 'an enforced frame-ancestors with the site and the backend is missing');
     }
 
     #[Test]
@@ -345,7 +345,7 @@ final class PreviewAccessContentSecurityPolicyTest extends FunctionalTestCase
     private function assertPolicyOfTheSiteIsSent(string $site, ResponseInterface $response): void
     {
         if (self::sitePolicies()[$site] === null) {
-            self::assertSame('frame-ancestors ' . self::BACKEND, $response->getHeaderLine('Content-Security-Policy'));
+            self::assertSame("frame-ancestors 'self' " . self::BACKEND, $response->getHeaderLine('Content-Security-Policy'));
             return;
         }
         self::assertMatchesRegularExpression('/(^|; )(default-src|script-src|script-src-elem) /', $response->getHeaderLine('Content-Security-Policy'));
@@ -366,10 +366,15 @@ final class PreviewAccessContentSecurityPolicyTest extends FunctionalTestCase
         return $script;
     }
 
-    private function allowsFrameByBackend(ResponseInterface $response): bool
+    /**
+     * A page of the preview is framed by the backend, and a page of the site may frame
+     * another page of its own site below it: both must be allowed in one policy.
+     */
+    private function allowsFrameBySiteAndBackend(ResponseInterface $response): bool
     {
         foreach ($response->getHeader('Content-Security-Policy') as $policy) {
-            if (in_array(self::BACKEND, self::parsePolicy($policy)['frame-ancestors'] ?? [], true)) {
+            $ancestors = self::parsePolicy($policy)['frame-ancestors'] ?? [];
+            if (in_array(self::BACKEND, $ancestors, true) && in_array("'self'", $ancestors, true)) {
                 return true;
             }
         }
