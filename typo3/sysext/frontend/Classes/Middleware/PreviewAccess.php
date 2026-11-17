@@ -123,7 +123,7 @@ final readonly class PreviewAccess implements MiddlewareInterface
      */
     private function authorize(ServerRequestInterface $request, PreviewToken $token): PreviewScope
     {
-        if (!$token->showsLive()) {
+        if (!$token->isVisitorWithoutBackendUser()) {
             $this->assertBackendAccessible($request, $token);
             $user = $this->backendUserInitializer->initialize($token);
             $scope = $this->scopeResolver->resolve($user, new Uri($token->backendOrigin));
@@ -162,7 +162,7 @@ final readonly class PreviewAccess implements MiddlewareInterface
         }
         // A token previews something only where its simulation asks for more than a visitor
         // sees. A requested hidden page is one more case, see PreviewSimulator.
-        $this->context->setAspect('frontend.preview', new PreviewAspect(!$token->profile->showsLiveView()));
+        $this->context->setAspect('frontend.preview', new PreviewAspect(!$token->profile->showsVisitorView()));
         $cacheInstruction = $request->getAttribute('frontend.cache.instruction', new CacheInstruction());
         $cacheInstruction->disableCache('EXT:frontend: Preview token bypasses the page cache.');
         return $request

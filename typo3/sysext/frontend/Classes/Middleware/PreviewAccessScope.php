@@ -83,7 +83,7 @@ final readonly class PreviewAccessScope implements MiddlewareInterface
         }
         $groups = [];
         // A refusal leaves the stack through PreviewAccess, which answers with the error page
-        if (!$token->showsLive()) {
+        if (!$token->isVisitorWithoutBackendUser()) {
             $user = $GLOBALS['BE_USER'] ?? null;
             if (!$user instanceof BackendUserAuthentication) {
                 throw new PreviewTokenRejectedException(PreviewRejection::OutOfScope, 'Backend user of the preview is missing', 1794411128, token: $token);

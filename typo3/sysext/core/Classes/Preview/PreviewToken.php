@@ -20,8 +20,8 @@ namespace TYPO3\CMS\Core\Preview;
 /**
  * A signed preview token and the claims it carries: the editor who opened the preview
  * and the simulation to show. The editor of a token is the backend user of the request.
- * A token that shows live, the visitor token of the live frame, only uses its editor to
- * decide where it is valid. The changelog entry
+ * A visitor token, the token of the live frame, only uses its editor to decide where it
+ * is valid. The changelog entry
  * Important-110664-PreviewsOfHiddenPagesWorkOnEveryDomain describes the design.
  *
  * @internal
@@ -34,16 +34,16 @@ final readonly class PreviewToken
         public string $backendOrigin,
         public int $expires,
         public int $editorId,
-        private bool $showLive = false,
+        private bool $visitor = false,
     ) {}
 
     /**
-     * A token that shows live shows the pages as visitors see them, and its editor does
-     * not become the backend user of the request. Whether a profile shows no more than
-     * the live view says PreviewProfile::showsLiveView().
+     * A visitor token shows the pages as visitors see them, and its editor does not become
+     * the backend user of the request. Whether a profile shows no more than the visitor
+     * view says PreviewProfile::showsVisitorView().
      */
-    public function showsLive(): bool
+    public function isVisitorWithoutBackendUser(): bool
     {
-        return $this->showLive;
+        return $this->visitor;
     }
 }

@@ -45,7 +45,7 @@ final readonly class PreviewBackendUserInitializer
      */
     public function initialize(PreviewToken $token): BackendUserAuthentication
     {
-        if ($token->showsLive()) {
+        if ($token->isVisitorWithoutBackendUser()) {
             throw new \LogicException('A visitor token builds no backend user of the request.', 1794239502);
         }
         // Only BackendUserAuthenticator sets one, and it runs after PreviewAccess
@@ -68,7 +68,7 @@ final readonly class PreviewBackendUserInitializer
      */
     public function createEditorOfVisitorToken(PreviewToken $token): BackendUserAuthentication
     {
-        if (!$token->showsLive()) {
+        if (!$token->isVisitorWithoutBackendUser()) {
             throw new \LogicException('Only a visitor token has an editor that is not the backend user.', 1794385524);
         }
         return $this->build($token);

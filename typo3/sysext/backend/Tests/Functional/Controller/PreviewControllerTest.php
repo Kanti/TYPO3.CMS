@@ -65,7 +65,7 @@ final class PreviewControllerTest extends FunctionalTestCase
         $settings = json_decode(html_entity_decode($matches[1]), true, flags: JSON_THROW_ON_ERROR);
         parse_str((string)parse_url($settings['url'], PHP_URL_QUERY), $query);
         $token = $this->get(PreviewTokenService::class)->verify($query[PreviewTokenService::PARAMETER], '');
-        self::assertFalse($token->showsLive());
+        self::assertFalse($token->isVisitorWithoutBackendUser());
         self::assertSame(1, $token->editorId);
         self::assertFalse($token->profile->hiddenPages);
         self::assertFalse($token->profile->hiddenContent);

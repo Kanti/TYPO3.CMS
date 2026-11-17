@@ -127,7 +127,7 @@ final readonly class PreviewTokenIssuer
         if ($previous->editorId !== (int)$user->user['uid']) {
             throw new PreviewAccessDeniedException('Previous preview token belongs to another editor', 1794491403);
         }
-        if ($previous->showsLive()) {
+        if ($previous->isVisitorWithoutBackendUser()) {
             return $this->issueForVisitor($request, $user, $frontendUri, $pageId);
         }
         $profile = $previous->profile;

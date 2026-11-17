@@ -128,7 +128,7 @@ final class PreviewControllerTest extends FunctionalTestCase
         self::assertNotSame('', $settings['renewUrl']);
         self::assertSame(['example.com'], $settings['hosts']);
         $token = $this->tokenOf($settings['url']);
-        self::assertFalse($token->showsLive());
+        self::assertFalse($token->isVisitorWithoutBackendUser());
         self::assertSame(1, $token->editorId);
         self::assertSame(91, $token->profile->workspace);
     }
@@ -145,9 +145,9 @@ final class PreviewControllerTest extends FunctionalTestCase
 
         self::assertStringStartsWith('https://example.com/', $settings['url']);
         $token = $this->tokenOf($settings['url']);
-        self::assertTrue($token->showsLive());
+        self::assertTrue($token->isVisitorWithoutBackendUser());
         self::assertSame(1, $token->editorId);
-        self::assertTrue($token->profile->showsLiveView());
+        self::assertTrue($token->profile->showsVisitorView());
     }
 
     /**

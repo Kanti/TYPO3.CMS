@@ -273,7 +273,7 @@ final readonly class PreviewTokenService
             throw self::invalidClaims($editorClaim . ' is not a positive user id');
         }
         $visitor = $editorClaim === 'scp';
-        if ($visitor && !$profile->showsLiveView()) {
+        if ($visitor && !$profile->showsVisitorView()) {
             throw self::invalidClaims('prf asks for more than the visitor view an scp token shows');
         }
         return new PreviewToken($jwt, $profile, $backendOrigin, $expires, $editorId, $visitor);

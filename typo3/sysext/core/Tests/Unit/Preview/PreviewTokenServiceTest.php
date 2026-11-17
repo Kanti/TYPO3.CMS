@@ -51,12 +51,12 @@ final class PreviewTokenServiceTest extends UnitTestCase
         $verified = $subject->verify($signed->jwt, self::USER_AGENT);
 
         self::assertEquals($profile, $verified->profile);
-        self::assertFalse($verified->showsLive());
+        self::assertFalse($verified->isVisitorWithoutBackendUser());
         self::assertSame(5, $verified->editorId);
         self::assertSame('https://site-a.com', $verified->backendOrigin);
         self::assertSame($signed->expires, $verified->expires);
         self::assertEqualsWithDelta(time() + PreviewTokenService::LIFETIME, $verified->expires, 2);
-        self::assertFalse($verified->showsLive());
+        self::assertFalse($verified->isVisitorWithoutBackendUser());
         self::assertSame(5, $verified->editorId);
     }
 
@@ -69,8 +69,8 @@ final class PreviewTokenServiceTest extends UnitTestCase
 
         $verified = $subject->verify($jwt, self::USER_AGENT);
 
-        self::assertTrue($verified->showsLive());
-        self::assertTrue($verified->profile->showsLiveView());
+        self::assertTrue($verified->isVisitorWithoutBackendUser());
+        self::assertTrue($verified->profile->showsVisitorView());
         self::assertSame(5, $verified->editorId);
     }
 
@@ -268,7 +268,7 @@ final class PreviewTokenServiceTest extends UnitTestCase
 
         $verified = new PreviewTokenService(new SystemClock())->verify($jwt, self::USER_AGENT);
 
-        self::assertFalse($verified->showsLive());
+        self::assertFalse($verified->isVisitorWithoutBackendUser());
         self::assertSame(5, $verified->editorId);
     }
 
@@ -339,7 +339,7 @@ final class PreviewTokenServiceTest extends UnitTestCase
 
         $verified = new PreviewTokenService(new SystemClock())->verify($jwt, self::USER_AGENT);
 
-        self::assertFalse($verified->showsLive());
+        self::assertFalse($verified->isVisitorWithoutBackendUser());
         self::assertSame(5, $verified->editorId);
     }
 
@@ -385,7 +385,7 @@ final class PreviewTokenServiceTest extends UnitTestCase
 
         $token = new PreviewTokenService(new SystemClock())->readForRenewal($jwt, self::USER_AGENT);
         self::assertEquals($profile, $token->profile);
-        self::assertFalse($token->showsLive());
+        self::assertFalse($token->isVisitorWithoutBackendUser());
         self::assertSame(5, $token->editorId);
     }
 
@@ -397,7 +397,7 @@ final class PreviewTokenServiceTest extends UnitTestCase
 
         $token = new PreviewTokenService(new SystemClock())->readForRenewal($jwt, self::USER_AGENT);
 
-        self::assertFalse($token->showsLive());
+        self::assertFalse($token->isVisitorWithoutBackendUser());
         self::assertSame(5, $token->editorId);
     }
 
