@@ -70,8 +70,11 @@ readonly class PreviewSimulator implements MiddlewareInterface
                     ['code' => PageAccessFailureReasons::INVALID_PAGE_ARGUMENTS]
                 );
             }
-            // A refusal leaves the stack through PreviewTokenAuthenticator, which answers with the error page
-            $groups = $this->previewPageAccess->authorize($previewToken, $pageArguments->getPageId());
+            // The sub-request of PageContentErrorHandler renders the error page of the site in place of
+            // the requested page. Its address has no page of its own to name to the backend.
+            $isErrorPage = $request->getAttribute('originalRequest') instanceof ServerRequestInterface;
+            // A refusal leaves the stack through PreviewTokenAuthenticator, which answers with its refusal page
+            $groups = $this->previewPageAccess->authorize($previewToken, $pageArguments->getPageId(), $isErrorPage);
             // An editor without a simulated login keeps a frontend login of the frame, as with a backend login
             if ($previewToken->profile->loggedIn) {
                 $this->replaceUserGroups($request, $groups);
@@ -87,7 +90,7 @@ readonly class PreviewSimulator implements MiddlewareInterface
                 $this->context->setAspect('visibility', $this->context->getAspect('visibility')->withIncludeHiddenPages(true));
                 $this->context->setAspect('frontend.preview', new PreviewAspect(true));
             }
-            return $this->previewNavigationScript->addToPage($request, $handler, $previewToken, $pageArguments->getPageId());
+            return $this->previewNavigationScript->addToPage($request, $handler, $previewToken, $isErrorPage ? 0 : $pageArguments->getPageId());
         }
         $isLoggedIn = $this->context->getPropertyFromAspect('backend.user', 'isLoggedIn', false);
         $isOfflineWorkspace = $this->context->getPropertyFromAspect('workspace', 'isOffline', false);

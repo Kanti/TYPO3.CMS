@@ -44,12 +44,13 @@ final readonly class PreviewPageAccess
 
     /**
      * A visitor token simulates no group and shows only what visitors see, so the page
-     * needs no check of the editor.
+     * needs no check of the editor. Neither does the error page a site shows in place of
+     * the requested page, as every visitor sees it: only its groups are filtered.
      *
      * @return list<int> the simulated groups the editor may simulate on the page
      * @throws PreviewTokenRejectedException if the editor may not show the page
      */
-    public function authorize(PreviewToken $token, int $pageId): array
+    public function authorize(PreviewToken $token, int $pageId, bool $isErrorPage = false): array
     {
         if ($token->isVisitorWithoutBackendUser()) {
             return [];
@@ -67,7 +68,7 @@ final readonly class PreviewPageAccess
         if (!is_array($page)) {
             throw new PreviewTokenRejectedException(PreviewRejection::OutOfScope, 'Page of the preview does not exist', 1794411129, token: $token);
         }
-        if (!$user->doesUserHaveAccess($page, Permission::PAGE_SHOW)) {
+        if (!$isErrorPage && !$user->doesUserHaveAccess($page, Permission::PAGE_SHOW)) {
             throw new PreviewTokenRejectedException(PreviewRejection::OutOfScope, 'Page is not part of the preview', 1793265774, token: $token);
         }
         return $this->groupFilter->filter($user, $token->profile->groups, $rootline);

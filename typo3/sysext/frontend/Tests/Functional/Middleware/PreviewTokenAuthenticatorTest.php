@@ -537,6 +537,36 @@ final class PreviewTokenAuthenticatorTest extends FunctionalTestCase
         self::assertSame(200, $this->preview('https://first.example/scheduled', $this->sign())->getStatusCode());
     }
 
+    /**
+     * The page check applies to the page the editor requested. An address without a page
+     * shows the error page of the site, as it does to a visitor. The frame names no page
+     * to the backend, which checks that page again for every fresh token.
+     */
+    #[Test]
+    public function missingPageShowsTheErrorPageOfTheSiteAlsoIfTheEditorMayNotShowIt(): void
+    {
+        $this->get(ConnectionPool::class)->getConnectionForTable('pages')
+            ->insert('pages', ['uid' => 30, 'pid' => 1, 'title' => 'Nothing here', 'slug' => '/nothing-here', 'perms_everybody' => 0]);
+        $this->writeSiteConfiguration(
+            'first',
+            $this->buildSiteConfiguration(1, 'https://first.example/'),
+            [$this->buildDefaultLanguageConfiguration('EN', '/')],
+            [['errorCode' => 404, 'errorHandler' => 'Page', 'errorContentSource' => 't3://page?uid=30']]
+        );
+
+        $response = $this->preview('https://first.example/missing', $this->signForEditor());
+
+        self::assertSame(404, $response->getStatusCode());
+        self::assertStringContainsString('Nothing here', (string)$response->getBody());
+        self::assertStringContainsString('data-preview-page="0"', (string)$response->getBody());
+        self::assertSame('private, no-store', $response->getHeaderLine('Cache-Control'));
+        self::assertSame(self::FRAME_ANCESTORS, $response->getHeaderLine('Content-Security-Policy'));
+        $this->assertRejected('outOfScope', $this->preview('https://first.example/nothing-here', $this->signForEditor()));
+        $live = $this->executeFrontendSubRequest(new InternalRequest('https://first.example/missing'));
+        self::assertSame(404, $live->getStatusCode());
+        self::assertStringContainsString('Nothing here', (string)$live->getBody());
+    }
+
     #[Test]
     public function disabledLanguageIsShownOnlyIfTheEditorHasAccessToIt(): void
     {
