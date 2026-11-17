@@ -19,7 +19,7 @@ namespace TYPO3\CMS\Backend\Tests\Functional\Controller;
 
 use PHPUnit\Framework\Attributes\Test;
 use Psr\Http\Message\ResponseInterface;
-use TYPO3\CMS\Backend\Controller\PreviewController;
+use TYPO3\CMS\Backend\Controller\PreviewPageController;
 use TYPO3\CMS\Backend\Routing\Route;
 use TYPO3\CMS\Core\Core\SystemEnvironmentBuilder;
 use TYPO3\CMS\Core\Database\ConnectionPool;
@@ -33,7 +33,7 @@ use TYPO3\CMS\Core\Security\ContentSecurityPolicy\UriValue;
 use TYPO3\CMS\Core\Tests\Functional\SiteHandling\SiteBasedTestTrait;
 use TYPO3\TestingFramework\Core\Functional\FunctionalTestCase;
 
-final class PreviewControllerTest extends FunctionalTestCase
+final class PreviewPageControllerTest extends FunctionalTestCase
 {
     use SiteBasedTestTrait;
 
@@ -168,7 +168,7 @@ final class PreviewControllerTest extends FunctionalTestCase
         $settings = $this->getFrameSettings($this->showPreviewPage('https://first.example/'));
         parse_str((string)parse_url($settings['url'], PHP_URL_QUERY), $query);
 
-        $response = $this->get(PreviewController::class)->tokenAction(
+        $response = $this->get(PreviewPageController::class)->tokenAction(
             $this->createBackendRequest()->withMethod('POST')->withParsedBody([
                 'previewToken' => $query[PreviewTokenService::PARAMETER],
                 'url' => 'https://second.example/',
@@ -202,7 +202,7 @@ final class PreviewControllerTest extends FunctionalTestCase
             'page' => 1,
         ]);
 
-        $response = $this->get(PreviewController::class)->tokenAction($request);
+        $response = $this->get(PreviewPageController::class)->tokenAction($request);
 
         self::assertSame(403, $response->getStatusCode());
         self::assertSame('private, no-store', $response->getHeaderLine('Cache-Control'));
@@ -232,6 +232,6 @@ final class PreviewControllerTest extends FunctionalTestCase
             ->withQueryParams(['url' => $url, 'page' => $page]);
         $request = $request->withAttribute('normalizedParams', NormalizedParams::createFromRequest($request));
         $GLOBALS['TYPO3_REQUEST'] = $request;
-        return $this->get(PreviewController::class)->showAction($request);
+        return $this->get(PreviewPageController::class)->showAction($request);
     }
 }

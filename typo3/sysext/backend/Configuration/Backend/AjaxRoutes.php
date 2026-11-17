@@ -15,7 +15,7 @@ return [
     'preview_token' => [
         'path' => '/preview/token',
         'methods' => ['POST'],
-        'target' => Controller\PreviewController::class . '::tokenAction',
+        'target' => Controller\PreviewPageController::class . '::tokenAction',
     ],
 
     // Rename resource

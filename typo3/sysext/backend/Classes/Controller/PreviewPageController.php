@@ -47,7 +47,7 @@ use TYPO3\CMS\Core\Security\ContentSecurityPolicy\PolicyRegistry;
  * @internal This is a specific Backend Controller implementation and is not considered part of the Public TYPO3 API.
  */
 #[AsController]
-final readonly class PreviewController
+final readonly class PreviewPageController
 {
     use PageRendererBackendSetupTrait;
 
@@ -89,7 +89,7 @@ final readonly class PreviewController
         $this->setUpBasicPageRendererForBackend($this->pageRenderer, $this->extensionConfiguration, $request, $languageService);
         $this->pageRenderer->setTitle($languageService->sL('backend.preview:title'));
         $this->pageRenderer->loadJavaScriptModule('@typo3/backend/preview/preview-page.js');
-        $this->pageRenderer->setBodyContent('<body>' . $view->render('Preview/Show'));
+        $this->pageRenderer->setBodyContent('<body>' . $view->render('PreviewPage/Show'));
         return new HtmlResponse($this->pageRenderer->render($request))
             ->withHeader('Cache-Control', 'private, no-store')
             ->withHeader('Referrer-Policy', 'no-referrer');
