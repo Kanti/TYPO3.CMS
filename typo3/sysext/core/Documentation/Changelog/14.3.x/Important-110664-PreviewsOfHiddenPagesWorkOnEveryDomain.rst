@@ -195,7 +195,7 @@ Links, redirects and forms
     host of the preview carries the token in its action when it is sent via
     HTTP POST, and in a hidden field when it is sent via HTTP GET.
 *   Links with the target :html:`_top` or :html:`_parent` open in the frame
-    as well.
+    as well, links in inline SVG included.
 *   Other forms get no token of their own: a form sent via HTTP POST without
     the token in its action shows the page without the preview.
 

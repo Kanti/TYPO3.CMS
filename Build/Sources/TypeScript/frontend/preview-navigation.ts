@@ -165,16 +165,17 @@ if (script && window.parent !== window) {
   });
 
   // A link to the window around the frame would replace the backend with the page; it
-  // stays in the frame, as forms rendered with f:form do
+  // stays in the frame, as forms rendered with f:form do. The target is read and set as
+  // an attribute, which also reaches links in inline SVG.
   document.addEventListener('click', (event: MouseEvent): void => {
     const link = event.target instanceof Element ? event.target.closest('a[target], area[target]') : null;
-    if (!(link instanceof HTMLAnchorElement) && !(link instanceof HTMLAreaElement)) {
+    if (link === null) {
       return;
     }
-    if (!['_top', '_parent'].includes(link.target.trim().toLowerCase())) {
+    if (!['_top', '_parent'].includes((link.getAttribute('target') ?? '').trim().toLowerCase())) {
       return;
     }
-    link.target = '_self';
+    link.setAttribute('target', '_self');
   }, { capture: true });
 
   const navigation = 'navigation' in window ? window.navigation : null;

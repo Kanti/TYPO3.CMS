@@ -115,10 +115,15 @@ async function serve(context: BrowserContext, options: ServeOptions = {}): Promi
     const list = url.pathname === '/list'
       ? `<div id="list" data-next="${url.origin}/list?page=2&amp;__t3ct=${token}" data-config='{"search":"/search?__t3ct=${token}&amp;q="}' data-label="Next"></div>`
       : '';
+    // A link in inline SVG that targets the window around the frame
+    const svgLinks = url.pathname === '/svg-links'
+      ? `<svg width="240" height="24"><a href="${url.origin}/two?__t3ct=${token}" target="_top"><text x="0" y="16">Drawing in the window</text></a></svg>`
+      : '';
     await route.fulfill({
       contentType: 'text/html', body: `<!doctype html><h1>${url.host}${url.pathname}</h1>
         ${unreadableLinks}
         ${list}
+        ${svgLinks}
         <a href="${url.origin}/two?__t3ct=${token}">Two</a>
         <a href="${url.origin}/two?__t3ct=${token}" target="_top">Two in the window</a>
         <form id="login" method="post" action="${url.origin}/posted?__t3ct=${token}"><button>Log in</button></form>
@@ -347,6 +352,26 @@ test.describe('Preview page around the frame', () => {
     await expect(frame.getByRole('heading')).toHaveText('preview-first.example/one');
 
     await frame.getByRole('link', { name: 'Two in the window' }).click();
+
+    await expect(frame.getByRole('heading')).toHaveText('preview-first.example/two');
+    expect(new URL(page.url()).origin).toBe(backendOrigin);
+    expect(frameUrl(page).searchParams.get('__t3ct')).toBe('token-1');
+    await context.close();
+  });
+
+  /**
+   * A link in inline SVG may target the window around the frame as well. It carries its
+   * target only as an attribute, and it stays in the frame like any other link.
+   */
+  test('keeps an SVG link that targets the window around the frame in the frame', async ({ browser }) => {
+    const context = await browser.newContext();
+    await serve(context, { start: first + '/svg-links' });
+    const page = await context.newPage();
+    await page.goto(backendOrigin + '/typo3/preview?page=1');
+    const frame = page.locator('iframe').contentFrame();
+    await expect(frame.getByRole('heading')).toHaveText('preview-first.example/svg-links');
+
+    await frame.locator('svg a').click();
 
     await expect(frame.getByRole('heading')).toHaveText('preview-first.example/two');
     expect(new URL(page.url()).origin).toBe(backendOrigin);
