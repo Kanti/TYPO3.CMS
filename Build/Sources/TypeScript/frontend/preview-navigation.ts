@@ -83,15 +83,7 @@ function withToken(url: URL, value: string): URL {
 
 if (script && window.parent !== window) {
   const backend = script.dataset.previewBackend;
-  const hosts: string[] = JSON.parse(script.dataset.previewHosts);
   let token = readToken(new URL(window.location.href));
-
-  function isPreviewHost(url: URL): boolean {
-    if (!['http:', 'https:'].includes(url.protocol)) {
-      return false;
-    }
-    return hosts.includes(url.host.toLowerCase());
-  }
 
   function post(message: Record<string, unknown>): void {
     window.parent.postMessage(message, backend);
@@ -215,7 +207,8 @@ if (script && window.parent !== window) {
       post({ type: 'typo3:preview:navigate', url: withoutToken(url).href });
       return;
     }
-    if (!isPreviewHost(url)) {
+    // The origin of this page is a host of the preview; a blob: address shares it but takes no token
+    if (!['http:', 'https:'].includes(url.protocol)) {
       return;
     }
     if (destinationToken === token) {

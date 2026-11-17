@@ -21,6 +21,8 @@ use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Test;
 use TYPO3\CMS\Core\Http\Uri;
 use TYPO3\CMS\Core\Preview\PreviewScope;
+use TYPO3\CMS\Core\Security\ContentSecurityPolicy\SourceScheme;
+use TYPO3\CMS\Core\Security\ContentSecurityPolicy\UriValue;
 use TYPO3\TestingFramework\Core\Unit\UnitTestCase;
 
 final class PreviewScopeTest extends UnitTestCase
@@ -184,5 +186,63 @@ final class PreviewScopeTest extends UnitTestCase
         self::assertTrue($scope->allowsUri(new Uri('https://xn--bcher-kva.example:8443/page')));
         self::assertTrue($scope->allowsUri(new Uri('https://bücher.example:8443/page')));
         self::assertFalse($scope->allowsUri(new Uri('https://xn--bcher-kva.example/page')));
+    }
+
+    /**
+     * @return list<array{site: string, host: string, origin: string}>
+     */
+    private static function basesOfSites(int $count): array
+    {
+        $bases = [];
+        for ($i = 1; $i <= $count; $i++) {
+            $bases[] = ['site' => 'site' . $i, 'host' => 'site' . $i . '.example', 'origin' => 'https://site' . $i . '.example'];
+        }
+        return $bases;
+    }
+
+    /**
+     * The backend page names every origin of the preview in frame-src, so its frame may
+     * move to any host of the preview.
+     */
+    #[Test]
+    public function frameSourcesAreTheOriginsUpToTheLimit(): void
+    {
+        $sources = new PreviewScope(self::basesOfSites(PreviewScope::MAX_FRAME_ORIGINS))->getFrameSources();
+
+        self::assertCount(PreviewScope::MAX_FRAME_ORIGINS, $sources);
+        self::assertEquals(new UriValue('https://site1.example'), $sources[0]);
+    }
+
+    /**
+     * An administrator of many sites would get a frame-src header longer than common header
+     * buffers of web servers (about 8 KB for 200 origins). Above the limit the backend page
+     * allows the schemes of the origins instead of the list.
+     */
+    #[Test]
+    public function frameSourcesAreTheSchemesAboveTheLimit(): void
+    {
+        $sources = new PreviewScope(self::basesOfSites(PreviewScope::MAX_FRAME_ORIGINS + 1))->getFrameSources();
+
+        self::assertSame([SourceScheme::https], $sources);
+    }
+
+    #[Test]
+    public function frameSourcesAboveTheLimitAllowPlainHttpOnlyWhereASiteUsesIt(): void
+    {
+        $bases = self::basesOfSites(PreviewScope::MAX_FRAME_ORIGINS);
+        $bases[] = ['site' => 'legacy', 'host' => 'legacy.example', 'origin' => 'http://legacy.example'];
+
+        $sources = new PreviewScope($bases)->getFrameSources();
+
+        self::assertSame([SourceScheme::https, SourceScheme::http], $sources);
+    }
+
+    #[Test]
+    public function frameSourcesCountEachOriginOnce(): void
+    {
+        $bases = self::basesOfSites(PreviewScope::MAX_FRAME_ORIGINS);
+        $bases[] = ['site' => 'site1-de', 'host' => 'site1.example', 'origin' => 'https://site1.example'];
+
+        self::assertCount(PreviewScope::MAX_FRAME_ORIGINS, new PreviewScope($bases)->getFrameSources());
     }
 }

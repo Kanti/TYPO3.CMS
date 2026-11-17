@@ -39,7 +39,6 @@ use TYPO3\CMS\Core\Security\ContentSecurityPolicy\Mutation;
 use TYPO3\CMS\Core\Security\ContentSecurityPolicy\MutationCollection;
 use TYPO3\CMS\Core\Security\ContentSecurityPolicy\MutationMode;
 use TYPO3\CMS\Core\Security\ContentSecurityPolicy\PolicyRegistry;
-use TYPO3\CMS\Core\Security\ContentSecurityPolicy\UriValue;
 
 /**
  * The preview page of the backend: the site in a frame, loaded with a
@@ -79,9 +78,9 @@ final readonly class PreviewController
         } catch (PreviewAccessDeniedException) {
             return $this->createDeniedResponse();
         }
-        foreach ($preview->scope->getOrigins() as $origin) {
+        foreach ($preview->scope->getFrameSources() as $source) {
             $this->policyRegistry->appendMutationCollection(new MutationCollection(
-                new Mutation(MutationMode::Extend, Directive::FrameSrc, new UriValue($origin))
+                new Mutation(MutationMode::Extend, Directive::FrameSrc, $source)
             ));
         }
         $view = $this->viewFactory->create($request);

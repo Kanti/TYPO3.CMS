@@ -20,6 +20,8 @@ namespace TYPO3\CMS\Core\Preview;
 use GuzzleHttp\Psr7\UriResolver;
 use Psr\Http\Message\UriInterface;
 use TYPO3\CMS\Core\Http\Uri;
+use TYPO3\CMS\Core\Security\ContentSecurityPolicy\SourceScheme;
+use TYPO3\CMS\Core\Security\ContentSecurityPolicy\UriValue;
 
 /**
  * The sites and hosts a preview token is valid on. It is not part of the token:
@@ -30,6 +32,12 @@ use TYPO3\CMS\Core\Http\Uri;
  */
 final readonly class PreviewScope
 {
+    /**
+     * More origins than this make the frame-src header of the backend page longer than
+     * common header buffers of web servers allow (about 8 KB for 200 origins)
+     */
+    public const MAX_FRAME_ORIGINS = 50;
+
     /**
      * @param list<array{site: string, host: string, origin: string}> $bases
      *        the bases of the site languages: site identifier, host (with non-default
@@ -56,6 +64,28 @@ final readonly class PreviewScope
     public function getOrigins(): array
     {
         return array_values(array_filter(array_unique(array_column($this->bases, 'origin'))));
+    }
+
+    /**
+     * What the backend page allows its preview frame to load: every origin of the scope,
+     * or above MAX_FRAME_ORIGINS only their schemes.
+     *
+     * @return list<UriValue|SourceScheme>
+     */
+    public function getFrameSources(): array
+    {
+        $origins = $this->getOrigins();
+        if (count($origins) <= self::MAX_FRAME_ORIGINS) {
+            return array_map(static fn(string $origin): UriValue => new UriValue($origin), $origins);
+        }
+        $schemes = [SourceScheme::https];
+        foreach ($origins as $origin) {
+            if (str_starts_with($origin, 'http://')) {
+                $schemes[] = SourceScheme::http;
+                break;
+            }
+        }
+        return $schemes;
     }
 
     public function includesSite(string $identifier): bool

@@ -29,7 +29,6 @@ use TYPO3\CMS\Core\Exception\Page\RootLineException;
 use TYPO3\CMS\Core\Page\ResourceHashCollection;
 use TYPO3\CMS\Core\Preview\PreviewGroupFilter;
 use TYPO3\CMS\Core\Preview\PreviewRejection;
-use TYPO3\CMS\Core\Preview\PreviewScope;
 use TYPO3\CMS\Core\Preview\PreviewToken;
 use TYPO3\CMS\Core\Preview\PreviewTokenRejectedException;
 use TYPO3\CMS\Core\Routing\PageArguments;
@@ -139,7 +138,6 @@ final readonly class PreviewAccessScope implements MiddlewareInterface
         $script = '<script type="module" src="' . htmlspecialchars((string)$this->resourcePublisher->generateUri($resource, $request)) . '"'
             . ' nonce="' . htmlspecialchars($nonce) . '"' . $integrity
             . ' data-preview-backend="' . htmlspecialchars($token->backendOrigin) . '"'
-            . ' data-preview-hosts="' . htmlspecialchars(json_encode($this->getHosts($request), JSON_THROW_ON_ERROR)) . '"'
             . ' data-preview-expires="' . $token->expires . '"'
             . ' data-preview-page="' . $pageId . '"></script>';
         $content = (string)$response->getBody();
@@ -147,14 +145,5 @@ final readonly class PreviewAccessScope implements MiddlewareInterface
         $content = $position === false ? $content . $script : substr_replace($content, $script, $position, 0);
         $response = $response->withBody($this->streamFactory->createStream($content));
         return $response->hasHeader('Content-Length') ? $response->withHeader('Content-Length', (string)strlen($content)) : $response;
-    }
-
-    /**
-     * @return list<string>
-     */
-    private function getHosts(ServerRequestInterface $request): array
-    {
-        $scope = $request->getAttribute(PreviewAccess::SCOPE_ATTRIBUTE);
-        return $scope instanceof PreviewScope ? $scope->getHosts() : [];
     }
 }

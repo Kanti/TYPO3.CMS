@@ -46,6 +46,7 @@ use TYPO3\CMS\Core\Security\ContentSecurityPolicy\Mutation;
 use TYPO3\CMS\Core\Security\ContentSecurityPolicy\MutationCollection;
 use TYPO3\CMS\Core\Security\ContentSecurityPolicy\MutationMode;
 use TYPO3\CMS\Core\Security\ContentSecurityPolicy\PolicyRegistry;
+use TYPO3\CMS\Core\Security\ContentSecurityPolicy\SourceInterface;
 use TYPO3\CMS\Core\Security\ContentSecurityPolicy\UriValue;
 use TYPO3\CMS\Core\Site\Entity\Site;
 use TYPO3\CMS\Core\Site\SiteFinder;
@@ -215,13 +216,13 @@ final readonly class PreviewController
             }
             return json_encode($this->previewTokenIssuer->getPlainFrameSettings($request, $uri, $pageUid), JSON_THROW_ON_ERROR);
         }
-        foreach ($preview->scope->getOrigins() as $origin) {
-            $this->allowFrameSource(new UriValue($origin));
+        foreach ($preview->scope->getFrameSources() as $source) {
+            $this->allowFrameSource($source);
         }
         return json_encode($this->previewTokenIssuer->getFrameSettings($preview, $pageUid), JSON_THROW_ON_ERROR);
     }
 
-    private function allowFrameSource(UriValue $source): void
+    private function allowFrameSource(SourceInterface $source): void
     {
         $this->policyRegistry->appendMutationCollection(new MutationCollection(
             new Mutation(MutationMode::Extend, Directive::FrameSrc, $source)

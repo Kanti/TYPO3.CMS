@@ -913,17 +913,34 @@ final class PreviewAccessTest extends FunctionalTestCase
         self::assertStringContainsString('href="http://second.example/"', $body);
     }
 
+    /**
+     * The navigation script decides only for addresses on the origin of its own page, and
+     * that origin is a host of the preview. It needs no list of hosts, so scripts of the
+     * site do not learn every host the editor may preview.
+     */
     #[Test]
-    public function navigationScriptNamesTheHostsTheEditorMayPreviewNow(): void
+    public function navigationScriptNamesNoHosts(): void
     {
-        self::assertSame(['first.example', 'second.example'], $this->getNavigationHosts($this->preview('https://first.example/', $this->sign())));
-        self::assertSame(['first.example'], $this->getNavigationHosts($this->preview('https://first.example/', $this->signForEditor())));
-        self::assertSame(['first.example', 'second.example'], $this->getNavigationHosts($this->preview('https://first.example/', $this->signForVisitor())));
-        self::assertSame(['first.example'], $this->getNavigationHosts($this->preview('https://first.example/', $this->signForVisitor(editorId: 2))));
+        $body = (string)$this->preview('https://first.example/', $this->sign())->getBody();
+
+        self::assertSame(1, preg_match('/<script\b[^>]*\bdata-preview-backend="[^"]*"[^>]*>/', $body, $tag));
+        self::assertStringNotContainsString('data-preview-hosts', $tag[0]);
+    }
+
+    /**
+     * The hosts of the preview are resolved on every request from the rights the editor
+     * has now: once the editor gets a mount on the second site, its links there carry the
+     * token.
+     */
+    #[Test]
+    public function linksFollowTheHostsTheEditorMayPreviewNow(): void
+    {
+        $jwt = $this->signForEditor();
+        self::assertStringContainsString('href="http://second.example/"', (string)$this->preview('https://first.example/', $jwt)->getBody());
 
         $this->get(ConnectionPool::class)->getConnectionForTable('be_groups')->update('be_groups', ['db_mountpoints' => '1,7'], ['uid' => 1]);
 
-        self::assertSame(['first.example', 'second.example'], $this->getNavigationHosts($this->preview('https://first.example/', $this->signForEditor())));
+        self::assertStringContainsString('href="http://second.example/?__t3ct=' . $jwt . '"', (string)$this->preview('https://first.example/', $jwt)->getBody());
     }
 
     #[Test]
@@ -1267,7 +1284,6 @@ final class PreviewAccessTest extends FunctionalTestCase
         $body = (string)$response->getBody();
         self::assertStringContainsString('Hidden books', $body);
         self::assertStringContainsString('href="/?__t3ct=' . $jwt . '"', $body);
-        self::assertContains('xn--bcher-kva.example', $this->getNavigationHosts($response));
     }
 
     /**
@@ -1410,15 +1426,6 @@ final class PreviewAccessTest extends FunctionalTestCase
         return new PreviewTokenService(new SystemClock())
             ->sign($profile ?? $this->createProfile(), self::BACKEND, self::USER_AGENT, $userId)
             ->jwt;
-    }
-
-    /**
-     * @return list<string>
-     */
-    private function getNavigationHosts(ResponseInterface $response): array
-    {
-        self::assertSame(1, preg_match('/data-preview-hosts="([^"]*)"/', (string)$response->getBody(), $matches));
-        return json_decode(html_entity_decode($matches[1]), true, flags: JSON_THROW_ON_ERROR);
     }
 
     private function logInFrontendUser(): InternalRequestContext

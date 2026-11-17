@@ -131,7 +131,7 @@ async function serve(context: BrowserContext, options: ServeOptions = {}): Promi
         <form id="elsewhere" method="post" action="${second}/posted?__t3ct=${token}"><input type="hidden" name="q" value="x"><button>Order elsewhere</button></form>
         <form id="subscribe" method="post" action="https://preview-outside.example/subscribe"><input type="hidden" name="email" value="editor"><button>Subscribe</button></form>
         <script type="module" src="${url.origin}/modules/frontend/preview-navigation.js"
-          data-preview-backend="${backend}" data-preview-hosts='${JSON.stringify(hosts)}' data-preview-page="${url.pathname === '/two' ? 2 : 1}"></script>`,
+          data-preview-backend="${backend}" data-preview-page="${url.pathname === '/two' ? 2 : 1}"></script>`,
     });
   });
   return site;
