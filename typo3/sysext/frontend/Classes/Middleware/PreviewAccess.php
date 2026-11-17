@@ -89,14 +89,14 @@ final readonly class PreviewAccess implements MiddlewareInterface
         try {
             $token = $this->verify($request);
             $scope = $this->authorize($request, $token);
+            return $this->respond($this->applyProfile($request, $token, $scope), $handler, $token, $scope);
         } catch (PreviewTokenRejectedException $exception) {
-            return $this->createErrorResponse($request, $exception->rejection, $exception->token ?? $token);
+            // Every refusal of the preview ends here, also those of PreviewAccessScope further down the
+            // stack. An invalid preview tells the backend nothing: its token could not be verified, or
+            // the page is on a host outside the preview.
+            $reportedToken = $exception->rejection === PreviewRejection::Invalid ? null : ($exception->token ?? $token);
+            return $this->createErrorResponse($request, $exception->rejection, $reportedToken);
         }
-        if ($scope === null) {
-            // The page on a host outside the preview does not talk to the backend that signed the token
-            return $this->createErrorResponse($request, PreviewRejection::Invalid, null);
-        }
-        return $this->respond($this->applyProfile($request, $token, $scope), $handler, $token, $scope);
     }
 
     /**
@@ -118,11 +118,10 @@ final readonly class PreviewAccess implements MiddlewareInterface
     /**
      * Makes the editor of the token the backend user of the request, or leaves the request
      * without one for a visitor token, and checks that the request is part of the preview.
-     * Returns null for a host outside the preview.
      *
      * @throws PreviewTokenRejectedException
      */
-    private function authorize(ServerRequestInterface $request, PreviewToken $token): ?PreviewScope
+    private function authorize(ServerRequestInterface $request, PreviewToken $token): PreviewScope
     {
         if ($token->userId !== null) {
             $this->assertBackendAccessible($request, $token);
@@ -135,7 +134,8 @@ final readonly class PreviewAccess implements MiddlewareInterface
             $this->context->setAspect('backend.user', new UserAspect());
         }
         if (!$scope->allowsHost(PreviewScope::hostOf($request->getUri()))) {
-            return null;
+            // The page on a host outside the preview does not talk to the backend that signed the token, see process()
+            throw new PreviewTokenRejectedException(PreviewRejection::Invalid, 'Host is not part of the preview', 1794909953);
         }
         $this->assertSiteInScope($request, $scope);
         if ($user !== null) {
@@ -174,14 +174,14 @@ final readonly class PreviewAccess implements MiddlewareInterface
     /**
      * Lets the rest of the stack answer and makes that answer one of the preview: never
      * cached, never indexed, framed only by the backend, and redirects keep the token.
+     * A refusal of PreviewAccessScope leaves through process().
+     *
+     * @throws PreviewTokenRejectedException
      */
     private function respond(ServerRequestInterface $request, RequestHandlerInterface $handler, PreviewToken $token, PreviewScope $scope): ResponseInterface
     {
         try {
             $response = $handler->handle($request);
-        } catch (PreviewTokenRejectedException $exception) {
-            // PreviewAccessScope refuses the page and its groups further down the stack
-            return $this->createErrorResponse($request, $exception->rejection, $token);
         } catch (ImmediateResponseException $exception) {
             // An immediate answer, as extensions send one, is still an answer of the preview
             $response = $exception->getResponse();
