@@ -158,11 +158,12 @@ request, stateless: no session is created and no cookie is set.
     *   -   The site, the permission to show the page and the language
         -   *This page is not part of the preview.*
 
-A frontend user group the editor may not read is only simulated on pages whose
-access restrictions name it. When every check passes, the page is shown as for
-a backend login. Every renewal checks the rights of the editor and the hosts
-of the preview again. Only the editor who opened a preview gets a renewed
-token for it.
+A frontend user group of the token that the editor may not read is only
+simulated on pages whose access restrictions name it. A group that the admin
+panel simulates applies as without a token. When every check passes, the page
+is shown as for a backend login. Every renewal checks the rights of the editor
+and the hosts of the preview again. Only the editor who opened a preview gets a
+renewed token for it.
 
 ..  important::
 
