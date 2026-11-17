@@ -85,35 +85,71 @@ final readonly class PreviewAccess implements MiddlewareInterface
         if ($this->isTopLevelNavigation($request)) {
             return $this->redirectWithoutToken($request);
         }
-        $jwt = $request->getQueryParams()[PreviewTokenService::PARAMETER];
         $token = null;
         try {
-            $token = $this->tokenService->verify(is_string($jwt) ? $jwt : '', $request->getHeaderLine('User-Agent'));
-            if (!$this->isFramed($request)) {
-                throw new PreviewTokenRejectedException(PreviewRejection::NotInFrame, 'Preview is only available in a frame', 1793265772);
-            }
-            if ($token->userId !== null) {
-                $this->assertBackendAccessible($request, $token);
-                $user = $this->backendUserInitializer->initialize($token);
-                $scope = $this->scopeResolver->resolve($user, new Uri($token->backendOrigin));
-            } else {
-                $user = null;
-                $scope = $this->scopeResolver->resolve($this->backendUserInitializer->createEditorOfVisitorToken($token), new Uri($token->backendOrigin));
-                $GLOBALS['BE_USER'] = null;
-                $this->context->setAspect('backend.user', new UserAspect());
-            }
-            if (!$scope->allowsHost(PreviewScope::hostOf($request->getUri()))) {
-                // The page on a host outside the preview does not talk to the backend that signed the token
-                return $this->createErrorResponse($request, PreviewRejection::Invalid, null);
-            }
-            $this->assertSiteInScope($request, $scope);
-            if ($user !== null) {
-                $this->assertLanguageAccessible($request, $token, $user);
-            }
+            $token = $this->verify($request);
+            $scope = $this->authorize($request, $token);
         } catch (PreviewTokenRejectedException $exception) {
             return $this->createErrorResponse($request, $exception->rejection, $exception->token ?? $token);
         }
+        if ($scope === null) {
+            // The page on a host outside the preview does not talk to the backend that signed the token
+            return $this->createErrorResponse($request, PreviewRejection::Invalid, null);
+        }
+        return $this->respond($this->applyProfile($request, $token, $scope), $handler, $token, $scope);
+    }
 
+    /**
+     * The token is one this installation signed for this browser, and it is sent by the
+     * page in the frame or by a request of that page.
+     *
+     * @throws PreviewTokenRejectedException
+     */
+    private function verify(ServerRequestInterface $request): PreviewToken
+    {
+        $jwt = $request->getQueryParams()[PreviewTokenService::PARAMETER];
+        $token = $this->tokenService->verify(is_string($jwt) ? $jwt : '', $request->getHeaderLine('User-Agent'));
+        if (!$this->isFramed($request)) {
+            throw new PreviewTokenRejectedException(PreviewRejection::NotInFrame, 'Preview is only available in a frame', 1793265772, null, $token);
+        }
+        return $token;
+    }
+
+    /**
+     * Makes the editor of the token the backend user of the request, or leaves the request
+     * without one for a visitor token, and checks that the request is part of the preview.
+     * Returns null for a host outside the preview.
+     *
+     * @throws PreviewTokenRejectedException
+     */
+    private function authorize(ServerRequestInterface $request, PreviewToken $token): ?PreviewScope
+    {
+        if ($token->userId !== null) {
+            $this->assertBackendAccessible($request, $token);
+            $user = $this->backendUserInitializer->initialize($token);
+            $scope = $this->scopeResolver->resolve($user, new Uri($token->backendOrigin));
+        } else {
+            $user = null;
+            $scope = $this->scopeResolver->resolve($this->backendUserInitializer->createEditorOfVisitorToken($token), new Uri($token->backendOrigin));
+            $GLOBALS['BE_USER'] = null;
+            $this->context->setAspect('backend.user', new UserAspect());
+        }
+        if (!$scope->allowsHost(PreviewScope::hostOf($request->getUri()))) {
+            return null;
+        }
+        $this->assertSiteInScope($request, $scope);
+        if ($user !== null) {
+            $this->assertLanguageAccessible($request, $token, $user);
+        }
+        return $scope;
+    }
+
+    /**
+     * Sets the simulation of the token, keeps the page out of the page cache and hands token
+     * and scope to the rest of the stack.
+     */
+    private function applyProfile(ServerRequestInterface $request, PreviewToken $token, PreviewScope $scope): ServerRequestInterface
+    {
         $this->context->setAspect('workspace', new WorkspaceAspect($token->profile->workspace));
         $this->context->setAspect('visibility', new VisibilityAspect(
             includeHiddenPages: $token->profile->hiddenPages,
@@ -129,11 +165,18 @@ final readonly class PreviewAccess implements MiddlewareInterface
         $this->context->setAspect('frontend.preview', new PreviewAspect(!$token->profile->isVisitorView()));
         $cacheInstruction = $request->getAttribute('frontend.cache.instruction', new CacheInstruction());
         $cacheInstruction->disableCache('EXT:frontend: Preview token bypasses the page cache.');
-        $request = $request
+        return $request
             ->withAttribute(self::ATTRIBUTE, $token)
             ->withAttribute(self::SCOPE_ATTRIBUTE, $scope)
             ->withAttribute('frontend.cache.instruction', $cacheInstruction);
+    }
 
+    /**
+     * Lets the rest of the stack answer and makes that answer one of the preview: never
+     * cached, never indexed, framed only by the backend, and redirects keep the token.
+     */
+    private function respond(ServerRequestInterface $request, RequestHandlerInterface $handler, PreviewToken $token, PreviewScope $scope): ResponseInterface
+    {
         try {
             $response = $handler->handle($request);
         } catch (PreviewTokenRejectedException $exception) {
