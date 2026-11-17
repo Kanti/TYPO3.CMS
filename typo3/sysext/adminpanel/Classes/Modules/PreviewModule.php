@@ -97,18 +97,19 @@ class PreviewModule extends AbstractModule implements RequestEnricherInterface, 
         $simulateGroupByRequest = (int)($request->getQueryParams()['ADMCMD_simUser'] ?? 0);
         $simulateTimeByRequest = (int)($request->getQueryParams()['ADMCMD_simTime'] ?? 0);
         $simulateGroup = $simulateGroupByRequest ?: (int)$this->getConfigOptionForModule('simulateUserGroup');
+        $simulateDate = $simulateTimeByRequest;
         // So does the simulation a preview token of the backend carries: its frontend login
         // is applied after the admin panel, its date is applied here again
         $previewToken = $request->getAttribute(PreviewAccess::ATTRIBUTE);
         if ($previewToken instanceof PreviewToken) {
-            $simulateTimeByRequest = $previewToken->profile->date;
+            $simulateDate = $previewToken->profile->date;
             if ($previewToken->profile->loggedIn) {
                 $simulateGroup = 0;
             }
         }
         $this->config = [
             'showHiddenPages' => (bool)$this->getConfigOptionForModule('showHiddenPages'),
-            'simulateDate' => $simulateTimeByRequest ?: (int)$this->getConfigOptionForModule('simulateDate'),
+            'simulateDate' => $simulateDate ?: (int)$this->getConfigOptionForModule('simulateDate'),
             'showHiddenRecords' => (bool)$this->getConfigOptionForModule('showHiddenRecords'),
             'showScheduledRecords' => (bool)$this->getConfigOptionForModule('showScheduledRecords'),
             'simulateUserGroup' => $simulateGroup,
