@@ -54,6 +54,7 @@ class Preview extends Workspaces {
   override ajaxRoute: string = 'workspace_preview';
   private currentSlidePosition: number = 100;
   private readonly elements: { [key: string]: HTMLElement } = {};
+  private readonly previewFrames = new Map<HTMLElement, PreviewFrame>();
 
   constructor() {
     super();
@@ -72,7 +73,7 @@ class Preview extends Workspaces {
    */
   private initializePreviewFrames(): void {
     document.querySelectorAll<HTMLIFrameElement>('iframe[data-preview-settings]').forEach((frame: HTMLIFrameElement): void => {
-      new PreviewFrame(frame, JSON.parse(frame.dataset.previewSettings));
+      this.previewFrames.set(frame, new PreviewFrame(frame, JSON.parse(frame.dataset.previewSettings)));
     });
   }
 
@@ -148,6 +149,15 @@ class Preview extends Workspaces {
   }
 
   /**
+   * Loads the workspace frame again at the address it shows, with a fresh token. The
+   * editor may have left the page the frame was opened with, and its first token may
+   * have expired.
+   */
+  private reloadWorkspaceView(): void {
+    this.previewFrames.get(this.elements.workspaceView)?.reload();
+  }
+
+  /**
    * Renders the discard window
    */
   private renderDiscardWindow(): void {
@@ -180,8 +190,7 @@ class Preview extends Workspaces {
         ], Identifiers.topbar).then(async (response: AjaxResponse): Promise<void> => {
           modal.hideModal();
           this.renderStageButtons((await response.resolve())[1].result);
-          // Reloading live view IFRAME
-          this.elements.workspaceView.setAttribute('src', this.elements.workspaceView.getAttribute('src'));
+          this.reloadWorkspaceView();
         });
       }
     });
@@ -217,8 +226,7 @@ class Preview extends Workspaces {
         ], Identifiers.topbar).then(async (response: AjaxResponse): Promise<void> => {
           modal.hideModal();
           this.renderStageButtons((await response.resolve())[1].result);
-          // Reloading live view IFRAME
-          this.elements.workspaceView.setAttribute('src', this.elements.workspaceView.getAttribute('src'));
+          this.reloadWorkspaceView();
         });
       }
     });
