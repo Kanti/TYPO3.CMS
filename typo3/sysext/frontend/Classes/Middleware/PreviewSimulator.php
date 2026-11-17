@@ -58,13 +58,8 @@ readonly class PreviewSimulator implements MiddlewareInterface
         // A preview token brings date, visibility and workspace along, see PreviewAccess
         $previewToken = $request->getAttribute(PreviewAccess::ATTRIBUTE);
         if ($previewToken instanceof PreviewToken) {
-            if (!$previewToken->profile->loggedIn) {
-                // An editor keeps a frontend login of the frame, as with a backend login. A token without
-                // an editor shows the page as a visitor sees it, who is not logged in: "-1" applies
-                if ($previewToken->userId === null) {
-                    $this->context->setAspect('frontend.user', new UserAspect(null, [0, -1]));
-                }
-            } else {
+            // An editor without a simulated login keeps a frontend login of the frame, as with a backend login
+            if ($previewToken->profile->loggedIn) {
                 // Only the groups the editor may simulate on this page, see PreviewAccessScope
                 $groups = $request->getAttribute(PreviewAccessScope::GROUPS_ATTRIBUTE, []);
                 $this->replaceUserGroups($request, $groups);
@@ -72,6 +67,9 @@ readonly class PreviewSimulator implements MiddlewareInterface
                     // A login without any group still counts as login: "-2" applies, "-1" does not
                     $this->context->setAspect('frontend.user', new UserAspect($request->getAttribute('frontend.user'), [0, -2]));
                 }
+            } elseif ($previewToken->userId === null) {
+                // A token without an editor shows the page as a visitor sees it, who is not logged in: "-1" applies
+                $this->context->setAspect('frontend.user', new UserAspect(null, [0, -1]));
             }
             if ($this->editorSeesHiddenPage($previewToken, $request)) {
                 $this->context->setAspect('visibility', $this->context->getAspect('visibility')->withIncludeHiddenPages(true));
