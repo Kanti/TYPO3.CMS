@@ -18,6 +18,17 @@ on. Where the backend login cookie does not reach the site, the preview uses a
 :php:`$GLOBALS['TYPO3_CONF_VARS']['BE']['cookieDomain']` is no longer needed
 for the previews.
 
+What to check
+-------------
+
+*   Shared caches, CDNs and reverse proxies have to pass requests with
+    :code:`__t3ct` unchanged, see the server configuration below.
+*   A :http:`Content-Security-Policy` of the web server has to allow the
+    backend in :http:`frame-ancestors`.
+*   Extensions that build preview links with :php:`PreviewUriBuilder`, listen
+    to :php:`RetrievedPreviewUrlEvent` or override the template of the module
+    :guilabel:`Content > Preview` find what changes for them under PHP API.
+
 Where previews use a preview token
 ----------------------------------
 
@@ -73,7 +84,9 @@ PHP API
     returns the address of the page on the site.
 *   The new internal method :php:`PreviewUriBuilder::buildBackendPreviewUri()`
     returns the preview page where a preview token is needed. The buttons of
-    the backend use it.
+    the backend use it. Its sibling
+    :php:`PreviewUriBuilder::buildBackendPreviewUriFor()` does the same for an
+    address that is already built, so the events of the builder run once.
 *   :php:`PreviewUriBuilder::buildDispatcherDataAttributes()` and the other
     methods that build the attributes of a preview button follow the same
     rule, also in extensions.
@@ -147,7 +160,8 @@ request, stateless: no session is created and no cookie is set.
 A frontend user group the editor may not read is only simulated on pages whose
 access restrictions name it. When every check passes, the page is shown as for
 a backend login. Every renewal checks the rights of the editor and the hosts
-of the preview again.
+of the preview again. Only the editor who opened a preview gets a renewed
+token for it.
 
 ..  important::
 
@@ -175,9 +189,11 @@ Links, redirects and forms
     shortcuts and of :composer:`typo3/cms-redirects` keep the token for the
     hosts of the preview, never for any other host. The plain HTTP address of
     a host whose sites run on HTTPS only gets no token either, as the browser
-    would send it in the clear. Only the token is added or removed; the rest
-    of the address keeps its bytes, and a redirect to another host without a
-    token is left as it is.
+    would send it in the clear. Neither does an address that a browser reads
+    differently than it is written: one with a tab or a line break, a control
+    character or a space at either end, or a backslash before its query.
+    Only the token is added or removed; the rest of the address keeps its
+    bytes, and a redirect to another host without a token is left as it is.
 *   Redirects of :composer:`typo3/cms-redirects` that respect query parameters
     ignore the token.
 *   A small script keeps the token in navigations started by scripts and asks
@@ -229,8 +245,8 @@ Requests
     (:http:`Sec-Fetch-Site: same-origin`), such as fetch, XHR and elements on
     pages of TYPO3; requests from anywhere else are refused.
 *   A window or tab opened with a token, such as a link opened in a new tab or
-    a target :html:`_blank` or :html:`_top`, is redirected to the same address
-    without the token.
+    with the target :html:`_blank`, is redirected to the address it requested
+    without the token; every other byte of the address stays as it is.
 *   Requests without :code:`__t3ct` behave as before.
 
 In a frame on another domain than the backend, browsers block the cookies of a
