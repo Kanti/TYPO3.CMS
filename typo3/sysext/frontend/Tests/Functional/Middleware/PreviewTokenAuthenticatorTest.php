@@ -1077,41 +1077,43 @@ final class PreviewTokenAuthenticatorTest extends FunctionalTestCase
         self::assertSame('https://outside.example/', $this->preview('https://first.example/away', $jwt)->getHeaderLine('Location'));
     }
 
-    #[Test]
-    public function redirectToAnotherHostKeepsItsAddressAsItIs(): void
+    public static function targetOfAnExternalUrlPageDataProvider(): \Generator
     {
-        $target = 'https://sso.example.org/login?utm.source=x&id=1&id=2&flag&items[]=1&sig=ab%2bcd';
-        $this->get(ConnectionPool::class)->getConnectionForTable('pages')
-            ->insert('pages', ['uid' => 9, 'pid' => 1, 'title' => 'Login', 'slug' => '/login', 'doktype' => 3, 'link' => $target]);
-
-        $response = $this->preview('https://first.example/login', $this->sign());
-
-        self::assertSame(303, $response->getStatusCode());
-        self::assertSame($target, $response->getHeaderLine('Location'));
+        yield 'redirect to another host keeps its address as it is' => [
+            'https://sso.example.org/login?utm.source=x&id=1&id=2&flag&items[]=1&sig=ab%2bcd',
+            'https://sso.example.org/login?utm.source=x&id=1&id=2&flag&items[]=1&sig=ab%2bcd',
+        ];
+        yield 'redirect to a host of the preview keeps the query and adds only the token' => [
+            'https://second.example/?utm.source=x&id=1&id=2&flag&items[]=1&a|b=2&sig=ab%2bcd',
+            'https://second.example/?utm.source=x&id=1&id=2&flag&items[]=1&a|b=2&sig=ab%2bcd&__t3ct={jwt}',
+        ];
+        yield 'redirect to another host loses only a token' => [
+            'https://outside.example/?flag&__t3ct=leaked&q=a+b',
+            'https://outside.example/?flag&q=a+b',
+        ];
+        yield 'redirect on plain HTTP to a host whose site uses HTTPS loses the token' => [
+            'http://first.example/page',
+            'http://first.example/page',
+        ];
     }
 
+    /**
+     * A page of the type "Link to external URL" redirects to its target and changes no
+     * more than the token. A target on plain HTTP of a host whose site uses HTTPS gets
+     * no token, as the browser would send it in the clear.
+     */
     #[Test]
-    public function redirectToAHostOfThePreviewKeepsTheQueryAndAddsOnlyTheToken(): void
+    #[DataProvider('targetOfAnExternalUrlPageDataProvider')]
+    public function externalUrlPageRedirectsToItsTarget(string $target, string $expectedLocation): void
     {
-        $target = 'https://second.example/?utm.source=x&id=1&id=2&flag&items[]=1&a|b=2&sig=ab%2bcd';
         $this->get(ConnectionPool::class)->getConnectionForTable('pages')
-            ->insert('pages', ['uid' => 9, 'pid' => 1, 'title' => 'Second', 'slug' => '/to-second', 'doktype' => 3, 'link' => $target]);
+            ->insert('pages', ['uid' => 9, 'pid' => 1, 'title' => 'Target', 'slug' => '/to-target', 'doktype' => 3, 'link' => $target]);
         $jwt = $this->sign();
 
-        $response = $this->preview('https://first.example/to-second', $jwt);
+        $response = $this->preview('https://first.example/to-target', $jwt);
 
-        self::assertSame($target . '&__t3ct=' . $jwt, $response->getHeaderLine('Location'));
-    }
-
-    #[Test]
-    public function redirectToAnotherHostLosesOnlyAToken(): void
-    {
-        $this->get(ConnectionPool::class)->getConnectionForTable('pages')
-            ->insert('pages', ['uid' => 9, 'pid' => 1, 'title' => 'Leak', 'slug' => '/leak', 'doktype' => 3, 'link' => 'https://outside.example/?flag&__t3ct=leaked&q=a+b']);
-
-        $response = $this->preview('https://first.example/leak', $this->sign());
-
-        self::assertSame('https://outside.example/?flag&q=a+b', $response->getHeaderLine('Location'));
+        self::assertSame(303, $response->getStatusCode());
+        self::assertSame(str_replace('{jwt}', $jwt, $expectedLocation), $response->getHeaderLine('Location'));
     }
 
     /**
@@ -1135,25 +1137,27 @@ final class PreviewTokenAuthenticatorTest extends FunctionalTestCase
         self::assertStringContainsString('href="tel:+49123456"', $body);
     }
 
+    public static function redirectOfAnExtensionWithoutAHostOfThePreviewDataProvider(): \Generator
+    {
+        yield 'redirect to a mail address keeps its address' => ['mailto:info@example.org?subject=Preview'];
+        yield 'redirect to an address a browser reads as another host gets no token' => ['/\evil.example/x'];
+    }
+
     /**
      * A redirect of an extension may lead to an address of another scheme, such as a mail
-     * address. It names no web address and keeps it as it is.
+     * address, which names no web address. It may also lead to an address taken from the
+     * request. A browser reads "/\evil.example/x" as the host evil.example, where a URI
+     * parser would see a path on the host of the request. Both keep their address as it
+     * is and get no token.
      */
     #[Test]
-    public function redirectToAMailAddressKeepsItsAddress(): void
+    #[DataProvider('redirectOfAnExtensionWithoutAHostOfThePreviewDataProvider')]
+    public function redirectOfAnExtensionWithoutAHostOfThePreviewKeepsItsAddress(string $location): void
     {
-        $handler = new class implements RequestHandlerInterface {
-            public function handle(ServerRequestInterface $request): ResponseInterface
-            {
-                return new RedirectResponse('mailto:info@example.org?subject=Preview', 303);
-            }
-        };
-        $jwt = $this->sign();
-
-        $response = $this->processTokenAuthenticator('https://first.example/contact?__t3ct=' . $jwt, ['Sec-Fetch-Dest' => 'iframe'], $handler);
+        $response = $this->processTokenAuthenticator('https://first.example/contact?__t3ct=' . $this->sign(), ['Sec-Fetch-Dest' => 'iframe'], $this->redirectTo($location));
 
         self::assertSame(303, $response->getStatusCode());
-        self::assertSame('mailto:info@example.org?subject=Preview', $response->getHeaderLine('Location'));
+        self::assertSame($location, $response->getHeaderLine('Location'));
     }
 
     /**
@@ -1165,42 +1169,13 @@ final class PreviewTokenAuthenticatorTest extends FunctionalTestCase
     #[Test]
     public function redirectToAMalformedAddressKeepsItsAddressAndTheHeadersOfThePreview(): void
     {
-        $handler = new class implements RequestHandlerInterface {
-            public function handle(ServerRequestInterface $request): ResponseInterface
-            {
-                return new RedirectResponse('https://[first.example/next', 303);
-            }
-        };
-        $jwt = $this->sign();
-
-        $response = $this->processTokenAuthenticator('https://first.example/contact?__t3ct=' . $jwt, ['Sec-Fetch-Dest' => 'iframe'], $handler);
+        $response = $this->processTokenAuthenticator('https://first.example/contact?__t3ct=' . $this->sign(), ['Sec-Fetch-Dest' => 'iframe'], $this->redirectTo('https://[first.example/next'));
 
         self::assertSame(303, $response->getStatusCode());
         self::assertSame('https://[first.example/next', $response->getHeaderLine('Location'));
         self::assertSame('private, no-store', $response->getHeaderLine('Cache-Control'));
         self::assertSame('noindex', $response->getHeaderLine('X-Robots-Tag'));
         self::assertSame(self::FRAME_ANCESTORS, $response->getHeaderLine('Content-Security-Policy'));
-    }
-
-    /**
-     * An extension may redirect to an address taken from the request. A browser reads
-     * "/\evil.example/x" as the host evil.example, so the redirect keeps its address and
-     * gets no token, where a URI parser would see a path on the host of the request.
-     */
-    #[Test]
-    public function redirectToAnAddressABrowserReadsAsAnotherHostGetsNoToken(): void
-    {
-        $handler = new class implements RequestHandlerInterface {
-            public function handle(ServerRequestInterface $request): ResponseInterface
-            {
-                return new RedirectResponse('/\evil.example/x', 303);
-            }
-        };
-
-        $response = $this->processTokenAuthenticator('https://first.example/contact?__t3ct=' . $this->sign(), ['Sec-Fetch-Dest' => 'iframe'], $handler);
-
-        self::assertSame(303, $response->getStatusCode());
-        self::assertSame('/\evil.example/x', $response->getHeaderLine('Location'));
     }
 
     /**
@@ -1261,56 +1236,38 @@ final class PreviewTokenAuthenticatorTest extends FunctionalTestCase
         self::assertStringContainsString('href="/hidden?__t3ct=' . $jwt . '#top"', $body);
     }
 
+    public static function linkToAnExternalUrlPageDataProvider(): \Generator
+    {
+        yield 'link to a host of the preview keeps its address and only gets the token' => [
+            'https://second.example/?utm.source=x&id=1&id=2&flag&items[]=1&a|b=2&sig=ab%2bcd',
+            'https://second.example/?utm.source=x&id=1&id=2&flag&items[]=1&a|b=2&sig=ab%2bcd&__t3ct={jwt}',
+        ];
+        yield 'link on plain HTTP to a host whose site uses HTTPS is rendered without token' => [
+            'http://first.example/page',
+            'http://first.example/page',
+        ];
+    }
+
     /**
      * A link to a host of the preview keeps its address as it is written and only gets the
      * token: a signed address compares it byte by byte, brackets and pipes included,
-     * which an URI object would encode.
+     * which an URI object would encode. An editor may write such a link with "http://"
+     * while the site of that host runs on HTTPS. The browser would send the token in the
+     * clear before the site redirects to HTTPS, so that link gets no token. A site with a
+     * base on plain HTTP keeps the token in its links, see
+     * linksKeepTheTokenOnlyForHostsTheEditorMayPreview().
      */
     #[Test]
-    public function linkToAHostOfThePreviewKeepsItsAddressAndOnlyGetsTheToken(): void
+    #[DataProvider('linkToAnExternalUrlPageDataProvider')]
+    public function linkToAnExternalUrlPageKeepsItsAddressAsItIsWritten(string $target, string $expectedHref): void
     {
-        $target = 'https://second.example/?utm.source=x&id=1&id=2&flag&items[]=1&a|b=2&sig=ab%2bcd';
         $this->get(ConnectionPool::class)->getConnectionForTable('pages')
             ->insert('pages', ['uid' => 42, 'pid' => 1, 'title' => 'Signed', 'slug' => '/signed', 'doktype' => 3, 'link' => $target]);
         $jwt = $this->sign();
 
         $body = (string)$this->preview('https://first.example/', $jwt)->getBody();
 
-        self::assertStringContainsString('href="' . htmlspecialchars($target . '&__t3ct=' . $jwt) . '"', $body);
-    }
-
-    /**
-     * An editor may write a link to a host of the preview with "http://" while the site of
-     * that host runs on HTTPS. The browser would send the token in the clear before the
-     * site redirects to HTTPS, so the link is rendered as it is written, without the token.
-     * A site with a base on plain HTTP keeps the token in its links, see
-     * linksKeepTheTokenOnlyForHostsTheEditorMayPreview().
-     */
-    #[Test]
-    public function linkOnPlainHttpToAHostWhoseSiteUsesHttpsIsRenderedWithoutToken(): void
-    {
-        $this->get(ConnectionPool::class)->getConnectionForTable('pages')
-            ->insert('pages', ['uid' => 42, 'pid' => 1, 'title' => 'Insecure', 'slug' => '/insecure', 'doktype' => 3, 'link' => 'http://first.example/page']);
-
-        $body = (string)$this->preview('https://first.example/', $this->sign())->getBody();
-
-        self::assertStringContainsString('href="http://first.example/page"', $body);
-    }
-
-    /**
-     * A redirect to the plain HTTP address of a host whose site runs on HTTPS leads there
-     * without the token, for the same reason.
-     */
-    #[Test]
-    public function redirectOnPlainHttpToAHostWhoseSiteUsesHttpsLosesTheToken(): void
-    {
-        $this->get(ConnectionPool::class)->getConnectionForTable('pages')
-            ->insert('pages', ['uid' => 9, 'pid' => 1, 'title' => 'Insecure', 'slug' => '/to-insecure', 'doktype' => 3, 'link' => 'http://first.example/page']);
-
-        $response = $this->preview('https://first.example/to-insecure', $this->sign());
-
-        self::assertSame(303, $response->getStatusCode());
-        self::assertSame('http://first.example/page', $response->getHeaderLine('Location'));
+        self::assertStringContainsString('href="' . htmlspecialchars(str_replace('{jwt}', $jwt, $expectedHref)) . '"', $body);
     }
 
     /**
@@ -1469,6 +1426,18 @@ final class PreviewTokenAuthenticatorTest extends FunctionalTestCase
             }
         };
         return $this->get(PreviewTokenAuthenticator::class)->process($request->withAttribute('normalizedParams', NormalizedParams::createFromRequest($request)), $handler);
+    }
+
+    private function redirectTo(string $location): RequestHandlerInterface
+    {
+        return new readonly class ($location) implements RequestHandlerInterface {
+            public function __construct(private string $location) {}
+
+            public function handle(ServerRequestInterface $request): ResponseInterface
+            {
+                return new RedirectResponse($this->location, 303);
+            }
+        };
     }
 
     private function sign(?PreviewProfile $profile = null, int $userId = 1): string
