@@ -149,6 +149,8 @@ readonly class PreviewSimulator implements MiddlewareInterface
     /**
      * The editor of a token sees a hidden page as with a backend login, unless the token
      * shows all hidden pages anyway
+     *
+     * @internal
      */
     protected function editorSeesHiddenPage(PreviewToken $previewToken, ServerRequestInterface $request): bool
     {
@@ -215,6 +217,7 @@ readonly class PreviewSimulator implements MiddlewareInterface
      * so the preview shows exactly what members of these groups see.
      *
      * @param list<int> $groups
+     * @internal
      */
     protected function replaceUserGroups(ServerRequestInterface $request, array $groups): void
     {

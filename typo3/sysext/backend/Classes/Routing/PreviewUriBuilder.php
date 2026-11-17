@@ -69,6 +69,9 @@ class PreviewUriBuilder
     public const OPTION_WINDOW_SCOPE_GLOBAL = 'global';
 
     protected array $record = [];
+    /**
+     * @internal
+     */
     protected array $previewedRecord = [];
     protected string $table = 'pages';
     protected int $pageId;
@@ -285,6 +288,8 @@ class PreviewUriBuilder
      * its subpages, in a backend user section or a disabled language, or if the previewed
      * record is hidden or not published at the moment. Preview links built outside of the
      * backend, for example in the frontend, never need a token.
+     *
+     * @internal
      */
     protected function requiresPreviewToken(UriInterface $uri): bool
     {
@@ -333,6 +338,8 @@ class PreviewUriBuilder
      * backend login cookie whether to show it. Where the cookie does not reach the site,
      * the backend has to decide before the click, so it repeats the frontend rules for
      * pages that need a backend login.
+     *
+     * @internal
      */
     protected function pageNeedsBackendLogin(): bool
     {
@@ -370,6 +377,9 @@ class PreviewUriBuilder
         return false;
     }
 
+    /**
+     * @internal
+     */
     protected function isPreviewedRecordOutOfSight(): bool
     {
         if ($this->table === 'pages') {

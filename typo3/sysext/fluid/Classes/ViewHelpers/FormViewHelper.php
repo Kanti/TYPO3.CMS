@@ -431,6 +431,8 @@ class FormViewHelper extends AbstractFormViewHelper
     /**
      * A form sent via HTTP GET replaces the query of its action, including the preview
      * token, so the token goes into a hidden field
+     *
+     * @internal
      */
     protected function renderPreviewTokenHiddenField(): string
     {
@@ -450,6 +452,8 @@ class FormViewHelper extends AbstractFormViewHelper
     /**
      * A form sent via HTTP POST keeps the query of its action, so the preview token goes
      * there, also for an action written as an address instead of built by a typolink
+     *
+     * @internal
      */
     protected function addPreviewTokenToAction(): void
     {
@@ -475,6 +479,8 @@ class FormViewHelper extends AbstractFormViewHelper
     /**
      * The token travels only to the hosts of the preview, never to another host such as an
      * external search or payment service
+     *
+     * @internal
      */
     protected function isActionOnAHostOfThePreview(): bool
     {
@@ -489,6 +495,8 @@ class FormViewHelper extends AbstractFormViewHelper
     /**
      * A preview is shown in a frame of the backend, a form targeting the window around
      * it would replace the backend with the page
+     *
+     * @internal
      */
     protected function keepPreviewInFrame(): void
     {
@@ -502,6 +510,9 @@ class FormViewHelper extends AbstractFormViewHelper
         $this->tag->addAttribute('target', '_self');
     }
 
+    /**
+     * @internal
+     */
     protected function getPreviewToken(): ?PreviewToken
     {
         $previewToken = $this->renderingContext->getAttribute(ServerRequestInterface::class)->getAttribute(PreviewAccess::ATTRIBUTE);
