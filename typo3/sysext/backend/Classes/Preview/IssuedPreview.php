@@ -33,6 +33,6 @@ final readonly class IssuedPreview
     public function __construct(
         public PreviewToken $token,
         public UriInterface $uri,
-        public PreviewHosts $scope,
+        public PreviewHosts $hosts,
     ) {}
 }

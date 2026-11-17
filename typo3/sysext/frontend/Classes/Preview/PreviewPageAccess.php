@@ -43,8 +43,8 @@ final readonly class PreviewPageAccess
     ) {}
 
     /**
-     * A token that shows live simulates no group and shows only what visitors see, so the
-     * page needs no check of the editor.
+     * A visitor token simulates no group and shows only what visitors see, so the page
+     * needs no check of the editor.
      *
      * @return list<int> the simulated groups the editor may simulate on the page
      * @throws PreviewTokenRejectedException if the editor may not show the page

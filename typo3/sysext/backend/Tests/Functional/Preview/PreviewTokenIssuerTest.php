@@ -68,11 +68,11 @@ final class PreviewTokenIssuerTest extends FunctionalTestCase
 
         $preview = $this->get(PreviewTokenIssuer::class)->issue($this->createRequest(), $user, new Uri('https://first.example/de/?a=1&ADMCMD_simTime=1796083200&ADMCMD_simUser=5'), 2);
 
-        self::assertSame(['first.example', 'second.example:8443'], $preview->scope->getHosts());
-        self::assertSame(['https://first.example', 'https://second.example:8443'], $preview->scope->getOrigins());
+        self::assertSame(['first.example', 'second.example:8443'], $preview->hosts->getHosts());
+        self::assertSame(['https://first.example', 'https://second.example:8443'], $preview->hosts->getOrigins());
         self::assertSame('https://backend.example', $preview->token->backendOrigin);
-        self::assertTrue($preview->scope->includesSite('first'));
-        self::assertTrue($preview->scope->includesSite('second'));
+        self::assertTrue($preview->hosts->includesSite('first'));
+        self::assertTrue($preview->hosts->includesSite('second'));
         self::assertFalse($preview->token->isVisitorWithoutBackendUser());
         self::assertSame(1, $preview->token->editorId);
         self::assertSame(1796083200, $preview->token->profile->date);
@@ -91,9 +91,9 @@ final class PreviewTokenIssuerTest extends FunctionalTestCase
 
         $preview = $this->get(PreviewTokenIssuer::class)->issue($this->createRequest(), $user, new Uri('https://first.example/'), 2);
 
-        self::assertSame(['first.example'], $preview->scope->getHosts());
-        self::assertTrue($preview->scope->includesSite('first'));
-        self::assertFalse($preview->scope->includesSite('second'));
+        self::assertSame(['first.example'], $preview->hosts->getHosts());
+        self::assertTrue($preview->hosts->includesSite('first'));
+        self::assertFalse($preview->hosts->includesSite('second'));
         self::assertSame(['first.example'], $this->get(PreviewTokenIssuer::class)->getFrameSettings($preview, 2)['hosts']);
         self::assertSame(['first.example'], $this->get(PreviewTokenIssuer::class)->getFrameSettings($preview, 2)['httpsHosts']);
         self::assertFalse($preview->token->isVisitorWithoutBackendUser());
@@ -323,7 +323,7 @@ final class PreviewTokenIssuerTest extends FunctionalTestCase
 
         self::assertTrue($preview->token->isVisitorWithoutBackendUser());
         self::assertSame(1, $preview->token->editorId);
-        self::assertSame(['first.example', 'second.example:8443'], $preview->scope->getHosts());
+        self::assertSame(['first.example', 'second.example:8443'], $preview->hosts->getHosts());
     }
 
     #[Test]
@@ -350,8 +350,8 @@ final class PreviewTokenIssuerTest extends FunctionalTestCase
 
         $renewed = $issuer->renew($this->createRequest(), $this->setUpBackendUser(9), $previous->token->jwt, new Uri('https://first.example/'), 2);
 
-        self::assertSame(['first.example'], $previous->scope->getHosts());
-        self::assertSame(['first.example', 'second.example:8443'], $renewed->scope->getHosts());
+        self::assertSame(['first.example'], $previous->hosts->getHosts());
+        self::assertSame(['first.example', 'second.example:8443'], $renewed->hosts->getHosts());
         self::assertSame(['first.example', 'second.example:8443'], $issuer->getFrameSettings($renewed, 2)['hosts']);
     }
 
@@ -371,7 +371,7 @@ final class PreviewTokenIssuerTest extends FunctionalTestCase
 
         $after = $issuer->issue($this->createRequest(), $user, new Uri('https://first.example/'), 2);
 
-        self::assertCount(82, $after->scope->getHosts());
+        self::assertCount(82, $after->hosts->getHosts());
         self::assertSame(strlen($before->token->jwt), strlen($after->token->jwt));
         self::assertLessThan(600, strlen($after->token->jwt));
     }
@@ -489,8 +489,8 @@ final class PreviewTokenIssuerTest extends FunctionalTestCase
 
         $preview = $this->get(PreviewTokenIssuer::class)->issue($this->createRequest(), $user, new Uri('https://first.example/'), 2);
 
-        self::assertSame(['first.example'], $preview->scope->getHosts());
-        self::assertSame(['first.example', 'first.de', 'second.example:8443'], $this->get(PreviewTokenIssuer::class)->issue($this->createRequest(), $this->setUpBackendUser(1), new Uri('https://first.example/'), 2)->scope->getHosts());
+        self::assertSame(['first.example'], $preview->hosts->getHosts());
+        self::assertSame(['first.example', 'first.de', 'second.example:8443'], $this->get(PreviewTokenIssuer::class)->issue($this->createRequest(), $this->setUpBackendUser(1), new Uri('https://first.example/'), 2)->hosts->getHosts());
     }
 
     #[Test]
@@ -503,8 +503,8 @@ final class PreviewTokenIssuerTest extends FunctionalTestCase
 
         $preview = $this->get(PreviewTokenIssuer::class)->issue($this->createRequest(), $user, new Uri('/second/'), 7);
 
-        self::assertSame(['first.example', 'backend.example'], $preview->scope->getHosts());
-        self::assertSame(['https://first.example', 'https://backend.example'], $preview->scope->getOrigins());
+        self::assertSame(['first.example', 'backend.example'], $preview->hosts->getHosts());
+        self::assertSame(['https://first.example', 'https://backend.example'], $preview->hosts->getOrigins());
         self::assertSame('https://backend.example/second/?__t3ct=' . $preview->token->jwt, (string)$preview->uri);
     }
 
@@ -573,8 +573,8 @@ final class PreviewTokenIssuerTest extends FunctionalTestCase
 
         $preview = $this->get(PreviewTokenIssuer::class)->issue($this->createRequest(), $user, new Uri('https://bücher.example:8443/'), 7);
 
-        self::assertSame(['first.example', 'xn--bcher-kva.example:8443'], $preview->scope->getHosts());
-        self::assertSame(['https://first.example', 'https://xn--bcher-kva.example:8443'], $preview->scope->getOrigins());
+        self::assertSame(['first.example', 'xn--bcher-kva.example:8443'], $preview->hosts->getHosts());
+        self::assertSame(['https://first.example', 'https://xn--bcher-kva.example:8443'], $preview->hosts->getOrigins());
         self::assertStringStartsWith('https://bücher.example:8443/?__t3ct=', (string)$preview->uri);
     }
 

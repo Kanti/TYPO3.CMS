@@ -67,7 +67,7 @@ final readonly class PreviewHosts
     }
 
     /**
-     * What the backend page allows its preview frame to load: every origin of the scope,
+     * What the backend page allows its preview frame to load: every origin of the hosts,
      * or above MAX_FRAME_ORIGINS only their schemes.
      *
      * @return list<UriValue|SourceScheme>
@@ -134,8 +134,8 @@ final readonly class PreviewHosts
     }
 
     /**
-     * Whether an address as it is written in a link, a form or a redirect leads to a host
-     * of the scope. A relative address is resolved against the address of the request. An
+     * Whether an address as it is written in a link, a form or a redirect leads to one
+     * of the hosts. A relative address is resolved against the address of the request. An
      * address of another scheme, such as mailto: or tel:, or a malformed one never does.
      */
     public function allowsUrl(string $url, UriInterface $base): bool

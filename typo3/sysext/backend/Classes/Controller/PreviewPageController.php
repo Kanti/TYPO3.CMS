@@ -78,7 +78,7 @@ final readonly class PreviewPageController
         } catch (PreviewAccessDeniedException) {
             return $this->createDeniedResponse();
         }
-        foreach ($preview->scope->getFrameSources() as $source) {
+        foreach ($preview->hosts->getFrameSources() as $source) {
             $this->policyRegistry->appendMutationCollection(new MutationCollection(
                 new Mutation(MutationMode::Extend, Directive::FrameSrc, $source)
             ));

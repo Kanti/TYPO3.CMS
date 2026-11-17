@@ -133,7 +133,7 @@ final class ViewModuleController
             // a preview only where something is previewed.
             $preview = $this->previewTokenIssuer->issue($request, $this->getBackendUser(), $targetUri, $this->pageContext->pageId);
             $previewSettings = $this->previewTokenIssuer->getFrameSettings($preview, $this->pageContext->pageId);
-            $frameSources = $preview->scope->getFrameSources();
+            $frameSources = $preview->hosts->getFrameSources();
         } catch (AddressOutsidePreviewException) {
             // A frontend address an event listener changed to a host outside the preview, such as a
             // decoupled frontend, opens as it is, without a token

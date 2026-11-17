@@ -89,8 +89,8 @@ final readonly class PreviewTokenAuthenticator implements MiddlewareInterface
         $token = null;
         try {
             $token = $this->verify($request, $kind);
-            $scope = $this->authorize($request, $token);
-            return $this->respond($this->applyProfile($request, $token, $scope), $handler, $token, $scope);
+            $hosts = $this->authorize($request, $token);
+            return $this->respond($this->applyProfile($request, $token, $hosts), $handler, $token, $hosts);
         } catch (PreviewTokenRejectedException $exception) {
             // Every refusal of the preview ends here, also those of PreviewSimulator further down the
             // stack. An invalid preview tells the backend nothing: its token could not be verified, or
@@ -127,29 +127,29 @@ final readonly class PreviewTokenAuthenticator implements MiddlewareInterface
         if (!$token->isVisitorWithoutBackendUser()) {
             $this->assertBackendAccessible($request, $token);
             $user = $this->backendUserInitializer->initialize($token);
-            $scope = $this->hostsResolver->resolve($user, new Uri($token->backendOrigin));
+            $hosts = $this->hostsResolver->resolve($user, new Uri($token->backendOrigin));
         } else {
             $user = null;
-            $scope = $this->hostsResolver->resolve($this->backendUserInitializer->createEditorOfVisitorToken($token), new Uri($token->backendOrigin));
+            $hosts = $this->hostsResolver->resolve($this->backendUserInitializer->createEditorOfVisitorToken($token), new Uri($token->backendOrigin));
             $GLOBALS['BE_USER'] = null;
             $this->context->setAspect('backend.user', new UserAspect());
         }
-        if (!$scope->allowsHost(PreviewHosts::hostOf($request->getUri()))) {
+        if (!$hosts->allowsHost(PreviewHosts::hostOf($request->getUri()))) {
             // The page on a host outside the preview does not talk to the backend that signed the token, see process()
             throw new PreviewTokenRejectedException(PreviewRejection::Invalid, 'Host is not part of the preview', 1794909953);
         }
-        $this->assertSiteInScope($request, $scope);
+        $this->assertSiteInPreview($request, $hosts);
         if ($user !== null) {
             $this->assertLanguageAccessible($request, $token, $user);
         }
-        return $scope;
+        return $hosts;
     }
 
     /**
      * Sets the simulation of the token, keeps the page out of the page cache and hands token
-     * and scope to the rest of the stack.
+     * and hosts to the rest of the stack.
      */
-    private function applyProfile(ServerRequestInterface $request, PreviewToken $token, PreviewHosts $scope): ServerRequestInterface
+    private function applyProfile(ServerRequestInterface $request, PreviewToken $token, PreviewHosts $hosts): ServerRequestInterface
     {
         $this->context->setAspect('workspace', new WorkspaceAspect($token->profile->workspace));
         $this->context->setAspect('visibility', new VisibilityAspect(
@@ -168,7 +168,7 @@ final readonly class PreviewTokenAuthenticator implements MiddlewareInterface
         $cacheInstruction->disableCache('EXT:frontend: Preview token bypasses the page cache.');
         return $request
             ->withAttribute(self::ATTRIBUTE, $token)
-            ->withAttribute(self::HOSTS_ATTRIBUTE, $scope)
+            ->withAttribute(self::HOSTS_ATTRIBUTE, $hosts)
             ->withAttribute('frontend.cache.instruction', $cacheInstruction);
     }
 
@@ -179,7 +179,7 @@ final readonly class PreviewTokenAuthenticator implements MiddlewareInterface
      *
      * @throws PreviewTokenRejectedException
      */
-    private function respond(ServerRequestInterface $request, RequestHandlerInterface $handler, PreviewToken $token, PreviewHosts $scope): ResponseInterface
+    private function respond(ServerRequestInterface $request, RequestHandlerInterface $handler, PreviewToken $token, PreviewHosts $hosts): ResponseInterface
     {
         try {
             $response = $handler->handle($request);
@@ -188,7 +188,7 @@ final readonly class PreviewTokenAuthenticator implements MiddlewareInterface
             $response = $exception->getResponse();
         }
         if ($response->hasHeader('Location')) {
-            $response = $this->withTokenInLocation($request, $response, $token, $scope);
+            $response = $this->withTokenInLocation($request, $response, $token, $hosts);
         }
         return $this->withPreviewHeaders($response, $token);
     }
@@ -198,10 +198,10 @@ final readonly class PreviewTokenAuthenticator implements MiddlewareInterface
      * as it is, as signed addresses of login or payment services must keep their bytes.
      * Only a token it would carry to another host is removed.
      */
-    private function withTokenInLocation(ServerRequestInterface $request, ResponseInterface $response, PreviewToken $token, PreviewHosts $scope): ResponseInterface
+    private function withTokenInLocation(ServerRequestInterface $request, ResponseInterface $response, PreviewToken $token, PreviewHosts $hosts): ResponseInterface
     {
         $location = $response->getHeaderLine('Location');
-        if ($scope->allowsUrl($location, $request->getUri())) {
+        if ($hosts->allowsUrl($location, $request->getUri())) {
             return $response->withHeader('Location', PreviewTokenService::addToUrl($location, $token->jwt));
         }
         $withoutToken = PreviewTokenService::removeFromUrl($location);
@@ -212,7 +212,7 @@ final readonly class PreviewTokenAuthenticator implements MiddlewareInterface
      * Browsers check every ancestor of a frame: a page of the site may frame another page
      * of its own site, which then has the site and the backend as ancestors.
      */
-    #[AsEventListener('typo3-frontend/preview-access/frame-ancestors')]
+    #[AsEventListener('typo3-frontend/preview-token-authentication/frame-ancestors')]
     public function allowBackendToFrame(PolicyMutatedEvent $event): void
     {
         $token = $event->request?->getAttribute(self::ATTRIBUTE);
@@ -289,13 +289,13 @@ final readonly class PreviewTokenAuthenticator implements MiddlewareInterface
      *
      * @throws PreviewTokenRejectedException
      */
-    private function assertSiteInScope(ServerRequestInterface $request, PreviewHosts $scope): void
+    private function assertSiteInPreview(ServerRequestInterface $request, PreviewHosts $hosts): void
     {
         $site = $request->getAttribute('site');
         if (!$site instanceof Site) {
             throw new PreviewTokenRejectedException(PreviewRejection::OutOfScope, 'Page is not part of a site', 1794411126);
         }
-        if (!$scope->includesSite($site->getIdentifier())) {
+        if (!$hosts->includesSite($site->getIdentifier())) {
             throw new PreviewTokenRejectedException(PreviewRejection::OutOfScope, 'Page is not part of the preview', 1793265773);
         }
     }

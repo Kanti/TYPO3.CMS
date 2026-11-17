@@ -330,7 +330,7 @@ final class PreviewTokenAuthenticatorTest extends FunctionalTestCase
     {
         foreach ([$this->sign(), 'invalid', ''] as $jwt) {
             $GLOBALS['BE_USER'] = null;
-            $response = $this->processPreviewAccess('https://first.example/page?flag&q=a+b&__t3ct=' . $jwt . '&id=1&id=2', $headers);
+            $response = $this->processTokenAuthenticator('https://first.example/page?flag&q=a+b&__t3ct=' . $jwt . '&id=1&id=2', $headers);
 
             self::assertSame(303, $response->getStatusCode());
             self::assertSame('https://first.example/page?flag&q=a+b&id=1&id=2', $response->getHeaderLine('Location'));
@@ -348,7 +348,7 @@ final class PreviewTokenAuthenticatorTest extends FunctionalTestCase
     #[Test]
     public function topLevelNavigationIsRedirectedToTheAddressAsTheBrowserSentIt(): void
     {
-        $response = $this->processPreviewAccess(
+        $response = $this->processTokenAuthenticator(
             'https://first.example/page?items[]=1&a|b=2&q=%zz&__t3ct=' . $this->sign() . '&sig=ab%2bcd',
             ['Sec-Fetch-Dest' => 'document', 'Sec-Fetch-Mode' => 'navigate']
         );
@@ -374,7 +374,7 @@ final class PreviewTokenAuthenticatorTest extends FunctionalTestCase
     #[DataProvider('namesPhpReadsAsTheTokenDataProvider')]
     public function topLevelNavigationWithANamePhpReadsAsTheTokenIsRedirectedWithoutIt(string $pair): void
     {
-        $response = $this->processPreviewAccess('https://first.example/hidden?a=1&' . $pair . '&b=2', ['Sec-Fetch-Dest' => 'document', 'Sec-Fetch-Mode' => 'navigate']);
+        $response = $this->processTokenAuthenticator('https://first.example/hidden?a=1&' . $pair . '&b=2', ['Sec-Fetch-Dest' => 'document', 'Sec-Fetch-Mode' => 'navigate']);
 
         self::assertSame(303, $response->getStatusCode());
         self::assertSame('https://first.example/hidden?a=1&b=2', $response->getHeaderLine('Location'));
@@ -710,8 +710,8 @@ final class PreviewTokenAuthenticatorTest extends FunctionalTestCase
         $GLOBALS['TYPO3_CONF_VARS']['BE']['lockSSL'] = true;
         $jwt = $this->sign();
 
-        $plainHttp = $this->processPreviewAccessOfSite('second', 'http://second.example/?__t3ct=' . $jwt, false);
-        $https = $this->processPreviewAccessOfSite('first', 'https://first.example/?__t3ct=' . $jwt, true);
+        $plainHttp = $this->processTokenAuthenticatorOfSite('second', 'http://second.example/?__t3ct=' . $jwt, false);
+        $https = $this->processTokenAuthenticatorOfSite('first', 'https://first.example/?__t3ct=' . $jwt, true);
 
         $this->assertRejected('userNotAvailable', $plainHttp);
         self::assertSame('Rendered page', (string)$https->getBody());
@@ -735,8 +735,8 @@ final class PreviewTokenAuthenticatorTest extends FunctionalTestCase
     {
         $GLOBALS['TYPO3_CONF_VARS']['BE']['adminOnly'] = $adminOnly;
 
-        $administrator = $this->processPreviewAccessOfSite('first', 'https://first.example/?__t3ct=' . $this->sign(), true);
-        $editor = $this->processPreviewAccessOfSite('first', 'https://first.example/?__t3ct=' . $this->signForEditor(), true);
+        $administrator = $this->processTokenAuthenticatorOfSite('first', 'https://first.example/?__t3ct=' . $this->sign(), true);
+        $editor = $this->processTokenAuthenticatorOfSite('first', 'https://first.example/?__t3ct=' . $this->signForEditor(), true);
 
         $this->assertShownOrRefused($administratorSeesIt, $administrator);
         $this->assertShownOrRefused($editorSeesIt, $editor);
@@ -1100,7 +1100,7 @@ final class PreviewTokenAuthenticatorTest extends FunctionalTestCase
         };
         $jwt = $this->sign();
 
-        $response = $this->processPreviewAccess('https://first.example/contact?__t3ct=' . $jwt, ['Sec-Fetch-Dest' => 'iframe'], $handler);
+        $response = $this->processTokenAuthenticator('https://first.example/contact?__t3ct=' . $jwt, ['Sec-Fetch-Dest' => 'iframe'], $handler);
 
         self::assertSame(303, $response->getStatusCode());
         self::assertSame('mailto:info@example.org?subject=Preview', $response->getHeaderLine('Location'));
@@ -1123,7 +1123,7 @@ final class PreviewTokenAuthenticatorTest extends FunctionalTestCase
         };
         $jwt = $this->sign();
 
-        $response = $this->processPreviewAccess('https://first.example/contact?__t3ct=' . $jwt, ['Sec-Fetch-Dest' => 'iframe'], $handler);
+        $response = $this->processTokenAuthenticator('https://first.example/contact?__t3ct=' . $jwt, ['Sec-Fetch-Dest' => 'iframe'], $handler);
 
         self::assertSame(303, $response->getStatusCode());
         self::assertSame('https://[first.example/next', $response->getHeaderLine('Location'));
@@ -1147,7 +1147,7 @@ final class PreviewTokenAuthenticatorTest extends FunctionalTestCase
             }
         };
 
-        $response = $this->processPreviewAccess('https://first.example/contact?__t3ct=' . $this->sign(), ['Sec-Fetch-Dest' => 'iframe'], $handler);
+        $response = $this->processTokenAuthenticator('https://first.example/contact?__t3ct=' . $this->sign(), ['Sec-Fetch-Dest' => 'iframe'], $handler);
 
         self::assertSame(303, $response->getStatusCode());
         self::assertSame('/\evil.example/x', $response->getHeaderLine('Location'));
@@ -1169,7 +1169,7 @@ final class PreviewTokenAuthenticatorTest extends FunctionalTestCase
         };
         $jwt = $this->sign();
 
-        $response = $this->processPreviewAccess('https://first.example/?__t3ct=' . $jwt, ['Sec-Fetch-Dest' => 'iframe'], $handler);
+        $response = $this->processTokenAuthenticator('https://first.example/?__t3ct=' . $jwt, ['Sec-Fetch-Dest' => 'iframe'], $handler);
 
         self::assertSame('Immediate answer', (string)$response->getBody());
         self::assertSame('private, no-store', $response->getHeaderLine('Cache-Control'));
@@ -1376,7 +1376,7 @@ final class PreviewTokenAuthenticatorTest extends FunctionalTestCase
      * Runs the middleware for a page in the frame of a site, on HTTPS or on plain HTTP.
      * The page renders as "Rendered page".
      */
-    private function processPreviewAccessOfSite(string $identifier, string $url, bool $https): ResponseInterface
+    private function processTokenAuthenticatorOfSite(string $identifier, string $url, bool $https): ResponseInterface
     {
         // Every request starts without a backend user, as the preview builds the editor
         unset($GLOBALS['BE_USER']);
@@ -1400,7 +1400,7 @@ final class PreviewTokenAuthenticatorTest extends FunctionalTestCase
      * Runs the middleware on the address as a browser sends it: the query keeps its bytes,
      * and the query parameters are the names PHP gives its pairs.
      */
-    private function processPreviewAccess(string $url, array $headers, ?RequestHandlerInterface $handler = null): ResponseInterface
+    private function processTokenAuthenticator(string $url, array $headers, ?RequestHandlerInterface $handler = null): ResponseInterface
     {
         $query = parse_url($url, PHP_URL_QUERY);
         parse_str((string)$query, $queryParams);

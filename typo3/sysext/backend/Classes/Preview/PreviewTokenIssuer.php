@@ -151,8 +151,8 @@ final readonly class PreviewTokenIssuer
             'url' => (string)$preview->uri,
             'renewUrl' => (string)$this->uriBuilder->buildUriFromRoute('ajax_preview_token'),
             'page' => $pageId,
-            'hosts' => $preview->scope->getHosts(),
-            'httpsHosts' => $preview->scope->getHttpsOnlyHosts(),
+            'hosts' => $preview->hosts->getHosts(),
+            'httpsHosts' => $preview->hosts->getHttpsOnlyHosts(),
             'expiresIn' => max(0, $preview->token->expires - $this->clock->now()->getTimestamp()),
         ];
     }
@@ -197,11 +197,11 @@ final readonly class PreviewTokenIssuer
             $backendUri,
             $frontendUri->withQuery(PreviewTokenService::withoutParameters($frontendUri->getQuery(), self::PREVIEW_PARAMETERS))
         );
-        $scope = $this->hostsResolver->resolve($user, $backendUri);
-        if ($scope->isEmpty()) {
+        $hosts = $this->hostsResolver->resolve($user, $backendUri);
+        if ($hosts->isEmpty()) {
             throw new PreviewAccessDeniedException('No site is accessible', 1793265779);
         }
-        if (!$scope->allowsUri($frontendUri)) {
+        if (!$hosts->allowsUri($frontendUri)) {
             throw new AddressOutsidePreviewException('Address is not part of the preview', 1793265780);
         }
         $token = $this->tokenService->sign(
@@ -211,7 +211,7 @@ final readonly class PreviewTokenIssuer
             (int)$user->user['uid'],
             $visitor,
         );
-        return new IssuedPreview($token, PreviewTokenService::withToken($frontendUri, $token->jwt), $scope);
+        return new IssuedPreview($token, PreviewTokenService::withToken($frontendUri, $token->jwt), $hosts);
     }
 
     private function getBackendUri(ServerRequestInterface $request): UriInterface

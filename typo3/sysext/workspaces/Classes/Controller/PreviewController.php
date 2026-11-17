@@ -216,7 +216,7 @@ final readonly class PreviewController
             }
             return json_encode($this->previewTokenIssuer->getPlainFrameSettings($request, $uri, $pageUid), JSON_THROW_ON_ERROR);
         }
-        foreach ($preview->scope->getFrameSources() as $source) {
+        foreach ($preview->hosts->getFrameSources() as $source) {
             $this->allowFrameSource($source);
         }
         return json_encode($this->previewTokenIssuer->getFrameSettings($preview, $pageUid), JSON_THROW_ON_ERROR);

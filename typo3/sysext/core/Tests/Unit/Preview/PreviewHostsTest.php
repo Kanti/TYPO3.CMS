@@ -27,7 +27,7 @@ use TYPO3\TestingFramework\Core\Unit\UnitTestCase;
 
 final class PreviewHostsTest extends UnitTestCase
 {
-    private function createScope(): PreviewHosts
+    private function createHosts(): PreviewHosts
     {
         return new PreviewHosts([
             ['site' => 'main', 'host' => 'example.com', 'origin' => 'https://example.com'],
@@ -40,13 +40,13 @@ final class PreviewHostsTest extends UnitTestCase
     #[Test]
     public function sitesAreKnownAndHostsAndOriginsAreListedOnce(): void
     {
-        $scope = $this->createScope();
+        $hosts = $this->createHosts();
 
-        self::assertTrue($scope->includesSite('shop'));
-        self::assertFalse($scope->includesSite('blog'));
-        self::assertSame(['example.com', 'example.de', 'intranet.example:8443'], $scope->getHosts());
-        self::assertSame(['https://example.com', 'https://example.de', 'https://intranet.example:8443'], $scope->getOrigins());
-        self::assertFalse($scope->isEmpty());
+        self::assertTrue($hosts->includesSite('shop'));
+        self::assertFalse($hosts->includesSite('blog'));
+        self::assertSame(['example.com', 'example.de', 'intranet.example:8443'], $hosts->getHosts());
+        self::assertSame(['https://example.com', 'https://example.de', 'https://intranet.example:8443'], $hosts->getOrigins());
+        self::assertFalse($hosts->isEmpty());
         self::assertTrue(new PreviewHosts([])->isEmpty());
     }
 
@@ -63,16 +63,16 @@ final class PreviewHostsTest extends UnitTestCase
 
     #[Test]
     #[DataProvider('addressesDataProvider')]
-    public function addressesOfTheHostsOfTheScopeAreAllowed(string $address, bool $allowed): void
+    public function addressesOfTheHostsAreAllowed(string $address, bool $allowed): void
     {
-        self::assertSame($allowed, $this->createScope()->allowsUri(new Uri($address)));
+        self::assertSame($allowed, $this->createHosts()->allowsUri(new Uri($address)));
     }
 
     public static function addressesAsWrittenDataProvider(): \Generator
     {
-        yield 'absolute address of a host of the scope' => ['https://example.de/page', true];
+        yield 'absolute address of one of the hosts' => ['https://example.de/page', true];
         yield 'address relative to the request' => ['/page?a=1', true];
-        yield 'address relative to the scheme on a host of the scope' => ['//example.de/page', true];
+        yield 'address relative to the scheme on one of the hosts' => ['//example.de/page', true];
         yield 'address relative to the scheme on another host' => ['//example.org/page', false];
         yield 'address of another host' => ['https://example.org/page', false];
         yield 'mail address' => ['mailto:info@example.com?subject=Hello', false];
@@ -83,14 +83,14 @@ final class PreviewHostsTest extends UnitTestCase
 
     /**
      * Links, forms and redirects carry addresses as written: relative to the request, of
-     * another scheme or malformed. Only addresses on a host of the scope may carry the
+     * another scheme or malformed. Only addresses on one of the hosts may carry the
      * token, and no address may stop the page from rendering.
      */
     #[Test]
     #[DataProvider('addressesAsWrittenDataProvider')]
-    public function addressesAsWrittenAreAllowedOnlyOnHostsOfTheScope(string $address, bool $allowed): void
+    public function addressesAsWrittenAreAllowedOnlyOnTheHosts(string $address, bool $allowed): void
     {
-        self::assertSame($allowed, $this->createScope()->allowsUrl($address, new Uri('https://example.com/current')));
+        self::assertSame($allowed, $this->createHosts()->allowsUrl($address, new Uri('https://example.com/current')));
     }
 
     public static function addressesBrowsersReadDifferentlyDataProvider(): \Generator
@@ -122,7 +122,7 @@ final class PreviewHostsTest extends UnitTestCase
     #[DataProvider('addressesBrowsersReadDifferentlyDataProvider')]
     public function addressesBrowsersReadDifferentlyAreNotAllowed(string $address, bool $allowed): void
     {
-        self::assertSame($allowed, $this->createScope()->allowsUrl($address, new Uri('https://example.com/current')));
+        self::assertSame($allowed, $this->createHosts()->allowsUrl($address, new Uri('https://example.com/current')));
     }
 
     public static function plainHttpDataProvider(): \Generator
@@ -136,7 +136,7 @@ final class PreviewHostsTest extends UnitTestCase
     }
 
     /**
-     * An editor may write down an address of a host of the scope with "http://", for
+     * An editor may write down an address of one of the hosts with "http://", for
      * example in a link page, while the site of that host runs on HTTPS. The browser would
      * send the token in the clear before the site redirects to HTTPS, so such an address
      * never carries it. A host with a site on plain HTTP keeps the token on plain HTTP:
@@ -146,20 +146,20 @@ final class PreviewHostsTest extends UnitTestCase
     #[DataProvider('plainHttpDataProvider')]
     public function addressesOnPlainHttpAreNotAllowedOnHostsWhoseSitesUseHttpsOnly(string $address, bool $allowed): void
     {
-        self::assertSame($allowed, $this->createScopeWithSchemes()->allowsUrl($address, new Uri('http://plain.example/current')));
+        self::assertSame($allowed, $this->createHostsWithSchemes()->allowsUrl($address, new Uri('http://plain.example/current')));
     }
 
     #[Test]
     public function hostsWhoseSitesUseHttpsOnlyAreListed(): void
     {
-        $scope = $this->createScopeWithSchemes();
+        $hosts = $this->createHostsWithSchemes();
 
-        self::assertSame(['secure.example'], $scope->getHttpsOnlyHosts());
-        self::assertFalse($scope->allowsUri(new Uri('http://secure.example/')));
-        self::assertTrue($scope->allowsUri(new Uri('http://mixed.example/')));
+        self::assertSame(['secure.example'], $hosts->getHttpsOnlyHosts());
+        self::assertFalse($hosts->allowsUri(new Uri('http://secure.example/')));
+        self::assertTrue($hosts->allowsUri(new Uri('http://mixed.example/')));
     }
 
-    private function createScopeWithSchemes(): PreviewHosts
+    private function createHostsWithSchemes(): PreviewHosts
     {
         return new PreviewHosts([
             ['site' => 'secure', 'host' => 'secure.example', 'origin' => 'https://secure.example'],
@@ -177,15 +177,15 @@ final class PreviewHostsTest extends UnitTestCase
     public function internationalizedDomainNamesAreComparedInTheirAsciiForm(): void
     {
         $base = new Uri('https://Bücher.example:8443/');
-        $scope = new PreviewHosts([
+        $hosts = new PreviewHosts([
             ['site' => 'books', 'host' => PreviewHosts::hostOf($base), 'origin' => 'https://xn--bcher-kva.example:8443'],
         ]);
 
         self::assertSame('xn--bcher-kva.example:8443', PreviewHosts::hostOf($base));
         self::assertSame('xn--bcher-kva.example', PreviewHosts::normalizeHost('BÜCHER.example'));
-        self::assertTrue($scope->allowsUri(new Uri('https://xn--bcher-kva.example:8443/page')));
-        self::assertTrue($scope->allowsUri(new Uri('https://bücher.example:8443/page')));
-        self::assertFalse($scope->allowsUri(new Uri('https://xn--bcher-kva.example/page')));
+        self::assertTrue($hosts->allowsUri(new Uri('https://xn--bcher-kva.example:8443/page')));
+        self::assertTrue($hosts->allowsUri(new Uri('https://bücher.example:8443/page')));
+        self::assertFalse($hosts->allowsUri(new Uri('https://xn--bcher-kva.example/page')));
     }
 
     /**
