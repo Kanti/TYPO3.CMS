@@ -202,7 +202,7 @@ final class PreviewTokenIssuerTest extends FunctionalTestCase
     {
         $user = $this->setUpBackendUser(9);
         $issuer = $this->get(PreviewTokenIssuer::class);
-        $previous = $this->get(PreviewTokenService::class)->sign(new PreviewProfile(0, true, false, 0, []), 'https://backend.example', self::USER_AGENT, 9);
+        $previous = $this->get(PreviewTokenService::class)->sign(new PreviewProfile(workspace: 0, hiddenPages: true, hiddenContent: false, date: 0, groups: []), 'https://backend.example', self::USER_AGENT, 9);
 
         $renewed = $issuer->renew($this->createRequest(), $user, $previous->jwt, new Uri('https://first.example/de/'), 3);
 

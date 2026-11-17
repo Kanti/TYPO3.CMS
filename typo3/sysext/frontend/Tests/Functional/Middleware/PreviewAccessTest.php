@@ -144,10 +144,10 @@ final class PreviewAccessTest extends FunctionalTestCase
     #[Test]
     public function hiddenContentIsShownOnlyIfTheTokenAllowsIt(): void
     {
-        $withHiddenContent = new PreviewProfile(0, false, true, 0, []);
+        $withHiddenContent = new PreviewProfile(workspace: 0, hiddenPages: false, hiddenContent: true, date: 0, groups: []);
         self::assertStringContainsString('Hidden content', (string)$this->preview('https://first.example/', $this->sign($withHiddenContent))->getBody());
 
-        $withoutHiddenContent = new PreviewProfile(0, true, false, 0, []);
+        $withoutHiddenContent = new PreviewProfile(workspace: 0, hiddenPages: true, hiddenContent: false, date: 0, groups: []);
         $response = $this->preview('https://first.example/', $this->sign($withoutHiddenContent));
 
         self::assertSame(200, $response->getStatusCode());
@@ -580,7 +580,7 @@ final class PreviewAccessTest extends FunctionalTestCase
         if ($userChanges !== []) {
             $this->get(ConnectionPool::class)->getConnectionForTable('be_users')->update('be_users', $userChanges, ['uid' => 2]);
         }
-        $jwt = $this->sign(new PreviewProfile($workspace, true, true, 0, []), userId: 2);
+        $jwt = $this->sign(new PreviewProfile(workspace: $workspace, hiddenPages: true, hiddenContent: true, date: 0, groups: []), userId: 2);
 
         $response = $this->preview('https://first.example/', $jwt);
 
@@ -647,7 +647,7 @@ final class PreviewAccessTest extends FunctionalTestCase
     #[Test]
     public function openAdminPanelDecidesTheVisibilityOverTheToken(): void
     {
-        $withHiddenContent = new PreviewProfile(0, false, true, 0, []);
+        $withHiddenContent = new PreviewProfile(workspace: 0, hiddenPages: false, hiddenContent: true, date: 0, groups: []);
         self::assertStringContainsString('Hidden content', (string)$this->preview('https://first.example/', $this->signForEditor($withHiddenContent))->getBody());
 
         $this->openAdminPanelForEditor('admPanel.override.preview.showHiddenRecords = 0');
@@ -666,9 +666,9 @@ final class PreviewAccessTest extends FunctionalTestCase
         $this->get(ConnectionPool::class)->getConnectionForTable('pages')->update('pages', ['starttime' => $future], ['uid' => 6]);
         $this->openAdminPanelForEditor('admPanel.override.preview.simulateUserGroup = 6' . LF . 'admPanel.override.preview.simulateDate = ' . (time() - 3600));
 
-        $withGroup = new PreviewProfile(0, true, true, 0, [5]);
+        $withGroup = new PreviewProfile(workspace: 0, hiddenPages: true, hiddenContent: true, date: 0, groups: [5]);
         self::assertSame(200, $this->preview('https://first.example/hidden/protected', $this->signForEditor($withGroup))->getStatusCode());
-        $withDate = new PreviewProfile(0, true, true, $future + 60, []);
+        $withDate = new PreviewProfile(workspace: 0, hiddenPages: true, hiddenContent: true, date: $future + 60, groups: []);
         self::assertSame(200, $this->preview('https://first.example/scheduled', $this->signForEditor($withDate))->getStatusCode());
     }
 
@@ -766,12 +766,12 @@ final class PreviewAccessTest extends FunctionalTestCase
 
     public static function visitorProfileAskingForMoreDataProvider(): \Generator
     {
-        yield 'workspace' => [new PreviewProfile(1, false, false, 0, [])];
-        yield 'hidden pages' => [new PreviewProfile(0, true, false, 0, [])];
-        yield 'hidden content' => [new PreviewProfile(0, false, true, 0, [])];
-        yield 'date' => [new PreviewProfile(0, false, false, 1796083200, [])];
-        yield 'login' => [new PreviewProfile(0, false, false, 0, [], true)];
-        yield 'groups' => [new PreviewProfile(0, false, false, 0, [5])];
+        yield 'workspace' => [new PreviewProfile(workspace: 1, hiddenPages: false, hiddenContent: false, date: 0, groups: [])];
+        yield 'hidden pages' => [new PreviewProfile(workspace: 0, hiddenPages: true, hiddenContent: false, date: 0, groups: [])];
+        yield 'hidden content' => [new PreviewProfile(workspace: 0, hiddenPages: false, hiddenContent: true, date: 0, groups: [])];
+        yield 'date' => [new PreviewProfile(workspace: 0, hiddenPages: false, hiddenContent: false, date: 1796083200, groups: [])];
+        yield 'login' => [new PreviewProfile(workspace: 0, hiddenPages: false, hiddenContent: false, date: 0, groups: [], loggedIn: true)];
+        yield 'groups' => [new PreviewProfile(workspace: 0, hiddenPages: false, hiddenContent: false, date: 0, groups: [5])];
     }
 
     #[Test]
@@ -786,7 +786,7 @@ final class PreviewAccessTest extends FunctionalTestCase
     {
         $this->get(ConnectionPool::class)->getConnectionForTable('tt_content')
             ->insert('tt_content', ['uid' => 5, 'pid' => 1, 'header' => 'Members only', 'fe_group' => '5']);
-        $withGroup = new PreviewProfile(0, true, true, 0, [5]);
+        $withGroup = new PreviewProfile(workspace: 0, hiddenPages: true, hiddenContent: true, date: 0, groups: [5]);
 
         $editorRoot = (string)$this->preview('https://first.example/', $this->signForEditor($withGroup))->getBody();
         self::assertStringNotContainsString('Members only', $editorRoot);
@@ -801,7 +801,7 @@ final class PreviewAccessTest extends FunctionalTestCase
     #[Test]
     public function tokenGroupsReplaceLegacySimulation(): void
     {
-        $withGroup = new PreviewProfile(0, true, true, 0, [5]);
+        $withGroup = new PreviewProfile(workspace: 0, hiddenPages: true, hiddenContent: true, date: 0, groups: [5]);
         $response = $this->preview('https://first.example/hidden/protected', $this->sign($withGroup));
         self::assertSame(200, $response->getStatusCode());
         self::assertStringContainsString('Dummy 1-2-3', (string)$response->getBody());
@@ -860,7 +860,7 @@ final class PreviewAccessTest extends FunctionalTestCase
         $content->insert('tt_content', ['uid' => 5, 'pid' => 1, 'header' => 'Members only', 'fe_group' => '5']);
         $content->insert('tt_content', ['uid' => 6, 'pid' => 1, 'header' => 'Other group only', 'fe_group' => '6']);
         $loggedIn = $this->logInFrontendUser();
-        $withOtherGroup = new PreviewProfile(0, true, true, 0, [6]);
+        $withOtherGroup = new PreviewProfile(workspace: 0, hiddenPages: true, hiddenContent: true, date: 0, groups: [6]);
 
         $body = (string)$this->preview('https://first.example/', $this->sign($withOtherGroup), 'iframe', $loggedIn)->getBody();
         $protected = $this->preview('https://first.example/hidden/protected', $this->sign($withOtherGroup), 'iframe', $loggedIn);
@@ -877,7 +877,7 @@ final class PreviewAccessTest extends FunctionalTestCase
         $content->insert('tt_content', ['uid' => 3, 'pid' => 1, 'header' => 'Content at any login', 'fe_group' => '-2']);
         $content->insert('tt_content', ['uid' => 4, 'pid' => 1, 'header' => 'Content hidden at login', 'fe_group' => '-1']);
 
-        $loggedIn = new PreviewProfile(0, true, true, 0, [], true);
+        $loggedIn = new PreviewProfile(workspace: 0, hiddenPages: true, hiddenContent: true, date: 0, groups: [], loggedIn: true);
         $body = (string)$this->preview('https://first.example/', $this->sign($loggedIn))->getBody();
         self::assertStringContainsString('Content at any login', $body);
         self::assertStringNotContainsString('Content hidden at login', $body);
@@ -893,7 +893,7 @@ final class PreviewAccessTest extends FunctionalTestCase
         $future = time() + 86400;
         $this->get(ConnectionPool::class)->getConnectionForTable('pages')
             ->update('pages', ['starttime' => $future], ['uid' => 6]);
-        $withDate = new PreviewProfile(0, true, true, $future + 60, []);
+        $withDate = new PreviewProfile(workspace: 0, hiddenPages: true, hiddenContent: true, date: $future + 60, groups: []);
 
         self::assertSame(200, $this->preview('https://first.example/scheduled', $this->sign($withDate))->getStatusCode());
         self::assertSame(404, $this->preview('https://first.example/scheduled?ADMCMD_simTime=' . ($future + 60), $this->sign())->getStatusCode());
@@ -958,11 +958,11 @@ final class PreviewAccessTest extends FunctionalTestCase
 
     public static function simulationShownAsPreviewDataProvider(): \Generator
     {
-        yield 'date' => [new PreviewProfile(0, false, false, time() + 3600, [])];
-        yield 'frontend login' => [new PreviewProfile(0, false, false, 0, [], true)];
-        yield 'frontend user group' => [new PreviewProfile(0, false, false, 0, [5])];
-        yield 'hidden content' => [new PreviewProfile(0, false, true, 0, [])];
-        yield 'all hidden pages' => [new PreviewProfile(0, true, false, 0, [])];
+        yield 'date' => [new PreviewProfile(workspace: 0, hiddenPages: false, hiddenContent: false, date: time() + 3600, groups: [])];
+        yield 'frontend login' => [new PreviewProfile(workspace: 0, hiddenPages: false, hiddenContent: false, date: 0, groups: [], loggedIn: true)];
+        yield 'frontend user group' => [new PreviewProfile(workspace: 0, hiddenPages: false, hiddenContent: false, date: 0, groups: [5])];
+        yield 'hidden content' => [new PreviewProfile(workspace: 0, hiddenPages: false, hiddenContent: true, date: 0, groups: [])];
+        yield 'all hidden pages' => [new PreviewProfile(workspace: 0, hiddenPages: true, hiddenContent: false, date: 0, groups: [])];
     }
 
     #[Test]
@@ -1455,6 +1455,6 @@ final class PreviewAccessTest extends FunctionalTestCase
 
     private function createProfile(): PreviewProfile
     {
-        return new PreviewProfile(0, true, true, 0, []);
+        return new PreviewProfile(workspace: 0, hiddenPages: true, hiddenContent: true, date: 0, groups: []);
     }
 }

@@ -81,10 +81,10 @@ final readonly class PreviewTokenService
     {
         [$token, $userAgentHash] = $this->decode($jwt, false);
         if ($token->expires <= $this->clock->now()->getTimestamp()) {
-            throw new PreviewTokenRejectedException(PreviewRejection::Expired, 'Preview token expired', 1793265768, null, $token);
+            throw new PreviewTokenRejectedException(PreviewRejection::Expired, 'Preview token expired', 1793265768, token: $token);
         }
         if (!hash_equals($userAgentHash, self::hashUserAgent($userAgent))) {
-            throw new PreviewTokenRejectedException(PreviewRejection::OtherBrowser, 'Preview token belongs to another browser', 1793265771, null, $token);
+            throw new PreviewTokenRejectedException(PreviewRejection::OtherBrowser, 'Preview token belongs to another browser', 1793265771, token: $token);
         }
         return $token;
     }
@@ -100,7 +100,7 @@ final readonly class PreviewTokenService
     {
         [$token, $userAgentHash] = $this->decode($jwt, true);
         if (!hash_equals($userAgentHash, self::hashUserAgent($userAgent))) {
-            throw new PreviewTokenRejectedException(PreviewRejection::OtherBrowser, 'Preview token belongs to another browser', 1793276925, null, $token);
+            throw new PreviewTokenRejectedException(PreviewRejection::OtherBrowser, 'Preview token belongs to another browser', 1793276925, token: $token);
         }
         return $token;
     }
@@ -116,10 +116,10 @@ final readonly class PreviewTokenService
         } catch (ExpiredException $exception) {
             $claims = json_decode(json_encode($exception->getPayload(), JSON_THROW_ON_ERROR), true, flags: JSON_THROW_ON_ERROR);
             if (!$allowExpired) {
-                throw new PreviewTokenRejectedException(PreviewRejection::Expired, 'Preview token expired', 1793265765, $exception, $this->createTokenOrNull($jwt, $claims));
+                throw new PreviewTokenRejectedException(PreviewRejection::Expired, 'Preview token expired', 1793265765, previous: $exception, token: $this->createTokenOrNull($jwt, $claims));
             }
         } catch (\Throwable $exception) {
-            throw new PreviewTokenRejectedException(PreviewRejection::Invalid, 'Preview token invalid', 1793265766, $exception);
+            throw new PreviewTokenRejectedException(PreviewRejection::Invalid, 'Preview token invalid', 1793265766, previous: $exception);
         }
         return [$this->createToken($jwt, $claims), $claims['uah']];
     }
@@ -275,7 +275,7 @@ final readonly class PreviewTokenService
 
     private static function invalidClaims(string $reason, ?\Throwable $previous = null): PreviewTokenRejectedException
     {
-        return new PreviewTokenRejectedException(PreviewRejection::Invalid, 'Preview token claims invalid: ' . $reason, 1793265767, $previous);
+        return new PreviewTokenRejectedException(PreviewRejection::Invalid, 'Preview token claims invalid: ' . $reason, 1793265767, previous: $previous);
     }
 
     private static function hashUserAgent(string $userAgent): string

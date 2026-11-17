@@ -111,7 +111,7 @@ final readonly class PreviewAccess implements MiddlewareInterface
         $jwt = $request->getQueryParams()[PreviewTokenService::PARAMETER];
         $token = $this->tokenService->verify(is_string($jwt) ? $jwt : '', $request->getHeaderLine('User-Agent'));
         if (!$this->isFramed($request, $kind)) {
-            throw new PreviewTokenRejectedException(PreviewRejection::NotInFrame, 'Preview is only available in a frame', 1793265772, null, $token);
+            throw new PreviewTokenRejectedException(PreviewRejection::NotInFrame, 'Preview is only available in a frame', 1793265772, token: $token);
         }
         return $token;
     }
@@ -311,10 +311,10 @@ final readonly class PreviewAccess implements MiddlewareInterface
         $normalizedParams = $request->getAttribute('normalizedParams') ?? NormalizedParams::createFromRequest($request);
         $ipMask = trim((string)($GLOBALS['TYPO3_CONF_VARS']['BE']['IPmaskList'] ?? ''));
         if ($ipMask !== '' && !GeneralUtility::cmpIP($normalizedParams->getRemoteAddress(), $ipMask)) {
-            throw new PreviewTokenRejectedException(PreviewRejection::UserNotAvailable, 'Backend is not accessible from this address', 1794224124, null, $token);
+            throw new PreviewTokenRejectedException(PreviewRejection::UserNotAvailable, 'Backend is not accessible from this address', 1794224124, token: $token);
         }
         if (($GLOBALS['TYPO3_CONF_VARS']['BE']['lockSSL'] ?? false) && !$normalizedParams->isHttps()) {
-            throw new PreviewTokenRejectedException(PreviewRejection::UserNotAvailable, 'Backend is only accessible via HTTPS', 1794411127, null, $token);
+            throw new PreviewTokenRejectedException(PreviewRejection::UserNotAvailable, 'Backend is only accessible via HTTPS', 1794411127, token: $token);
         }
     }
 
@@ -328,7 +328,7 @@ final readonly class PreviewAccess implements MiddlewareInterface
             return;
         }
         if (!$user->checkLanguageAccess($language)) {
-            throw new PreviewTokenRejectedException(PreviewRejection::OutOfScope, 'Language is not part of the preview', 1794224125, null, $token);
+            throw new PreviewTokenRejectedException(PreviewRejection::OutOfScope, 'Language is not part of the preview', 1794224125, token: $token);
         }
     }
 

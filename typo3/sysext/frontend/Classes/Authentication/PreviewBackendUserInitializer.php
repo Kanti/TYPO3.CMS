@@ -82,14 +82,14 @@ final readonly class PreviewBackendUserInitializer
         $user = new PreviewBackendUserAuthentication($token->profile->workspace);
         $record = $user->getRawUserByUid($token->editorId);
         if (!is_array($record)) {
-            throw new PreviewTokenRejectedException(PreviewRejection::UserNotAvailable, 'Editor of the preview token does not exist, is disabled or expired', 1794224123, null, $token);
+            throw new PreviewTokenRejectedException(PreviewRejection::UserNotAvailable, 'Editor of the preview token does not exist, is disabled or expired', 1794224123, token: $token);
         }
         $user->initializeFromRecord($record);
         if ((int)($GLOBALS['TYPO3_CONF_VARS']['BE']['adminOnly'] ?? 0) < 0) {
-            throw new PreviewTokenRejectedException(PreviewRejection::UserNotAvailable, 'Backend is locked', 1794239503, null, $token);
+            throw new PreviewTokenRejectedException(PreviewRejection::UserNotAvailable, 'Backend is locked', 1794239503, token: $token);
         }
         if (!$user->isUserAllowedToLogin()) {
-            throw new PreviewTokenRejectedException(PreviewRejection::UserNotAvailable, 'Backend is locked for the editor of the preview token', 1794411125, null, $token);
+            throw new PreviewTokenRejectedException(PreviewRejection::UserNotAvailable, 'Backend is locked for the editor of the preview token', 1794411125, token: $token);
         }
         // TSconfig conditions are evaluated in the workspace of the preview
         $this->context->setAspect('workspace', new WorkspaceAspect($token->profile->workspace));
@@ -98,7 +98,7 @@ final readonly class PreviewBackendUserInitializer
             $user->fetchGroupData();
         } catch (PreviewTokenRejectedException $exception) {
             // PreviewBackendUserAuthentication::setWorkspace() refuses a workspace the editor may not enter
-            throw new PreviewTokenRejectedException($exception->rejection, $exception->getMessage(), 1794224122, $exception, $token);
+            throw new PreviewTokenRejectedException($exception->rejection, $exception->getMessage(), 1794224122, previous: $exception, token: $token);
         }
         $user->backendSetUC();
         return $user;

@@ -87,14 +87,14 @@ final readonly class PreviewAccessScope implements MiddlewareInterface
         if ($token->userId !== null) {
             $user = $GLOBALS['BE_USER'] ?? null;
             if (!$user instanceof BackendUserAuthentication) {
-                throw new PreviewTokenRejectedException(PreviewRejection::OutOfScope, 'Backend user of the preview is missing', 1794411128, null, $token);
+                throw new PreviewTokenRejectedException(PreviewRejection::OutOfScope, 'Backend user of the preview is missing', 1794411128, token: $token);
             }
             $page = reset($rootline);
             if (!is_array($page)) {
-                throw new PreviewTokenRejectedException(PreviewRejection::OutOfScope, 'Page of the preview does not exist', 1794411129, null, $token);
+                throw new PreviewTokenRejectedException(PreviewRejection::OutOfScope, 'Page of the preview does not exist', 1794411129, token: $token);
             }
             if (!$user->doesUserHaveAccess($page, Permission::PAGE_SHOW)) {
-                throw new PreviewTokenRejectedException(PreviewRejection::OutOfScope, 'Page is not part of the preview', 1793265774, null, $token);
+                throw new PreviewTokenRejectedException(PreviewRejection::OutOfScope, 'Page is not part of the preview', 1793265774, token: $token);
             }
             $groups = $this->groupFilter->filter($user, $token->profile->groups, $rootline);
         }

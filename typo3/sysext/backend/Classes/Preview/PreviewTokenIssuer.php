@@ -132,12 +132,12 @@ final readonly class PreviewTokenIssuer
         }
         $profile = $previous->profile;
         return $this->sign($request, $user, $frontendUri, $pageId, new PreviewProfile(
-            $profile->workspace,
-            $profile->hiddenPages,
-            $profile->hiddenContent,
-            $profile->date,
-            $this->filterGroups($user, $pageId, $profile->groups),
-            $profile->loggedIn,
+            workspace: $profile->workspace,
+            hiddenPages: $profile->hiddenPages,
+            hiddenContent: $profile->hiddenContent,
+            date: $profile->date,
+            groups: $this->filterGroups($user, $pageId, $profile->groups),
+            loggedIn: $profile->loggedIn,
         ));
     }
 

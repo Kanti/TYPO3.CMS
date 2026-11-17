@@ -131,7 +131,7 @@ final class PreviewAccessCacheHashTest extends FunctionalTestCase
     private function sign(): string
     {
         return new PreviewTokenService(new SystemClock())
-            ->sign(new PreviewProfile(0, true, false, 0, []), self::BACKEND, self::USER_AGENT, 1)
+            ->sign(new PreviewProfile(workspace: 0, hiddenPages: true, hiddenContent: false, date: 0, groups: []), self::BACKEND, self::USER_AGENT, 1)
             ->jwt;
     }
 }
