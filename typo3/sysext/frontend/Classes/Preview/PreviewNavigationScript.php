@@ -15,7 +15,7 @@ declare(strict_types=1);
  * The TYPO3 project - inspiring people to share!
  */
 
-namespace TYPO3\CMS\Frontend\Middleware;
+namespace TYPO3\CMS\Frontend\Preview;
 
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
@@ -30,6 +30,7 @@ use TYPO3\CMS\Core\Security\ContentSecurityPolicy\HashValue;
 use TYPO3\CMS\Core\SystemResource\Publishing\SystemResourcePublisherInterface;
 use TYPO3\CMS\Core\SystemResource\SystemResourceFactory;
 use TYPO3\CMS\Core\SystemResource\Type\PublicResourceInterface;
+use TYPO3\CMS\Frontend\Middleware\PreviewAccess;
 
 /**
  * Adds the navigation script of a preview to the page in the frame, under the

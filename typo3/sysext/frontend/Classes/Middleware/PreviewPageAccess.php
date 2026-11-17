@@ -32,6 +32,7 @@ use TYPO3\CMS\Core\Routing\PageArguments;
 use TYPO3\CMS\Core\Type\Bitmask\Permission;
 use TYPO3\CMS\Core\Utility\GeneralUtility;
 use TYPO3\CMS\Core\Utility\RootlineUtility;
+use TYPO3\CMS\Frontend\Preview\PreviewNavigationScript;
 
 /**
  * Refuses a preview of a page the editor of the token may not show, as soon as
