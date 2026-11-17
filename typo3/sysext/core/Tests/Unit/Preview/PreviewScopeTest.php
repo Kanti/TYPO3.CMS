@@ -91,6 +91,38 @@ final class PreviewScopeTest extends UnitTestCase
         self::assertSame($allowed, $this->createScope()->allowsUrl($address, new Uri('https://example.com/current')));
     }
 
+    public static function addressesBrowsersReadDifferentlyDataProvider(): \Generator
+    {
+        yield 'backslash after the leading slash' => ['/\\evil.example/x', false];
+        yield 'two backslashes' => ['\\\\evil.example/x', false];
+        yield 'backslashes after the scheme' => ['https:\\\\evil.example/x', false];
+        yield 'space before an address relative to the scheme' => [' //evil.example/x', false];
+        yield 'tab before an address relative to the scheme' => ["\t//evil.example/x", false];
+        yield 'control character before an address relative to the scheme' => ["\x01//evil.example/x", false];
+        yield 'tab between the slashes' => ["/\t/evil.example/x", false];
+        yield 'line break between the slashes' => ["/\n/evil.example/x", false];
+        yield 'carriage return between the slashes' => ["/\r/evil.example/x", false];
+        yield 'space before a script' => [' javascript:alert(1)', false];
+        yield 'space at the end' => ['/page ', false];
+        yield 'backslash in the query' => ['/search?q=a\\b', true];
+        yield 'backslash in the fragment' => ['/page#a\\b', true];
+    }
+
+    /**
+     * Browsers read an address differently from a URI parser: they remove tabs and line
+     * breaks, strip control characters and spaces at both ends, and take a backslash before
+     * the query for a slash. "/\evil.example/x" is a path to PHP and the host evil.example
+     * to a browser. Such an address never carries the token, so a link, a form or a redirect
+     * of an extension cannot hand it to another host; a backslash in the query or the
+     * fragment changes no host and keeps it.
+     */
+    #[Test]
+    #[DataProvider('addressesBrowsersReadDifferentlyDataProvider')]
+    public function addressesBrowsersReadDifferentlyAreNotAllowed(string $address, bool $allowed): void
+    {
+        self::assertSame($allowed, $this->createScope()->allowsUrl($address, new Uri('https://example.com/current')));
+    }
+
     public static function plainHttpDataProvider(): \Generator
     {
         yield 'address on plain HTTP of a host whose site uses HTTPS' => ['http://secure.example/page', false];

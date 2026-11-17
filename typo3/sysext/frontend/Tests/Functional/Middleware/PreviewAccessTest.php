@@ -1048,6 +1048,27 @@ final class PreviewAccessTest extends FunctionalTestCase
     }
 
     /**
+     * An extension may redirect to an address taken from the request. A browser reads
+     * "/\evil.example/x" as the host evil.example, so the redirect keeps its address and
+     * gets no token, where a URI parser would see a path on the host of the request.
+     */
+    #[Test]
+    public function redirectToAnAddressABrowserReadsAsAnotherHostGetsNoToken(): void
+    {
+        $handler = new class implements RequestHandlerInterface {
+            public function handle(ServerRequestInterface $request): ResponseInterface
+            {
+                return new RedirectResponse('/\evil.example/x', 303);
+            }
+        };
+
+        $response = $this->processPreviewAccess('https://first.example/contact?__t3ct=' . $this->sign(), ['Sec-Fetch-Dest' => 'iframe'], $handler);
+
+        self::assertSame(303, $response->getStatusCode());
+        self::assertSame('/\evil.example/x', $response->getHeaderLine('Location'));
+    }
+
+    /**
      * An extension may answer with an ImmediateResponseException, which leaves the stack
      * of middlewares at once. Its answer is still one of the preview: never cached, never
      * indexed, and framed only by the backend that signed the token.

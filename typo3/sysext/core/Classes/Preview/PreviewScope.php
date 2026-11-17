@@ -110,6 +110,9 @@ final readonly class PreviewScope
      */
     public function allowsUrl(string $url, UriInterface $base): bool
     {
+        if (!self::isReadAsWritten($url)) {
+            return false;
+        }
         $scheme = parse_url($url, PHP_URL_SCHEME);
         if (is_string($scheme) && !in_array(strtolower($scheme), ['http', 'https'], true)) {
             return false;
@@ -120,6 +123,23 @@ final readonly class PreviewScope
             return false;
         }
         return $this->allowsUri(UriResolver::resolve($base, $uri));
+    }
+
+    /**
+     * Browsers read an address differently from a URI parser where it holds a tab or a
+     * line break, which they remove, a control character or a space at either end, which
+     * they strip, or a backslash before its query, which they take for a slash:
+     * "/\evil.example/x" leads to the host evil.example. The token goes to no such address.
+     */
+    private static function isReadAsWritten(string $url): bool
+    {
+        if (strpbrk($url, "\t\n\r") !== false) {
+            return false;
+        }
+        if ($url !== trim($url, "\x00..\x20")) {
+            return false;
+        }
+        return !str_contains(substr($url, 0, strcspn($url, '?#')), '\\');
     }
 
     public static function hostOf(UriInterface $uri): string
