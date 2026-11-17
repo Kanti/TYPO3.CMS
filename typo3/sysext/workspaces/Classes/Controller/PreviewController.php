@@ -137,7 +137,8 @@ final readonly class PreviewController
                 $rootline
             );
             if (!$this->workspaceService->isNewPage($pageUid)) {
-                // The live frame shows the page as a visitor sees it, without a simulated group
+                // The live frame shows the page as a visitor sees it. It simulates no frontend user group
+                // and no date, so the ADMCMD_ parameters of the draft stay out of its address.
                 $parameters = $queryParameters;
                 // temporarily set workspace aspect to live (0) to generate the live URL
                 $liveWorkspaceContext = clone $this->context;
