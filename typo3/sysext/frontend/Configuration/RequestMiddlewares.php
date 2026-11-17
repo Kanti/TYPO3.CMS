@@ -70,8 +70,8 @@ return [
                 'typo3/cms-frontend/base-redirect-resolver',
             ],
         ],
-        'typo3/cms-frontend/preview-access-scope' => [
-            'target' => \TYPO3\CMS\Frontend\Middleware\PreviewAccessScope::class,
+        'typo3/cms-frontend/preview-page-access' => [
+            'target' => \TYPO3\CMS\Frontend\Middleware\PreviewPageAccess::class,
             'after' => [
                 'typo3/cms-frontend/page-resolver',
             ],

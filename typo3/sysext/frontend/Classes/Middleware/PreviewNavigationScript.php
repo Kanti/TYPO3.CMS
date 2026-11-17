@@ -20,84 +20,42 @@ namespace TYPO3\CMS\Frontend\Middleware;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use Psr\Http\Message\StreamFactoryInterface;
-use Psr\Http\Server\MiddlewareInterface;
 use Psr\Http\Server\RequestHandlerInterface;
-use TYPO3\CMS\Core\Authentication\BackendUserAuthentication;
-use TYPO3\CMS\Core\Context\Context;
 use TYPO3\CMS\Core\Core\RequestId;
-use TYPO3\CMS\Core\Exception\Page\RootLineException;
 use TYPO3\CMS\Core\Page\ResourceHashCollection;
-use TYPO3\CMS\Core\Preview\PreviewGroupFilter;
-use TYPO3\CMS\Core\Preview\PreviewRejection;
 use TYPO3\CMS\Core\Preview\PreviewToken;
-use TYPO3\CMS\Core\Preview\PreviewTokenRejectedException;
-use TYPO3\CMS\Core\Routing\PageArguments;
 use TYPO3\CMS\Core\Security\ContentSecurityPolicy\Directive;
 use TYPO3\CMS\Core\Security\ContentSecurityPolicy\DirectiveHashCollection;
 use TYPO3\CMS\Core\Security\ContentSecurityPolicy\HashValue;
 use TYPO3\CMS\Core\SystemResource\Publishing\SystemResourcePublisherInterface;
 use TYPO3\CMS\Core\SystemResource\SystemResourceFactory;
 use TYPO3\CMS\Core\SystemResource\Type\PublicResourceInterface;
-use TYPO3\CMS\Core\Type\Bitmask\Permission;
-use TYPO3\CMS\Core\Utility\GeneralUtility;
-use TYPO3\CMS\Core\Utility\RootlineUtility;
 
 /**
- * Refuses a preview of a page the editor of the token may not show, as soon as
- * the page is resolved, decides which of the simulated frontend user groups the
- * editor may simulate on this page, and adds the navigation script to the
- * rendered page. PreviewAccess turns the refusal into its error page.
+ * Adds the navigation script of a preview to the page in the frame, under the
+ * Content-Security-Policy of the site.
  *
  * @internal
  */
-final readonly class PreviewAccessScope implements MiddlewareInterface
+final readonly class PreviewNavigationScript
 {
-    public const GROUPS_ATTRIBUTE = 'frontend.preview.groups';
     private const NAVIGATION_SCRIPT = 'EXT:frontend/Resources/Public/JavaScript/preview-navigation.js';
 
     public function __construct(
-        private Context $context,
         private RequestId $requestId,
         private SystemResourceFactory $resourceFactory,
         private SystemResourcePublisherInterface $resourcePublisher,
         private StreamFactoryInterface $streamFactory,
-        private PreviewGroupFilter $groupFilter,
         private DirectiveHashCollection $directiveHashCollection,
         private ResourceHashCollection $resourceHashCollection,
     ) {}
 
-    public function process(ServerRequestInterface $request, RequestHandlerInterface $handler): ResponseInterface
+    /**
+     * Lets the handler render the page and adds the script to it when it is the HTML
+     * page in the frame.
+     */
+    public function addToPage(ServerRequestInterface $request, RequestHandlerInterface $handler, PreviewToken $token, int $pageId): ResponseInterface
     {
-        $token = $request->getAttribute(PreviewAccess::ATTRIBUTE);
-        $pageArguments = $request->getAttribute('routing');
-        if (!$token instanceof PreviewToken) {
-            return $handler->handle($request);
-        }
-        if (!$pageArguments instanceof PageArguments) {
-            return $handler->handle($request);
-        }
-        try {
-            $rootline = GeneralUtility::makeInstance(RootlineUtility::class, $pageArguments->getPageId(), '', $this->context)->get();
-        } catch (RootLineException) {
-            $rootline = [];
-        }
-        $groups = [];
-        // A refusal leaves the stack through PreviewAccess, which answers with the error page
-        if (!$token->isVisitorWithoutBackendUser()) {
-            $user = $GLOBALS['BE_USER'] ?? null;
-            if (!$user instanceof BackendUserAuthentication) {
-                throw new PreviewTokenRejectedException(PreviewRejection::OutOfScope, 'Backend user of the preview is missing', 1794411128, token: $token);
-            }
-            $page = reset($rootline);
-            if (!is_array($page)) {
-                throw new PreviewTokenRejectedException(PreviewRejection::OutOfScope, 'Page of the preview does not exist', 1794411129, token: $token);
-            }
-            if (!$user->doesUserHaveAccess($page, Permission::PAGE_SHOW)) {
-                throw new PreviewTokenRejectedException(PreviewRejection::OutOfScope, 'Page is not part of the preview', 1793265774, token: $token);
-            }
-            $groups = $this->groupFilter->filter($user, $token->profile->groups, $rootline);
-        }
-        $request = $request->withAttribute(self::GROUPS_ATTRIBUTE, $groups);
         // Nonce and hash are registered before the CSP headers are prepared further down the stack
         $nonce = $this->requestId->nonce->consumeStatic(self::class);
         $script = $this->resourceFactory->createPublicResource(self::NAVIGATION_SCRIPT);
@@ -116,7 +74,7 @@ final readonly class PreviewAccessScope implements MiddlewareInterface
         if (!str_starts_with(strtolower($response->getHeaderLine('Content-Type')), 'text/html')) {
             return $response;
         }
-        return $this->withNavigationScript($request, $response, $token, $pageArguments->getPageId(), $script, $nonce, $hash);
+        return $this->withScript($request, $response, $token, $pageId, $script, $nonce, $hash);
     }
 
     /**
@@ -124,7 +82,7 @@ final readonly class PreviewAccessScope implements MiddlewareInterface
      * its hash, its integrity, so it runs under nonce-based and hash-based policies. The
      * integrity is left out elsewhere, as it blocks the script if a proxy changes the file.
      */
-    private function withNavigationScript(
+    private function withScript(
         ServerRequestInterface $request,
         ResponseInterface $response,
         PreviewToken $token,

@@ -60,8 +60,8 @@ readonly class PreviewSimulator implements MiddlewareInterface
         if ($previewToken instanceof PreviewToken) {
             // An editor without a simulated login keeps a frontend login of the frame, as with a backend login
             if ($previewToken->profile->loggedIn) {
-                // Only the groups the editor may simulate on this page, see PreviewAccessScope
-                $groups = $request->getAttribute(PreviewAccessScope::GROUPS_ATTRIBUTE, []);
+                // Only the groups the editor may simulate on this page, see PreviewPageAccess
+                $groups = $request->getAttribute(PreviewPageAccess::GROUPS_ATTRIBUTE, []);
                 $this->replaceUserGroups($request, $groups);
                 if ($groups === []) {
                     // A login without any group still counts as login: "-2" applies, "-1" does not
