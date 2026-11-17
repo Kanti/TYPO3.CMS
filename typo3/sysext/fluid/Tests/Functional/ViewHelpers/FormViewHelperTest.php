@@ -22,8 +22,8 @@ use PHPUnit\Framework\Attributes\Test;
 use Psr\Http\Message\ServerRequestInterface;
 use TYPO3\CMS\Core\Core\SystemEnvironmentBuilder;
 use TYPO3\CMS\Core\Http\ServerRequest;
+use TYPO3\CMS\Core\Preview\PreviewHosts;
 use TYPO3\CMS\Core\Preview\PreviewProfile;
-use TYPO3\CMS\Core\Preview\PreviewScope;
 use TYPO3\CMS\Core\Preview\PreviewToken;
 use TYPO3\CMS\Core\Tests\Functional\SiteHandling\SiteBasedTestTrait;
 use TYPO3\CMS\Core\TypoScript\AST\Node\RootNode;
@@ -398,7 +398,7 @@ final class FormViewHelperTest extends FunctionalTestCase
                     PreviewAccess::ATTRIBUTE,
                     new PreviewToken('preview-jwt', $profile, 'https://backend.example.com', time() + 60, 1)
                 )
-                ->withAttribute(PreviewAccess::SCOPE_ATTRIBUTE, new PreviewScope([
+                ->withAttribute(PreviewAccess::HOSTS_ATTRIBUTE, new PreviewHosts([
                     ['site' => 'main', 'host' => 'site.example', 'origin' => 'https://site.example'],
                     ['site' => 'other', 'host' => 'other.example', 'origin' => 'https://other.example'],
                 ]));

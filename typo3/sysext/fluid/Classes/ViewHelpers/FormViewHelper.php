@@ -23,7 +23,7 @@ use TYPO3\CMS\Core\Context\SecurityAspect;
 use TYPO3\CMS\Core\Crypto\HashAlgo;
 use TYPO3\CMS\Core\Crypto\HashService;
 use TYPO3\CMS\Core\Http\ApplicationType;
-use TYPO3\CMS\Core\Preview\PreviewScope;
+use TYPO3\CMS\Core\Preview\PreviewHosts;
 use TYPO3\CMS\Core\Preview\PreviewToken;
 use TYPO3\CMS\Core\Preview\PreviewTokenService;
 use TYPO3\CMS\Core\Security\RequestToken;
@@ -485,11 +485,11 @@ class FormViewHelper extends AbstractFormViewHelper
     protected function isActionOnAHostOfThePreview(): bool
     {
         $request = $this->renderingContext->getAttribute(ServerRequestInterface::class);
-        $previewScope = $request->getAttribute(PreviewAccess::SCOPE_ATTRIBUTE);
-        if (!$previewScope instanceof PreviewScope) {
+        $previewHosts = $request->getAttribute(PreviewAccess::HOSTS_ATTRIBUTE);
+        if (!$previewHosts instanceof PreviewHosts) {
             return false;
         }
-        return $previewScope->allowsUrl(htmlspecialchars_decode((string)$this->tag->getAttribute('action')), $request->getUri());
+        return $previewHosts->allowsUrl(htmlspecialchars_decode((string)$this->tag->getAttribute('action')), $request->getUri());
     }
 
     /**

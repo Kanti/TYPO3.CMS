@@ -26,11 +26,11 @@ use TYPO3\CMS\Core\Security\ContentSecurityPolicy\UriValue;
 /**
  * The sites and hosts a preview token is valid on. It is not part of the token:
  * the backend and the site resolve it from the rights the editor has now, see
- * PreviewScopeResolver.
+ * PreviewHostsResolver.
  *
  * @internal
  */
-final readonly class PreviewScope
+final readonly class PreviewHosts
 {
     /**
      * More origins than this make the frame-src header of the backend page longer than

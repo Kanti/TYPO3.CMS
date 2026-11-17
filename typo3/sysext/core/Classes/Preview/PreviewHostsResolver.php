@@ -35,15 +35,15 @@ use TYPO3\CMS\Core\Utility\RootlineUtility;
  *
  * @internal
  */
-final readonly class PreviewScopeResolver
+final readonly class PreviewHostsResolver
 {
     public function __construct(private SiteFinder $siteFinder) {}
 
-    public function resolve(BackendUserAuthentication $user, UriInterface $backendUri): PreviewScope
+    public function resolve(BackendUserAuthentication $user, UriInterface $backendUri): PreviewHosts
     {
         $mounts = $user->isAdmin() ? [0] : array_map(intval(...), $user->getWebmounts());
         if ($mounts === []) {
-            return new PreviewScope([]);
+            return new PreviewHosts([]);
         }
         $bases = [];
         foreach ($this->siteFinder->getAllSites() as $site) {
@@ -61,15 +61,15 @@ final readonly class PreviewScopeResolver
                 if ($base->getHost() === '') {
                     continue;
                 }
-                $base = $base->withHost(PreviewScope::normalizeHost($base->getHost()));
+                $base = $base->withHost(PreviewHosts::normalizeHost($base->getHost()));
                 $bases[] = [
                     'site' => $site->getIdentifier(),
-                    'host' => PreviewScope::hostOf($base),
+                    'host' => PreviewHosts::hostOf($base),
                     'origin' => (string)$base->withPath('')->withQuery('')->withFragment('')->withUserInfo(''),
                 ];
             }
         }
-        return new PreviewScope($bases);
+        return new PreviewHosts($bases);
     }
 
     /**

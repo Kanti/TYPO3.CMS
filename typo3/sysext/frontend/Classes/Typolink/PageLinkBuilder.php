@@ -47,7 +47,7 @@ use TYPO3\CMS\Core\Http\Uri;
 use TYPO3\CMS\Core\LinkHandling\LinkService;
 use TYPO3\CMS\Core\LinkHandling\PageTypeLinkResolver;
 use TYPO3\CMS\Core\LinkHandling\TypoLinkCodecService;
-use TYPO3\CMS\Core\Preview\PreviewScope;
+use TYPO3\CMS\Core\Preview\PreviewHosts;
 use TYPO3\CMS\Core\Preview\PreviewToken;
 use TYPO3\CMS\Core\Preview\PreviewTokenService;
 use TYPO3\CMS\Core\Routing\InvalidRouteArgumentsException;
@@ -320,9 +320,9 @@ class PageLinkBuilder extends AbstractTypolinkBuilder implements TypolinkBuilder
         }
 
         $previewToken = $request->getAttribute(PreviewAccess::ATTRIBUTE);
-        $previewScope = $request->getAttribute(PreviewAccess::SCOPE_ATTRIBUTE);
-        if ($previewToken instanceof PreviewToken && $previewScope instanceof PreviewScope) {
-            $url = $previewScope->allowsUrl($result->getUrl(), $request->getUri())
+        $previewHosts = $request->getAttribute(PreviewAccess::HOSTS_ATTRIBUTE);
+        if ($previewToken instanceof PreviewToken && $previewHosts instanceof PreviewHosts) {
+            $url = $previewHosts->allowsUrl($result->getUrl(), $request->getUri())
                 ? PreviewTokenService::addToUrl($result->getUrl(), $previewToken->jwt)
                 : PreviewTokenService::removeFromUrl($result->getUrl());
             $result = $result->withAttribute('href', $url);

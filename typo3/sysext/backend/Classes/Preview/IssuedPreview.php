@@ -18,7 +18,7 @@ declare(strict_types=1);
 namespace TYPO3\CMS\Backend\Preview;
 
 use Psr\Http\Message\UriInterface;
-use TYPO3\CMS\Core\Preview\PreviewScope;
+use TYPO3\CMS\Core\Preview\PreviewHosts;
 use TYPO3\CMS\Core\Preview\PreviewToken;
 
 /**
@@ -33,6 +33,6 @@ final readonly class IssuedPreview
     public function __construct(
         public PreviewToken $token,
         public UriInterface $uri,
-        public PreviewScope $scope,
+        public PreviewHosts $scope,
     ) {}
 }

@@ -35,9 +35,9 @@ use TYPO3\CMS\Core\Http\NormalizedParams;
 use TYPO3\CMS\Core\Http\RedirectResponse;
 use TYPO3\CMS\Core\Http\Uri;
 use TYPO3\CMS\Core\Localization\LanguageServiceFactory;
+use TYPO3\CMS\Core\Preview\PreviewHosts;
+use TYPO3\CMS\Core\Preview\PreviewHostsResolver;
 use TYPO3\CMS\Core\Preview\PreviewRejection;
-use TYPO3\CMS\Core\Preview\PreviewScope;
-use TYPO3\CMS\Core\Preview\PreviewScopeResolver;
 use TYPO3\CMS\Core\Preview\PreviewToken;
 use TYPO3\CMS\Core\Preview\PreviewTokenRejectedException;
 use TYPO3\CMS\Core\Preview\PreviewTokenService;
@@ -64,16 +64,16 @@ final readonly class PreviewAccess implements MiddlewareInterface
 {
     public const ATTRIBUTE = 'frontend.preview.token';
     /**
-     * The sites and hosts of the preview, resolved once per request, see PreviewScope
+     * The sites and hosts of the preview, resolved once per request, see PreviewHosts
      */
-    public const SCOPE_ATTRIBUTE = 'frontend.preview.scope';
+    public const HOSTS_ATTRIBUTE = 'frontend.preview.hosts';
 
     public function __construct(
         private Context $context,
         private PreviewTokenService $tokenService,
         private LanguageServiceFactory $languageServiceFactory,
         private PreviewBackendUserInitializer $backendUserInitializer,
-        private PreviewScopeResolver $scopeResolver,
+        private PreviewHostsResolver $hostsResolver,
     ) {}
 
     public function process(ServerRequestInterface $request, RequestHandlerInterface $handler): ResponseInterface
@@ -121,19 +121,19 @@ final readonly class PreviewAccess implements MiddlewareInterface
      *
      * @throws PreviewTokenRejectedException
      */
-    private function authorize(ServerRequestInterface $request, PreviewToken $token): PreviewScope
+    private function authorize(ServerRequestInterface $request, PreviewToken $token): PreviewHosts
     {
         if (!$token->isVisitorWithoutBackendUser()) {
             $this->assertBackendAccessible($request, $token);
             $user = $this->backendUserInitializer->initialize($token);
-            $scope = $this->scopeResolver->resolve($user, new Uri($token->backendOrigin));
+            $scope = $this->hostsResolver->resolve($user, new Uri($token->backendOrigin));
         } else {
             $user = null;
-            $scope = $this->scopeResolver->resolve($this->backendUserInitializer->createEditorOfVisitorToken($token), new Uri($token->backendOrigin));
+            $scope = $this->hostsResolver->resolve($this->backendUserInitializer->createEditorOfVisitorToken($token), new Uri($token->backendOrigin));
             $GLOBALS['BE_USER'] = null;
             $this->context->setAspect('backend.user', new UserAspect());
         }
-        if (!$scope->allowsHost(PreviewScope::hostOf($request->getUri()))) {
+        if (!$scope->allowsHost(PreviewHosts::hostOf($request->getUri()))) {
             // The page on a host outside the preview does not talk to the backend that signed the token, see process()
             throw new PreviewTokenRejectedException(PreviewRejection::Invalid, 'Host is not part of the preview', 1794909953);
         }
@@ -148,7 +148,7 @@ final readonly class PreviewAccess implements MiddlewareInterface
      * Sets the simulation of the token, keeps the page out of the page cache and hands token
      * and scope to the rest of the stack.
      */
-    private function applyProfile(ServerRequestInterface $request, PreviewToken $token, PreviewScope $scope): ServerRequestInterface
+    private function applyProfile(ServerRequestInterface $request, PreviewToken $token, PreviewHosts $scope): ServerRequestInterface
     {
         $this->context->setAspect('workspace', new WorkspaceAspect($token->profile->workspace));
         $this->context->setAspect('visibility', new VisibilityAspect(
@@ -167,7 +167,7 @@ final readonly class PreviewAccess implements MiddlewareInterface
         $cacheInstruction->disableCache('EXT:frontend: Preview token bypasses the page cache.');
         return $request
             ->withAttribute(self::ATTRIBUTE, $token)
-            ->withAttribute(self::SCOPE_ATTRIBUTE, $scope)
+            ->withAttribute(self::HOSTS_ATTRIBUTE, $scope)
             ->withAttribute('frontend.cache.instruction', $cacheInstruction);
     }
 
@@ -178,7 +178,7 @@ final readonly class PreviewAccess implements MiddlewareInterface
      *
      * @throws PreviewTokenRejectedException
      */
-    private function respond(ServerRequestInterface $request, RequestHandlerInterface $handler, PreviewToken $token, PreviewScope $scope): ResponseInterface
+    private function respond(ServerRequestInterface $request, RequestHandlerInterface $handler, PreviewToken $token, PreviewHosts $scope): ResponseInterface
     {
         try {
             $response = $handler->handle($request);
@@ -197,7 +197,7 @@ final readonly class PreviewAccess implements MiddlewareInterface
      * as it is, as signed addresses of login or payment services must keep their bytes.
      * Only a token it would carry to another host is removed.
      */
-    private function withTokenInLocation(ServerRequestInterface $request, ResponseInterface $response, PreviewToken $token, PreviewScope $scope): ResponseInterface
+    private function withTokenInLocation(ServerRequestInterface $request, ResponseInterface $response, PreviewToken $token, PreviewHosts $scope): ResponseInterface
     {
         $location = $response->getHeaderLine('Location');
         if ($scope->allowsUrl($location, $request->getUri())) {
@@ -288,7 +288,7 @@ final readonly class PreviewAccess implements MiddlewareInterface
      *
      * @throws PreviewTokenRejectedException
      */
-    private function assertSiteInScope(ServerRequestInterface $request, PreviewScope $scope): void
+    private function assertSiteInScope(ServerRequestInterface $request, PreviewHosts $scope): void
     {
         $site = $request->getAttribute('site');
         if (!$site instanceof Site) {

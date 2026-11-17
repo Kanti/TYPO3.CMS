@@ -27,8 +27,8 @@ use TYPO3\CMS\Core\Authentication\BackendUserAuthentication;
 use TYPO3\CMS\Core\Http\NormalizedParams;
 use TYPO3\CMS\Core\Http\Uri;
 use TYPO3\CMS\Core\Preview\PreviewGroupFilter;
+use TYPO3\CMS\Core\Preview\PreviewHostsResolver;
 use TYPO3\CMS\Core\Preview\PreviewProfile;
-use TYPO3\CMS\Core\Preview\PreviewScopeResolver;
 use TYPO3\CMS\Core\Preview\PreviewTokenRejectedException;
 use TYPO3\CMS\Core\Preview\PreviewTokenService;
 use TYPO3\CMS\Core\Type\Bitmask\Permission;
@@ -54,7 +54,7 @@ final readonly class PreviewTokenIssuer
 
     public function __construct(
         private PreviewTokenService $tokenService,
-        private PreviewScopeResolver $scopeResolver,
+        private PreviewHostsResolver $hostsResolver,
         private UriBuilder $uriBuilder,
         private ClockInterface $clock,
         private PreviewGroupFilter $groupFilter,
@@ -197,7 +197,7 @@ final readonly class PreviewTokenIssuer
             $backendUri,
             $frontendUri->withQuery(PreviewTokenService::withoutParameters($frontendUri->getQuery(), self::PREVIEW_PARAMETERS))
         );
-        $scope = $this->scopeResolver->resolve($user, $backendUri);
+        $scope = $this->hostsResolver->resolve($user, $backendUri);
         if ($scope->isEmpty()) {
             throw new PreviewAccessDeniedException('No site is accessible', 1793265779);
         }

@@ -20,16 +20,16 @@ namespace TYPO3\CMS\Core\Tests\Unit\Preview;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Test;
 use TYPO3\CMS\Core\Http\Uri;
-use TYPO3\CMS\Core\Preview\PreviewScope;
+use TYPO3\CMS\Core\Preview\PreviewHosts;
 use TYPO3\CMS\Core\Security\ContentSecurityPolicy\SourceScheme;
 use TYPO3\CMS\Core\Security\ContentSecurityPolicy\UriValue;
 use TYPO3\TestingFramework\Core\Unit\UnitTestCase;
 
-final class PreviewScopeTest extends UnitTestCase
+final class PreviewHostsTest extends UnitTestCase
 {
-    private function createScope(): PreviewScope
+    private function createScope(): PreviewHosts
     {
-        return new PreviewScope([
+        return new PreviewHosts([
             ['site' => 'main', 'host' => 'example.com', 'origin' => 'https://example.com'],
             ['site' => 'main', 'host' => 'example.de', 'origin' => 'https://example.de'],
             ['site' => 'shop', 'host' => 'example.com', 'origin' => 'https://example.com'],
@@ -47,7 +47,7 @@ final class PreviewScopeTest extends UnitTestCase
         self::assertSame(['example.com', 'example.de', 'intranet.example:8443'], $scope->getHosts());
         self::assertSame(['https://example.com', 'https://example.de', 'https://intranet.example:8443'], $scope->getOrigins());
         self::assertFalse($scope->isEmpty());
-        self::assertTrue(new PreviewScope([])->isEmpty());
+        self::assertTrue(new PreviewHosts([])->isEmpty());
     }
 
     public static function addressesDataProvider(): \Generator
@@ -159,9 +159,9 @@ final class PreviewScopeTest extends UnitTestCase
         self::assertTrue($scope->allowsUri(new Uri('http://mixed.example/')));
     }
 
-    private function createScopeWithSchemes(): PreviewScope
+    private function createScopeWithSchemes(): PreviewHosts
     {
-        return new PreviewScope([
+        return new PreviewHosts([
             ['site' => 'secure', 'host' => 'secure.example', 'origin' => 'https://secure.example'],
             ['site' => 'plain', 'host' => 'plain.example', 'origin' => 'http://plain.example'],
             ['site' => 'mixed', 'host' => 'mixed.example', 'origin' => 'https://mixed.example'],
@@ -177,12 +177,12 @@ final class PreviewScopeTest extends UnitTestCase
     public function internationalizedDomainNamesAreComparedInTheirAsciiForm(): void
     {
         $base = new Uri('https://Bücher.example:8443/');
-        $scope = new PreviewScope([
-            ['site' => 'books', 'host' => PreviewScope::hostOf($base), 'origin' => 'https://xn--bcher-kva.example:8443'],
+        $scope = new PreviewHosts([
+            ['site' => 'books', 'host' => PreviewHosts::hostOf($base), 'origin' => 'https://xn--bcher-kva.example:8443'],
         ]);
 
-        self::assertSame('xn--bcher-kva.example:8443', PreviewScope::hostOf($base));
-        self::assertSame('xn--bcher-kva.example', PreviewScope::normalizeHost('BÜCHER.example'));
+        self::assertSame('xn--bcher-kva.example:8443', PreviewHosts::hostOf($base));
+        self::assertSame('xn--bcher-kva.example', PreviewHosts::normalizeHost('BÜCHER.example'));
         self::assertTrue($scope->allowsUri(new Uri('https://xn--bcher-kva.example:8443/page')));
         self::assertTrue($scope->allowsUri(new Uri('https://bücher.example:8443/page')));
         self::assertFalse($scope->allowsUri(new Uri('https://xn--bcher-kva.example/page')));
@@ -207,9 +207,9 @@ final class PreviewScopeTest extends UnitTestCase
     #[Test]
     public function frameSourcesAreTheOriginsUpToTheLimit(): void
     {
-        $sources = new PreviewScope(self::basesOfSites(PreviewScope::MAX_FRAME_ORIGINS))->getFrameSources();
+        $sources = new PreviewHosts(self::basesOfSites(PreviewHosts::MAX_FRAME_ORIGINS))->getFrameSources();
 
-        self::assertCount(PreviewScope::MAX_FRAME_ORIGINS, $sources);
+        self::assertCount(PreviewHosts::MAX_FRAME_ORIGINS, $sources);
         self::assertEquals(new UriValue('https://site1.example'), $sources[0]);
     }
 
@@ -221,7 +221,7 @@ final class PreviewScopeTest extends UnitTestCase
     #[Test]
     public function frameSourcesAreTheSchemesAboveTheLimit(): void
     {
-        $sources = new PreviewScope(self::basesOfSites(PreviewScope::MAX_FRAME_ORIGINS + 1))->getFrameSources();
+        $sources = new PreviewHosts(self::basesOfSites(PreviewHosts::MAX_FRAME_ORIGINS + 1))->getFrameSources();
 
         self::assertSame([SourceScheme::https], $sources);
     }
@@ -229,10 +229,10 @@ final class PreviewScopeTest extends UnitTestCase
     #[Test]
     public function frameSourcesAboveTheLimitAllowPlainHttpOnlyWhereASiteUsesIt(): void
     {
-        $bases = self::basesOfSites(PreviewScope::MAX_FRAME_ORIGINS);
+        $bases = self::basesOfSites(PreviewHosts::MAX_FRAME_ORIGINS);
         $bases[] = ['site' => 'legacy', 'host' => 'legacy.example', 'origin' => 'http://legacy.example'];
 
-        $sources = new PreviewScope($bases)->getFrameSources();
+        $sources = new PreviewHosts($bases)->getFrameSources();
 
         self::assertSame([SourceScheme::https, SourceScheme::http], $sources);
     }
@@ -240,9 +240,9 @@ final class PreviewScopeTest extends UnitTestCase
     #[Test]
     public function frameSourcesCountEachOriginOnce(): void
     {
-        $bases = self::basesOfSites(PreviewScope::MAX_FRAME_ORIGINS);
+        $bases = self::basesOfSites(PreviewHosts::MAX_FRAME_ORIGINS);
         $bases[] = ['site' => 'site1-de', 'host' => 'site1.example', 'origin' => 'https://site1.example'];
 
-        self::assertCount(PreviewScope::MAX_FRAME_ORIGINS, new PreviewScope($bases)->getFrameSources());
+        self::assertCount(PreviewHosts::MAX_FRAME_ORIGINS, new PreviewHosts($bases)->getFrameSources());
     }
 }
