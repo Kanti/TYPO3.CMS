@@ -72,7 +72,7 @@ export default class PreviewFrame {
   private page: number;
   private expiresAt: number;
   private timer: number = 0;
-  private renewal: Promise<string> | null = null;
+  private signing: { address: string, url: Promise<string> } | null = null;
   private readonly failures = new Map<string, Set<string>>();
   private readonly listeners = new AbortController();
 
@@ -267,33 +267,48 @@ export default class PreviewFrame {
     }).catch((): void => this.fail());
   }
 
+  /**
+   * Signs one address at a time. Asked for the address it is signing, it hands out that
+   * result; another address waits and is signed after it with the token it brings, so
+   * it never gets the address of the other request.
+   */
   private sign(address: URL): Promise<string> {
-    if (this.renewal === null) {
-      this.renewal = new AjaxRequest(this.settings.renewUrl)
-        .post({ previewToken: this.token, url: address.href, page: this.page })
-        .then(response => response.resolve())
-        .then((result: { url: string, expiresIn: number, hosts?: unknown }): string => {
-          // The hosts of the preview are resolved again with every token
-          if (Array.isArray(result.hosts) && result.hosts.every((host: unknown): host is string => typeof host === 'string')) {
-            this.hosts = result.hosts;
-          }
-          const url = new URL(result.url);
-          if (!this.allows(url)) {
-            throw new Error('Preview token signed for another address');
-          }
-          if (url.origin !== address.origin) {
-            throw new Error('Preview token signed for another address');
-          }
-          this.token = readToken(url);
-          this.expiresAt = Date.now() + result.expiresIn * 1000;
-          this.schedule();
-          return url.href;
-        })
-        .finally((): void => {
-          this.renewal = null;
-        });
+    if (this.signing?.address === address.href) {
+      return this.signing.url;
     }
-    return this.renewal;
+    const previous = this.signing?.url.catch((): void => undefined) ?? Promise.resolve();
+    const signing = { address: address.href, url: previous.then((): Promise<string> => this.request(address)) };
+    const done = (): void => {
+      if (this.signing === signing) {
+        this.signing = null;
+      }
+    };
+    signing.url.then(done, done);
+    this.signing = signing;
+    return signing.url;
+  }
+
+  private request(address: URL): Promise<string> {
+    return new AjaxRequest(this.settings.renewUrl)
+      .post({ previewToken: this.token, url: address.href, page: this.page })
+      .then(response => response.resolve())
+      .then((result: { url: string, expiresIn: number, hosts?: unknown }): string => {
+        // The hosts of the preview are resolved again with every token
+        if (Array.isArray(result.hosts) && result.hosts.every((host: unknown): host is string => typeof host === 'string')) {
+          this.hosts = result.hosts;
+        }
+        const url = new URL(result.url);
+        if (!this.allows(url)) {
+          throw new Error('Preview token signed for another address');
+        }
+        if (url.origin !== address.origin) {
+          throw new Error('Preview token signed for another address');
+        }
+        this.token = readToken(url);
+        this.expiresAt = Date.now() + result.expiresIn * 1000;
+        this.schedule();
+        return url.href;
+      });
   }
 
   private schedule(): void {

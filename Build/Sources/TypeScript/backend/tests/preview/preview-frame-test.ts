@@ -22,6 +22,8 @@ type Backend = {
   fetch: SinonStub,
   renewals: Renewal[],
   adminPanelRequests: Array<{ url: string, fields: Array<[string, string]> }>,
+  // The token endpoint answers once this is settled, so a test can keep a renewal running
+  answer: Promise<void>,
 };
 
 /**
@@ -30,7 +32,7 @@ type Backend = {
  * endpoints of the admin panel store its settings.
  */
 function stubBackend(hosts: string[] = ['site.example']): Backend {
-  const backend: Backend = { fetch: null, renewals: [], adminPanelRequests: [] };
+  const backend: Backend = { fetch: null, renewals: [], adminPanelRequests: [], answer: Promise.resolve() };
   backend.fetch = stub(window, 'fetch').callsFake(async (input: RequestInfo | URL): Promise<Response> => {
     const request = input as Request;
     const path = new URL(request.url).pathname;
@@ -38,8 +40,10 @@ function stubBackend(hosts: string[] = ['site.example']): Backend {
     if (path === '/renew') {
       const renewal = Object.fromEntries(fields) as Renewal;
       backend.renewals.push(renewal);
+      const issued = backend.renewals.length;
+      await backend.answer;
       const signed = new URL(renewal.url);
-      signed.searchParams.set('__t3ct', 'token-' + backend.renewals.length);
+      signed.searchParams.set('__t3ct', 'token-' + issued);
       return new Response(JSON.stringify({ url: signed.href, expiresIn: 900, hosts }), { headers: { 'Content-Type': 'application/json' } });
     }
     backend.adminPanelRequests.push({ url: path, fields });
@@ -186,6 +190,38 @@ describe('@typo3/backend/preview/preview-frame and its token', (): void => {
     } finally {
       preview.dispose();
       open.restore();
+    }
+  });
+
+  /**
+   * The backend page renews the token of the page in the frame while a script of that
+   * page already leads to another host of the preview. That host loads with a token
+   * signed for it once the renewal is done, not with the address of the renewal.
+   */
+  it('loads another host of the preview the page asks for while a renewal is running', async (): Promise<void> => {
+    backend.fetch.restore();
+    backend = stubBackend(['site.example', 'other.example']);
+    let answer = (): void => undefined;
+    backend.answer = new Promise((resolve): void => {
+      answer = resolve;
+    });
+    const clock = useFakeTimers({ shouldAdvanceTime: true });
+    const preview = new PreviewFrame(frame, { url: 'https://site.example/one?__t3ct=token', renewUrl: '/renew', page: 3, hosts: ['site.example', 'other.example'], expiresIn: 90 });
+    try {
+      await clock.tickAsync(31_000);
+      await waitUntil((): boolean => backend.renewals.length === 1);
+
+      send(frame, { type: 'typo3:preview:navigate', url: 'https://other.example/page' });
+      answer();
+
+      await waitUntil((): boolean => frame.getAttribute('src') === 'https://other.example/page?__t3ct=token-2');
+      expect(backend.renewals).to.deep.equal([
+        { previewToken: 'token', url: 'https://site.example/one', page: '3' },
+        { previewToken: 'token-1', url: 'https://other.example/page', page: '3' },
+      ]);
+    } finally {
+      preview.dispose();
+      clock.restore();
     }
   });
 
