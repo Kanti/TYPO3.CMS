@@ -82,12 +82,13 @@ final readonly class PreviewAccess implements MiddlewareInterface
         if (!array_key_exists(PreviewTokenService::PARAMETER, $request->getQueryParams())) {
             return $handler->handle($request);
         }
-        if ($this->isTopLevelNavigation($request)) {
+        $kind = PreviewRequestKind::fromRequest($request);
+        if ($kind === PreviewRequestKind::Window) {
             return $this->redirectWithoutToken($request);
         }
         $token = null;
         try {
-            $token = $this->verify($request);
+            $token = $this->verify($request, $kind);
             $scope = $this->authorize($request, $token);
             return $this->respond($this->applyProfile($request, $token, $scope), $handler, $token, $scope);
         } catch (PreviewTokenRejectedException $exception) {
@@ -105,11 +106,11 @@ final readonly class PreviewAccess implements MiddlewareInterface
      *
      * @throws PreviewTokenRejectedException
      */
-    private function verify(ServerRequestInterface $request): PreviewToken
+    private function verify(ServerRequestInterface $request, PreviewRequestKind $kind): PreviewToken
     {
         $jwt = $request->getQueryParams()[PreviewTokenService::PARAMETER];
         $token = $this->tokenService->verify(is_string($jwt) ? $jwt : '', $request->getHeaderLine('User-Agent'));
-        if (!$this->isFramed($request)) {
+        if (!$this->isFramed($request, $kind)) {
             throw new PreviewTokenRejectedException(PreviewRejection::NotInFrame, 'Preview is only available in a frame', 1793265772, null, $token);
         }
         return $token;
@@ -228,26 +229,7 @@ final readonly class PreviewAccess implements MiddlewareInterface
      */
     public static function isFrameRequest(ServerRequestInterface $request): bool
     {
-        if (!$request->hasHeader('Sec-Fetch-Dest')) {
-            return true;
-        }
-        return strtolower($request->getHeaderLine('Sec-Fetch-Dest')) === 'iframe';
-    }
-
-    /**
-     * A navigation of a whole window or tab, such as a link opened in a new tab or a
-     * target _blank or _top, as browsers tell it to HTTPS sites.
-     */
-    private function isTopLevelNavigation(ServerRequestInterface $request): bool
-    {
-        $destination = strtolower($request->getHeaderLine('Sec-Fetch-Dest'));
-        if ($destination === 'document') {
-            return true;
-        }
-        if (strtolower($request->getHeaderLine('Sec-Fetch-Mode')) !== 'navigate') {
-            return false;
-        }
-        return !in_array($destination, ['', 'iframe', 'frame'], true);
+        return in_array(PreviewRequestKind::fromRequest($request), [PreviewRequestKind::Frame, PreviewRequestKind::Unknown], true);
     }
 
     /**
@@ -286,14 +268,12 @@ final readonly class PreviewAccess implements MiddlewareInterface
 
     /**
      * A token is accepted for the page in the frame and for the requests that page sends
-     * itself: fetch, XHR and elements of the same origin. Only a document of the site sends
-     * a same-origin request, and in a preview that is the page in the frame. Browsers send
-     * these headers only to HTTPS and localhost. Without them, a token is accepted only
-     * where the installation and the site allow plain HTTP.
+     * itself. Without Fetch Metadata, a token is accepted only where the installation and
+     * the site allow plain HTTP.
      */
-    private function isFramed(ServerRequestInterface $request): bool
+    private function isFramed(ServerRequestInterface $request, PreviewRequestKind $kind): bool
     {
-        if (!$request->hasHeader('Sec-Fetch-Dest')) {
+        if ($kind === PreviewRequestKind::Unknown) {
             if ($GLOBALS['TYPO3_CONF_VARS']['BE']['lockSSL'] ?? false) {
                 return false;
             }
@@ -301,13 +281,7 @@ final readonly class PreviewAccess implements MiddlewareInterface
             $scheme = $language instanceof SiteLanguage ? $language->getBase()->getScheme() : '';
             return in_array($scheme, ['http', ''], true);
         }
-        if (self::isFrameRequest($request)) {
-            return true;
-        }
-        if (strtolower($request->getHeaderLine('Sec-Fetch-Site')) !== 'same-origin') {
-            return false;
-        }
-        return strtolower($request->getHeaderLine('Sec-Fetch-Mode')) !== 'navigate';
+        return $kind === PreviewRequestKind::Frame || $kind === PreviewRequestKind::OfThePage;
     }
 
     /**
