@@ -30,7 +30,7 @@ use TYPO3\CMS\Core\Security\ContentSecurityPolicy\HashValue;
 use TYPO3\CMS\Core\SystemResource\Publishing\SystemResourcePublisherInterface;
 use TYPO3\CMS\Core\SystemResource\SystemResourceFactory;
 use TYPO3\CMS\Core\SystemResource\Type\PublicResourceInterface;
-use TYPO3\CMS\Frontend\Middleware\PreviewAccess;
+use TYPO3\CMS\Frontend\Middleware\PreviewTokenAuthenticator;
 
 /**
  * Adds the navigation script of a preview to the page in the frame, under the
@@ -69,7 +69,7 @@ final readonly class PreviewNavigationScript
             return $response;
         }
         // Only the page in the frame gets the script, not what the page fetches itself
-        if (!PreviewAccess::isFrameRequest($request)) {
+        if (!PreviewTokenAuthenticator::isFrameRequest($request)) {
             return $response;
         }
         if (!str_starts_with(strtolower($response->getHeaderLine('Content-Type')), 'text/html')) {

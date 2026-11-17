@@ -44,7 +44,7 @@ use TYPO3\CMS\Core\View\ViewFactoryData;
 use TYPO3\CMS\Core\View\ViewFactoryInterface;
 use TYPO3\CMS\Frontend\Aspect\PreviewAspect;
 use TYPO3\CMS\Frontend\Cache\CacheInstruction;
-use TYPO3\CMS\Frontend\Middleware\PreviewAccess;
+use TYPO3\CMS\Frontend\Middleware\PreviewTokenAuthenticator;
 
 /**
  * Admin Panel Preview Module
@@ -100,7 +100,7 @@ class PreviewModule extends AbstractModule implements RequestEnricherInterface, 
         $simulateDate = $simulateTimeByRequest;
         // So does the simulation a preview token of the backend carries: its frontend login
         // is applied after the admin panel, its date is applied here again
-        $previewToken = $request->getAttribute(PreviewAccess::ATTRIBUTE);
+        $previewToken = $request->getAttribute(PreviewTokenAuthenticator::ATTRIBUTE);
         if ($previewToken instanceof PreviewToken) {
             $simulateDate = $previewToken->profile->date;
             if ($previewToken->profile->loggedIn) {

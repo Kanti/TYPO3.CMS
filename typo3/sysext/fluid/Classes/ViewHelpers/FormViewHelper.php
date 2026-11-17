@@ -36,7 +36,7 @@ use TYPO3\CMS\Extbase\Security\HashScope;
 use TYPO3\CMS\Extbase\Service\ExtensionService;
 use TYPO3\CMS\Fluid\ViewHelpers\Form\AbstractFormViewHelper;
 use TYPO3\CMS\Fluid\ViewHelpers\Form\CheckboxViewHelper;
-use TYPO3\CMS\Frontend\Middleware\PreviewAccess;
+use TYPO3\CMS\Frontend\Middleware\PreviewTokenAuthenticator;
 
 /**
  * ViewHelper to generate a `<form>` tag and prepare context for
@@ -485,7 +485,7 @@ class FormViewHelper extends AbstractFormViewHelper
     protected function isActionOnAHostOfThePreview(): bool
     {
         $request = $this->renderingContext->getAttribute(ServerRequestInterface::class);
-        $previewHosts = $request->getAttribute(PreviewAccess::HOSTS_ATTRIBUTE);
+        $previewHosts = $request->getAttribute(PreviewTokenAuthenticator::HOSTS_ATTRIBUTE);
         if (!$previewHosts instanceof PreviewHosts) {
             return false;
         }
@@ -515,7 +515,7 @@ class FormViewHelper extends AbstractFormViewHelper
      */
     protected function getPreviewToken(): ?PreviewToken
     {
-        $previewToken = $this->renderingContext->getAttribute(ServerRequestInterface::class)->getAttribute(PreviewAccess::ATTRIBUTE);
+        $previewToken = $this->renderingContext->getAttribute(ServerRequestInterface::class)->getAttribute(PreviewTokenAuthenticator::ATTRIBUTE);
         return $previewToken instanceof PreviewToken ? $previewToken : null;
     }
 

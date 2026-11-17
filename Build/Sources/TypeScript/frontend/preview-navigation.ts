@@ -17,7 +17,7 @@
  * Added to pages shown with a preview token. Links rendered by TYPO3 already carry the
  * token. This script is the fallback for navigations started by scripts, and it reports
  * the address of the frame to the backend page around it. That page answers the messages
- * in @typo3/backend/preview/preview-frame. The error page of PreviewAccess sends
+ * in @typo3/backend/preview/preview-frame. The error page of PreviewTokenAuthenticator sends
  * typo3:preview:expired.
  */
 

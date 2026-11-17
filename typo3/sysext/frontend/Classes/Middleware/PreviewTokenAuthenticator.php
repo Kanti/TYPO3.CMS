@@ -60,7 +60,7 @@ use TYPO3\CMS\Frontend\Cache\CacheInstruction;
  *
  * @internal
  */
-final readonly class PreviewAccess implements MiddlewareInterface
+final readonly class PreviewTokenAuthenticator implements MiddlewareInterface
 {
     public const ATTRIBUTE = 'frontend.preview.token';
     /**

@@ -32,7 +32,7 @@ use TYPO3\TestingFramework\Core\Functional\FunctionalTestCase;
  * An installation that sets its own list of parameters excluded from the cHash
  * replaces the default list, as settings.php overrides it entry by entry.
  */
-final class PreviewAccessCacheHashTest extends FunctionalTestCase
+final class PreviewTokenAuthenticatorCacheHashTest extends FunctionalTestCase
 {
     use SiteBasedTestTrait;
 

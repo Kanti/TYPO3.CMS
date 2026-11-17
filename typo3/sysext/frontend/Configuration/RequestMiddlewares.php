@@ -57,8 +57,8 @@ return [
                 'typo3/cms-frontend/maintenance-mode',
             ],
         ],
-        'typo3/cms-frontend/preview-access' => [
-            'target' => \TYPO3\CMS\Frontend\Middleware\PreviewAccess::class,
+        'typo3/cms-frontend/preview-token-authentication' => [
+            'target' => \TYPO3\CMS\Frontend\Middleware\PreviewTokenAuthenticator::class,
             'after' => [
                 'typo3/cms-frontend/site',
                 'typo3/cms-frontend/maintenance-mode',

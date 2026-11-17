@@ -59,8 +59,8 @@ readonly class PreviewSimulator implements MiddlewareInterface
      */
     public function process(ServerRequestInterface $request, RequestHandlerInterface $handler): ResponseInterface
     {
-        // A preview token brings date, visibility and workspace along, see PreviewAccess
-        $previewToken = $request->getAttribute(PreviewAccess::ATTRIBUTE);
+        // A preview token brings date, visibility and workspace along, see PreviewTokenAuthenticator
+        $previewToken = $request->getAttribute(PreviewTokenAuthenticator::ATTRIBUTE);
         if ($previewToken instanceof PreviewToken) {
             $pageArguments = $request->getAttribute('routing');
             if (!$pageArguments instanceof PageArguments) {
@@ -70,7 +70,7 @@ readonly class PreviewSimulator implements MiddlewareInterface
                     ['code' => PageAccessFailureReasons::INVALID_PAGE_ARGUMENTS]
                 );
             }
-            // A refusal leaves the stack through PreviewAccess, which answers with the error page
+            // A refusal leaves the stack through PreviewTokenAuthenticator, which answers with the error page
             $groups = $this->previewPageAccess->authorize($previewToken, $pageArguments->getPageId());
             // An editor without a simulated login keeps a frontend login of the frame, as with a backend login
             if ($previewToken->profile->loggedIn) {

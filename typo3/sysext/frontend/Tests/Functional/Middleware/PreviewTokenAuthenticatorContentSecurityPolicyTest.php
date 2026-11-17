@@ -38,7 +38,7 @@ use TYPO3\TestingFramework\Core\Functional\FunctionalTestCase;
  * Each policy is a site of its own: the policies of all sites are resolved once per
  * process, so a site written later in a test would keep the policy of the first test.
  */
-final class PreviewAccessContentSecurityPolicyTest extends FunctionalTestCase
+final class PreviewTokenAuthenticatorContentSecurityPolicyTest extends FunctionalTestCase
 {
     use SiteBasedTestTrait;
 

@@ -20,8 +20,8 @@ namespace TYPO3\CMS\Frontend\Tests\Unit\Middleware;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Test;
 use TYPO3\CMS\Core\Http\ServerRequest;
-use TYPO3\CMS\Frontend\Middleware\PreviewAccess;
 use TYPO3\CMS\Frontend\Middleware\PreviewRequestKind;
+use TYPO3\CMS\Frontend\Middleware\PreviewTokenAuthenticator;
 use TYPO3\TestingFramework\Core\Unit\UnitTestCase;
 
 final class PreviewRequestKindTest extends UnitTestCase
@@ -54,6 +54,6 @@ final class PreviewRequestKindTest extends UnitTestCase
         $request = new ServerRequest('https://site.example/', 'GET', 'php://input', $headers);
 
         self::assertSame($kind, PreviewRequestKind::fromRequest($request));
-        self::assertSame($frameRequest, PreviewAccess::isFrameRequest($request));
+        self::assertSame($frameRequest, PreviewTokenAuthenticator::isFrameRequest($request));
     }
 }

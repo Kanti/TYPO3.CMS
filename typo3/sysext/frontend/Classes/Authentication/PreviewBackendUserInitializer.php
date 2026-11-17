@@ -48,7 +48,7 @@ final readonly class PreviewBackendUserInitializer
         if ($token->isVisitorWithoutBackendUser()) {
             throw new \LogicException('A visitor token builds no backend user of the request.', 1794239502);
         }
-        // Only BackendUserAuthenticator sets one, and it runs after PreviewAccess
+        // Only BackendUserAuthenticator sets one, and it runs after PreviewTokenAuthenticator
         if (isset($GLOBALS['BE_USER'])) {
             throw new \LogicException('A backend user is already set before the preview builds the editor of its token.', 1794413652);
         }

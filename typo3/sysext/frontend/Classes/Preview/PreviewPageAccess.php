@@ -31,7 +31,7 @@ use TYPO3\CMS\Core\Utility\RootlineUtility;
 /**
  * Decides on the resolved page whether the editor of a token may show it, and which of
  * the simulated frontend user groups the editor may simulate there. PreviewSimulator
- * asks it, and PreviewAccess turns a refusal into its error page.
+ * asks it, and PreviewTokenAuthenticator turns a refusal into its error page.
  *
  * @internal
  */

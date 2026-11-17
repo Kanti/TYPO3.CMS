@@ -35,12 +35,12 @@ use TYPO3\CMS\Core\Preview\PreviewProfile;
 use TYPO3\CMS\Core\Preview\PreviewTokenService;
 use TYPO3\CMS\Core\Site\SiteFinder;
 use TYPO3\CMS\Core\Tests\Functional\SiteHandling\SiteBasedTestTrait;
-use TYPO3\CMS\Frontend\Middleware\PreviewAccess;
+use TYPO3\CMS\Frontend\Middleware\PreviewTokenAuthenticator;
 use TYPO3\TestingFramework\Core\Functional\Framework\Frontend\InternalRequest;
 use TYPO3\TestingFramework\Core\Functional\Framework\Frontend\InternalRequestContext;
 use TYPO3\TestingFramework\Core\Functional\FunctionalTestCase;
 
-final class PreviewAccessTest extends FunctionalTestCase
+final class PreviewTokenAuthenticatorTest extends FunctionalTestCase
 {
     use SiteBasedTestTrait;
 
@@ -694,10 +694,10 @@ final class PreviewAccessTest extends FunctionalTestCase
                 ->withAttribute('language', $site->getDefaultLanguage());
             return $request->withAttribute('normalizedParams', NormalizedParams::createFromRequest($request));
         };
-        $previewAccess = $this->get(PreviewAccess::class);
+        $authenticator = $this->get(PreviewTokenAuthenticator::class);
 
-        $this->assertRejected('userNotAvailable', $previewAccess->process($request($this->signForEditor()), $handler));
-        self::assertSame('Rendered page', (string)$previewAccess->process($request($this->signForVisitor()), $handler)->getBody());
+        $this->assertRejected('userNotAvailable', $authenticator->process($request($this->signForEditor()), $handler));
+        self::assertSame('Rendered page', (string)$authenticator->process($request($this->signForVisitor()), $handler)->getBody());
     }
 
     /**
@@ -1393,7 +1393,7 @@ final class PreviewAccessTest extends FunctionalTestCase
                 return new HtmlResponse('Rendered page');
             }
         };
-        return $this->get(PreviewAccess::class)->process($request->withAttribute('normalizedParams', NormalizedParams::createFromRequest($request)), $handler);
+        return $this->get(PreviewTokenAuthenticator::class)->process($request->withAttribute('normalizedParams', NormalizedParams::createFromRequest($request)), $handler);
     }
 
     /**
@@ -1418,7 +1418,7 @@ final class PreviewAccessTest extends FunctionalTestCase
                 throw new \LogicException('A top-level navigation with a token reaches no page', 1794328963);
             }
         };
-        return $this->get(PreviewAccess::class)->process($request->withAttribute('normalizedParams', NormalizedParams::createFromRequest($request)), $handler);
+        return $this->get(PreviewTokenAuthenticator::class)->process($request->withAttribute('normalizedParams', NormalizedParams::createFromRequest($request)), $handler);
     }
 
     private function sign(?PreviewProfile $profile = null, int $userId = 1): string

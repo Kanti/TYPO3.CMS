@@ -69,7 +69,7 @@ use TYPO3\CMS\Core\Utility\RootlineUtility;
 use TYPO3\CMS\Frontend\Cache\CacheLifetimeCalculator;
 use TYPO3\CMS\Frontend\ContentObject\ContentObjectRenderer;
 use TYPO3\CMS\Frontend\Event\ModifyPageLinkConfigurationEvent;
-use TYPO3\CMS\Frontend\Middleware\PreviewAccess;
+use TYPO3\CMS\Frontend\Middleware\PreviewTokenAuthenticator;
 use TYPO3\CMS\Frontend\Page\PageInformation;
 
 /**
@@ -319,8 +319,8 @@ class PageLinkBuilder extends AbstractTypolinkBuilder implements TypolinkBuilder
             }
         }
 
-        $previewToken = $request->getAttribute(PreviewAccess::ATTRIBUTE);
-        $previewHosts = $request->getAttribute(PreviewAccess::HOSTS_ATTRIBUTE);
+        $previewToken = $request->getAttribute(PreviewTokenAuthenticator::ATTRIBUTE);
+        $previewHosts = $request->getAttribute(PreviewTokenAuthenticator::HOSTS_ATTRIBUTE);
         if ($previewToken instanceof PreviewToken && $previewHosts instanceof PreviewHosts) {
             $url = $previewHosts->allowsUrl($result->getUrl(), $request->getUri())
                 ? PreviewTokenService::addToUrl($result->getUrl(), $previewToken->jwt)
