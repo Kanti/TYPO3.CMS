@@ -61,7 +61,8 @@ final class BackendLoginCookieScopeTest extends UnitTestCase
         $GLOBALS['TYPO3_CONF_VARS']['BE']['cookieDomain'] = $cookieDomain;
         $backendRequest = new NormalizedParams(['HTTP_HOST' => $backendHost, 'HTTPS' => 'on', 'SCRIPT_NAME' => '/typo3/index.php'], [], '/var/www/html/typo3/index.php', '/var/www/html');
 
-        self::assertSame($reaches, new BackendLoginCookieScope()->reaches($backendRequest, new Uri($site)));
+        $cookieScope = new BackendLoginCookieScope();
+        self::assertSame($reaches, $cookieScope->reaches($backendRequest, new Uri($site)));
     }
 
     public static function pathsAndSchemesDataProvider(): \Generator
@@ -94,6 +95,7 @@ final class BackendLoginCookieScopeTest extends UnitTestCase
             '/var/www/html'
         );
 
-        self::assertSame($reaches, new BackendLoginCookieScope()->reaches($backendRequest, new Uri($site)));
+        $cookieScope = new BackendLoginCookieScope();
+        self::assertSame($reaches, $cookieScope->reaches($backendRequest, new Uri($site)));
     }
 }

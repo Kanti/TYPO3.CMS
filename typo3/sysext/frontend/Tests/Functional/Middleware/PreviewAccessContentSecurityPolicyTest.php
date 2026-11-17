@@ -312,11 +312,13 @@ final class PreviewAccessContentSecurityPolicyTest extends FunctionalTestCase
 
     private function preview(string $url, ?string $jwt = null): ResponseInterface
     {
-        $jwt ??= new PreviewTokenService(new SystemClock())
+        $previewTokenService = new PreviewTokenService(new SystemClock());
+        $jwt ??= $previewTokenService
             ->sign($this->createProfile(), self::BACKEND, self::USER_AGENT, 1)
             ->jwt;
+        $request = new InternalRequest($url . '?__t3ct=' . $jwt);
         return $this->executeFrontendSubRequest(
-            new InternalRequest($url . '?__t3ct=' . $jwt)
+            $request
                 ->withHeader('User-Agent', self::USER_AGENT)
                 ->withHeader('Sec-Fetch-Dest', 'iframe')
         );
@@ -324,13 +326,14 @@ final class PreviewAccessContentSecurityPolicyTest extends FunctionalTestCase
 
     private function signExpired(): string
     {
-        $clock = new readonly class implements ClockInterface {
+        $clock = new class implements ClockInterface {
             public function now(): \DateTimeImmutable
             {
                 return new \DateTimeImmutable('-1 hour');
             }
         };
-        return new PreviewTokenService($clock)->sign($this->createProfile(), self::BACKEND, self::USER_AGENT, 1)->jwt;
+        $previewTokenService = new PreviewTokenService($clock);
+        return $previewTokenService->sign($this->createProfile(), self::BACKEND, self::USER_AGENT, 1)->jwt;
     }
 
     private function createProfile(): PreviewProfile

@@ -394,7 +394,9 @@ final class ViewModuleControllerTest extends FunctionalTestCase
 
         $queryParams = array_merge(['id' => $pageId], $additionalParams);
 
-        $request = new ServerRequest('https://' . $backendHost . '/typo3/', 'GET', null, [], ['HTTP_HOST' => $backendHost, 'HTTPS' => 'on', 'SCRIPT_NAME' => '/index.php'])
+        $request = new ServerRequest('https://' . $backendHost . '/typo3/', 'GET', null, [], ['HTTP_HOST' => $backendHost, 'HTTPS' => 'on', 'SCRIPT_NAME' => '/index.php']);
+
+        $request = $request
             ->withAttribute('applicationType', SystemEnvironmentBuilder::REQUESTTYPE_BE)
             ->withAttribute('site', $site)
             ->withAttribute('route', $route)

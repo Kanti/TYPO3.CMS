@@ -77,7 +77,8 @@ final class PreviewTokenServiceTest extends UnitTestCase
     #[Test]
     public function tokenOfAnEditorNamesNeitherHostsNorSites(): void
     {
-        $jwt = new PreviewTokenService(new SystemClock())->sign($this->createProfile(), 'https://site-a.com', self::USER_AGENT, $this->createUser())->jwt;
+        $previewTokenService = new PreviewTokenService(new SystemClock());
+        $jwt = $previewTokenService->sign($this->createProfile(), 'https://site-a.com', self::USER_AGENT, $this->createUser())->jwt;
 
         $claims = $this->decodeClaims($jwt);
 
@@ -95,7 +96,8 @@ final class PreviewTokenServiceTest extends UnitTestCase
     #[Test]
     public function tokenWithoutUserNamesTheEditorWhoseRightsDecideWhereItIsValid(): void
     {
-        $jwt = new PreviewTokenService(new SystemClock())->sign(PreviewProfile::visitor(), 'https://site-a.com', self::USER_AGENT, $this->createUser(), true)->jwt;
+        $previewTokenService = new PreviewTokenService(new SystemClock());
+        $jwt = $previewTokenService->sign(PreviewProfile::visitor(), 'https://site-a.com', self::USER_AGENT, $this->createUser(), true)->jwt;
 
         $claims = $this->decodeClaims($jwt);
 
@@ -204,7 +206,8 @@ final class PreviewTokenServiceTest extends UnitTestCase
     #[Test]
     public function tokenIsRefusedOnceTheClockPassedItsExpiry(): void
     {
-        $jwt = new PreviewTokenService(new SystemClock())->sign($this->createProfile(), 'https://site-a.com', self::USER_AGENT, $this->createUser())->jwt;
+        $previewTokenService = new PreviewTokenService(new SystemClock());
+        $jwt = $previewTokenService->sign($this->createProfile(), 'https://site-a.com', self::USER_AGENT, $this->createUser())->jwt;
         $subject = new PreviewTokenService($this->createClock(time() + PreviewTokenService::LIFETIME + 1));
 
         $this->assertRejected(PreviewRejection::Expired, fn() => $subject->verify($jwt, self::USER_AGENT));
@@ -213,9 +216,11 @@ final class PreviewTokenServiceTest extends UnitTestCase
     #[Test]
     public function tokenOfABackendWhoseClockIsUpToAMinuteAheadIsAccepted(): void
     {
-        $jwt = new PreviewTokenService($this->createClock(time() + 30))->sign($this->createProfile(), 'https://site-a.com', self::USER_AGENT, $this->createUser())->jwt;
+        $signer = new PreviewTokenService($this->createClock(time() + 30));
+        $jwt = $signer->sign($this->createProfile(), 'https://site-a.com', self::USER_AGENT, $this->createUser())->jwt;
 
-        $verified = new PreviewTokenService(new SystemClock())->verify($jwt, self::USER_AGENT);
+        $verifier = new PreviewTokenService(new SystemClock());
+        $verified = $verifier->verify($jwt, self::USER_AGENT);
 
         self::assertSame(5, $verified->userId);
     }
@@ -223,7 +228,8 @@ final class PreviewTokenServiceTest extends UnitTestCase
     #[Test]
     public function tokenOfABackendWhoseClockIsMoreThanAMinuteAheadIsRefused(): void
     {
-        $jwt = new PreviewTokenService($this->createClock(time() + 120))->sign($this->createProfile(), 'https://site-a.com', self::USER_AGENT, $this->createUser())->jwt;
+        $previewTokenService = new PreviewTokenService($this->createClock(time() + 120));
+        $jwt = $previewTokenService->sign($this->createProfile(), 'https://site-a.com', self::USER_AGENT, $this->createUser())->jwt;
         $subject = new PreviewTokenService(new SystemClock());
 
         $this->assertRejected(PreviewRejection::Invalid, fn() => $subject->verify($jwt, self::USER_AGENT));
@@ -253,7 +259,8 @@ final class PreviewTokenServiceTest extends UnitTestCase
         $profile = $this->createProfile();
         $jwt = $past->sign($profile, 'https://site-a.com', self::USER_AGENT, $this->createUser())->jwt;
 
-        $token = new PreviewTokenService(new SystemClock())->readForRenewal($jwt, self::USER_AGENT);
+        $previewTokenService = new PreviewTokenService(new SystemClock());
+        $token = $previewTokenService->readForRenewal($jwt, self::USER_AGENT);
         self::assertEquals($profile, $token->profile);
         self::assertSame(5, $token->userId);
     }
@@ -452,8 +459,8 @@ final class PreviewTokenServiceTest extends UnitTestCase
 
     private function createClock(int $timestamp): ClockInterface
     {
-        return new readonly class ($timestamp) implements ClockInterface {
-            public function __construct(private int $timestamp) {}
+        return new class ($timestamp) implements ClockInterface {
+            public function __construct(private readonly int $timestamp) {}
 
             public function now(): \DateTimeImmutable
             {

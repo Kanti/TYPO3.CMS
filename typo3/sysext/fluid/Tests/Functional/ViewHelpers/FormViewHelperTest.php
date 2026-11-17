@@ -248,7 +248,8 @@ final class FormViewHelperTest extends FunctionalTestCase
         $context = $this->get(RenderingContextFactory::class)->create([], $request);
         $context->getTemplatePaths()->setTemplateSource('<f:form actionUri="/search" target="' . $target . '" />');
         $this->get(ConfigurationManagerInterface::class)->setRequest($request);
-        self::assertStringContainsString('target="' . $expectedTarget . '"', new TemplateView($context)->render());
+        $view = new TemplateView($context);
+        self::assertStringContainsString('target="' . $expectedTarget . '"', $view->render());
     }
 
     #[Test]
@@ -258,7 +259,8 @@ final class FormViewHelperTest extends FunctionalTestCase
         $context = $this->get(RenderingContextFactory::class)->create([], $request);
         $context->getTemplatePaths()->setTemplateSource('<f:form actionUri="/search" target="_top" />');
         $this->get(ConfigurationManagerInterface::class)->setRequest($request);
-        self::assertStringContainsString('target="_top"', new TemplateView($context)->render());
+        $view = new TemplateView($context);
+        self::assertStringContainsString('target="_top"', $view->render());
     }
 
     public static function previewTokenIsAddedToFormsSentViaGetToHostsOfThePreviewDataProvider(): array
@@ -283,7 +285,8 @@ final class FormViewHelperTest extends FunctionalTestCase
         $context = $this->get(RenderingContextFactory::class)->create([], $request);
         $context->getTemplatePaths()->setTemplateSource('<f:form actionUri="' . $action . '" method="get" />');
         $this->get(ConfigurationManagerInterface::class)->setRequest($request);
-        self::assertStringContainsString('<input type="hidden" name="__t3ct" value="preview-jwt" >', new TemplateView($context)->render());
+        $view = new TemplateView($context);
+        self::assertStringContainsString('<input type="hidden" name="__t3ct" value="preview-jwt" >', $view->render());
     }
 
     public static function previewTokenIsNotAddedToFormsSentViaGetToOtherHostsDataProvider(): array
@@ -308,7 +311,8 @@ final class FormViewHelperTest extends FunctionalTestCase
         $context = $this->get(RenderingContextFactory::class)->create([], $request);
         $context->getTemplatePaths()->setTemplateSource('<f:form actionUri="' . $action . '" method="get" target="_blank" />');
         $this->get(ConfigurationManagerInterface::class)->setRequest($request);
-        self::assertStringNotContainsString('__t3ct', new TemplateView($context)->render());
+        $view = new TemplateView($context);
+        self::assertStringNotContainsString('__t3ct', $view->render());
     }
 
     public static function previewTokenIsAddedToTheActionOfFormsSentViaPostDataProvider(): array
@@ -334,7 +338,8 @@ final class FormViewHelperTest extends FunctionalTestCase
         $context = $this->get(RenderingContextFactory::class)->create([], $request);
         $context->getTemplatePaths()->setTemplateSource('<f:form actionUri="' . $action . '" method="post" />');
         $this->get(ConfigurationManagerInterface::class)->setRequest($request);
-        self::assertStringContainsString('action="' . htmlspecialchars($expectedAction) . '"', new TemplateView($context)->render());
+        $view = new TemplateView($context);
+        self::assertStringContainsString('action="' . htmlspecialchars($expectedAction) . '"', $view->render());
     }
 
     public static function previewTokenIsNotAddedToTheActionOfFormsSentViaPostToOtherHostsDataProvider(): array
@@ -357,7 +362,8 @@ final class FormViewHelperTest extends FunctionalTestCase
         $context = $this->get(RenderingContextFactory::class)->create([], $request);
         $context->getTemplatePaths()->setTemplateSource('<f:form actionUri="' . $action . '" method="post" />');
         $this->get(ConfigurationManagerInterface::class)->setRequest($request);
-        self::assertStringNotContainsString('__t3ct', new TemplateView($context)->render());
+        $view = new TemplateView($context);
+        self::assertStringNotContainsString('__t3ct', $view->render());
     }
 
     public static function previewTokenIsNotAddedDataProvider(): array
@@ -376,7 +382,8 @@ final class FormViewHelperTest extends FunctionalTestCase
         $context = $this->get(RenderingContextFactory::class)->create([], $request);
         $context->getTemplatePaths()->setTemplateSource('<f:form actionUri="/search" method="' . $method . '" />');
         $this->get(ConfigurationManagerInterface::class)->setRequest($request);
-        self::assertStringNotContainsString('__t3ct', new TemplateView($context)->render());
+        $view = new TemplateView($context);
+        self::assertStringNotContainsString('__t3ct', $view->render());
     }
 
     private function createRequest(bool $preview = false): ServerRequestInterface
@@ -386,7 +393,8 @@ final class FormViewHelperTest extends FunctionalTestCase
         $frontendTypoScript->setSetupArray([]);
         $frontendTypoScript->setConfigArray([]);
         $contentObject = $this->get(ContentObjectRenderer::class);
-        $serverRequest = new ServerRequest($preview ? 'https://site.example/page' : null)
+        $serverRequest = new ServerRequest($preview ? 'https://site.example/page' : null);
+        $serverRequest = $serverRequest
             ->withAttribute('applicationType', SystemEnvironmentBuilder::REQUESTTYPE_FE)
             ->withAttribute('frontend.typoscript', $frontendTypoScript)
             ->withAttribute('extbase', new ExtbaseRequestParameters())

@@ -206,7 +206,8 @@ final class RedirectServiceTest extends FunctionalTestCase
     private function processRedirectHandler(Uri $uri): ResponseInterface
     {
         parse_str($uri->getQuery(), $queryParameters);
-        $request = new ServerRequest($uri)
+        $request = new ServerRequest($uri);
+        $request = $request
             ->withQueryParams($queryParameters)
             ->withAttribute('applicationType', SystemEnvironmentBuilder::REQUESTTYPE_FE)
             ->withAttribute('site', $this->get(SiteFinder::class)->getSiteByIdentifier('acme-com'));

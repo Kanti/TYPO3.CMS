@@ -236,7 +236,8 @@ final class PreviewUriBuilderBackendPreviewTest extends FunctionalTestCase
     #[Test]
     public function frontendRequestGetsTheAddressOfThePage(): void
     {
-        $request = new ServerRequest('https://backend.example.com/')
+        $request = new ServerRequest('https://backend.example.com/');
+        $request = $request
             ->withAttribute('applicationType', SystemEnvironmentBuilder::REQUESTTYPE_FE);
         $GLOBALS['TYPO3_REQUEST'] = $request->withAttribute('normalizedParams', NormalizedParams::createFromRequest($request));
 
@@ -253,7 +254,8 @@ final class PreviewUriBuilderBackendPreviewTest extends FunctionalTestCase
 
     private function setBackendRequest(): void
     {
-        $request = new ServerRequest('https://backend.example.com/typo3/main', 'GET', null, [], ['HTTP_HOST' => 'backend.example.com', 'HTTPS' => 'on', 'SCRIPT_NAME' => '/index.php'])
+        $request = new ServerRequest('https://backend.example.com/typo3/main', 'GET', null, [], ['HTTP_HOST' => 'backend.example.com', 'HTTPS' => 'on', 'SCRIPT_NAME' => '/index.php']);
+        $request = $request
             ->withAttribute('applicationType', SystemEnvironmentBuilder::REQUESTTYPE_BE);
         $GLOBALS['TYPO3_REQUEST'] = $request->withAttribute('normalizedParams', NormalizedParams::createFromRequest($request));
     }

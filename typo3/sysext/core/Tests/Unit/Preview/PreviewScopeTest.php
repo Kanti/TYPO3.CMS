@@ -45,7 +45,8 @@ final class PreviewScopeTest extends UnitTestCase
         self::assertSame(['example.com', 'example.de', 'intranet.example:8443'], $scope->getHosts());
         self::assertSame(['https://example.com', 'https://example.de', 'https://intranet.example:8443'], $scope->getOrigins());
         self::assertFalse($scope->isEmpty());
-        self::assertTrue(new PreviewScope([])->isEmpty());
+        $emptyScope = new PreviewScope([]);
+        self::assertTrue($emptyScope->isEmpty());
     }
 
     public static function addressesDataProvider(): \Generator

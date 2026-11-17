@@ -184,13 +184,14 @@ final class PreviewAccessTest extends FunctionalTestCase
     #[Test]
     public function expiredTokenShowsErrorPageAndTellsTheBackend(): void
     {
-        $clock = new readonly class implements ClockInterface {
+        $clock = new class implements ClockInterface {
             public function now(): \DateTimeImmutable
             {
                 return new \DateTimeImmutable('-1 hour');
             }
         };
-        $jwt = new PreviewTokenService($clock)->sign($this->createProfile(), self::BACKEND, self::USER_AGENT, 1)->jwt;
+        $previewTokenService = new PreviewTokenService($clock);
+        $jwt = $previewTokenService->sign($this->createProfile(), self::BACKEND, self::USER_AGENT, 1)->jwt;
 
         $response = $this->preview('https://first.example/hidden', $jwt);
 
@@ -203,8 +204,9 @@ final class PreviewAccessTest extends FunctionalTestCase
     #[Test]
     public function tokenOfAnotherBrowserIsRefused(): void
     {
+        $request = new InternalRequest('https://first.example/?__t3ct=' . $this->sign());
         $response = $this->executeFrontendSubRequest(
-            new InternalRequest('https://first.example/?__t3ct=' . $this->sign())
+            $request
                 ->withHeader('Sec-Fetch-Dest', 'iframe')
                 ->withHeader('User-Agent', 'curl/8.0')
         );
@@ -341,8 +343,9 @@ final class PreviewAccessTest extends FunctionalTestCase
     #[Test]
     public function topLevelNavigationOfTheSiteIsRedirectedWithoutToken(): void
     {
+        $request = new InternalRequest('https://first.example/hidden?a=1&__t3ct=' . $this->sign());
         $response = $this->executeFrontendSubRequest(
-            new InternalRequest('https://first.example/hidden?a=1&__t3ct=' . $this->sign())
+            $request
                 ->withHeader('User-Agent', self::USER_AGENT)
                 ->withHeader('Sec-Fetch-Dest', 'document')
                 ->withHeader('Sec-Fetch-Mode', 'navigate')
@@ -645,7 +648,8 @@ final class PreviewAccessTest extends FunctionalTestCase
             }
         };
         $request = static function (string $jwt) use ($site): ServerRequestInterface {
-            $request = new ServerRequest('https://first.example/?__t3ct=' . $jwt, 'GET', null, ['Sec-Fetch-Dest' => 'iframe', 'User-Agent' => self::USER_AGENT], ['REMOTE_ADDR' => '127.0.0.1', 'HTTPS' => 'on', 'HTTP_HOST' => 'first.example'])
+            $request = new ServerRequest('https://first.example/?__t3ct=' . $jwt, 'GET', null, ['Sec-Fetch-Dest' => 'iframe', 'User-Agent' => self::USER_AGENT], ['REMOTE_ADDR' => '127.0.0.1', 'HTTPS' => 'on', 'HTTP_HOST' => 'first.example']);
+            $request = $request
                 ->withQueryParams([PreviewTokenService::PARAMETER => $jwt])
                 ->withAttribute('applicationType', SystemEnvironmentBuilder::REQUESTTYPE_FE)
                 ->withAttribute('site', $site)
@@ -1256,7 +1260,8 @@ final class PreviewAccessTest extends FunctionalTestCase
 
     private function preview(string $url, string $jwt, ?string $secFetchDest = 'iframe', ?InternalRequestContext $context = null): ResponseInterface
     {
-        $request = new InternalRequest($url . (str_contains($url, '?') ? '&' : '?') . '__t3ct=' . $jwt)
+        $request = new InternalRequest($url . (str_contains($url, '?') ? '&' : '?') . '__t3ct=' . $jwt);
+        $request = $request
             ->withHeader('User-Agent', self::USER_AGENT);
         if ($secFetchDest !== null) {
             $request = $request->withHeader('Sec-Fetch-Dest', $secFetchDest);
@@ -1281,7 +1286,8 @@ final class PreviewAccessTest extends FunctionalTestCase
 
     private function previewWithHeaders(string $url, string $jwt, array $headers): ResponseInterface
     {
-        $request = new InternalRequest($url . '?__t3ct=' . $jwt)->withHeader('User-Agent', self::USER_AGENT);
+        $request = new InternalRequest($url . '?__t3ct=' . $jwt);
+        $request = $request->withHeader('User-Agent', self::USER_AGENT);
         foreach ($headers as $name => $value) {
             $request = $request->withHeader($name, $value);
         }
@@ -1298,7 +1304,8 @@ final class PreviewAccessTest extends FunctionalTestCase
         unset($GLOBALS['BE_USER']);
         parse_str((string)parse_url($url, PHP_URL_QUERY), $queryParams);
         $site = $this->get(SiteFinder::class)->getSiteByIdentifier($identifier);
-        $request = new ServerRequest($url, 'GET', null, ['Sec-Fetch-Dest' => 'iframe', 'User-Agent' => self::USER_AGENT], array_filter(['HTTPS' => $https ? 'on' : null, 'HTTP_HOST' => (string)parse_url($url, PHP_URL_HOST)]))
+        $request = new ServerRequest($url, 'GET', null, ['Sec-Fetch-Dest' => 'iframe', 'User-Agent' => self::USER_AGENT], array_filter(['HTTPS' => $https ? 'on' : null, 'HTTP_HOST' => (string)parse_url($url, PHP_URL_HOST)]));
+        $request = $request
             ->withQueryParams($queryParams)
             ->withAttribute('applicationType', SystemEnvironmentBuilder::REQUESTTYPE_FE)
             ->withAttribute('site', $site)
@@ -1320,7 +1327,8 @@ final class PreviewAccessTest extends FunctionalTestCase
     {
         parse_str((string)parse_url($url, PHP_URL_QUERY), $queryParams);
         $site = $this->get(SiteFinder::class)->getSiteByIdentifier('first');
-        $request = new ServerRequest($url, 'GET', null, $headers + ['User-Agent' => self::USER_AGENT], ['HTTPS' => 'on', 'HTTP_HOST' => 'first.example'])
+        $request = new ServerRequest($url, 'GET', null, $headers + ['User-Agent' => self::USER_AGENT], ['HTTPS' => 'on', 'HTTP_HOST' => 'first.example']);
+        $request = $request
             ->withQueryParams($queryParams)
             ->withAttribute('applicationType', SystemEnvironmentBuilder::REQUESTTYPE_FE)
             ->withAttribute('site', $site)
@@ -1336,7 +1344,8 @@ final class PreviewAccessTest extends FunctionalTestCase
 
     private function sign(?PreviewProfile $profile = null, int $userId = 1): string
     {
-        return new PreviewTokenService(new SystemClock())
+        $previewTokenService = new PreviewTokenService(new SystemClock());
+        return $previewTokenService
             ->sign($profile ?? $this->createProfile(), self::BACKEND, self::USER_AGENT, $userId)
             ->jwt;
     }
@@ -1354,7 +1363,8 @@ final class PreviewAccessTest extends FunctionalTestCase
     {
         $this->get(ConnectionPool::class)->getConnectionForTable('fe_users')
             ->insert('fe_users', ['uid' => 1, 'pid' => 1, 'username' => 'member', 'usergroup' => '5']);
-        return new InternalRequestContext()->withFrontendUserId(1);
+        $context = new InternalRequestContext();
+        return $context->withFrontendUserId(1);
     }
 
     private function openAdminPanelForEditor(string $tsConfig = ''): void
@@ -1372,7 +1382,8 @@ final class PreviewAccessTest extends FunctionalTestCase
 
     private function signForVisitor(?PreviewProfile $profile = null, int $editorId = 1): string
     {
-        return new PreviewTokenService(new SystemClock())
+        $previewTokenService = new PreviewTokenService(new SystemClock());
+        return $previewTokenService
             ->sign($profile ?? PreviewProfile::visitor(), self::BACKEND, self::USER_AGENT, $editorId, true)
             ->jwt;
     }

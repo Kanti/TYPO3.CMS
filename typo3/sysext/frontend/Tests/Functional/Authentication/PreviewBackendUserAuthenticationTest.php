@@ -152,7 +152,8 @@ final class PreviewBackendUserAuthenticationTest extends FunctionalTestCase
     {
         $sessionsBefore = $this->countBackendSessions();
         $user = $this->initializePreviewUser(self::EDITOR);
-        $request = new ServerRequest('https://first.example/', 'POST', null, [], ['HTTPS' => 'on', 'HTTP_HOST' => 'first.example'])
+        $request = new ServerRequest('https://first.example/', 'POST', null, [], ['HTTPS' => 'on', 'HTTP_HOST' => 'first.example']);
+        $request = $request
             ->withParsedBody(['login_status' => 'login', 'username' => 'admin', 'userident' => 'password'])
             ->withCookieParams(['be_typo_user' => 'cookie-of-another-session']);
 
@@ -177,7 +178,8 @@ final class PreviewBackendUserAuthenticationTest extends FunctionalTestCase
 
     private function initializePreviewUser(int $userId): BackendUserAuthentication
     {
-        $token = new PreviewTokenService(new SystemClock())->sign(
+        $previewTokenService = new PreviewTokenService(new SystemClock());
+        $token = $previewTokenService->sign(
             PreviewProfile::visitor(),
             'https://backend.example',
             'Mozilla/5.0',

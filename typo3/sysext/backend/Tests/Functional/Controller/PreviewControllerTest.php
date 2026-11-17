@@ -193,7 +193,8 @@ final class PreviewControllerTest extends FunctionalTestCase
 
     private function createBackendRequest(): ServerRequest
     {
-        $request = new ServerRequest('https://backend.example/typo3/ajax/preview/token', 'GET', null, [], ['HTTP_HOST' => 'backend.example', 'HTTPS' => 'on', 'SCRIPT_NAME' => '/typo3/index.php'])
+        $request = new ServerRequest('https://backend.example/typo3/ajax/preview/token', 'GET', null, [], ['HTTP_HOST' => 'backend.example', 'HTTPS' => 'on', 'SCRIPT_NAME' => '/typo3/index.php']);
+        $request = $request
             ->withAttribute('applicationType', SystemEnvironmentBuilder::REQUESTTYPE_BE);
         $request = $request->withAttribute('normalizedParams', NormalizedParams::createFromRequest($request));
         $GLOBALS['TYPO3_REQUEST'] = $request;
@@ -202,7 +203,8 @@ final class PreviewControllerTest extends FunctionalTestCase
 
     private function showPreviewPage(string $url, int $page = 1): ResponseInterface
     {
-        $request = new ServerRequest('https://backend.example/typo3/preview', 'GET', null, [], ['HTTP_HOST' => 'backend.example', 'HTTPS' => 'on', 'SCRIPT_NAME' => '/typo3/index.php'])
+        $request = new ServerRequest('https://backend.example/typo3/preview', 'GET', null, [], ['HTTP_HOST' => 'backend.example', 'HTTPS' => 'on', 'SCRIPT_NAME' => '/typo3/index.php']);
+        $request = $request
             ->withAttribute('applicationType', SystemEnvironmentBuilder::REQUESTTYPE_BE)
             ->withAttribute('route', new Route('/preview', []))
             ->withQueryParams(['url' => $url, 'page' => $page]);

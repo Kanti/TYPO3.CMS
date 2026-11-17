@@ -267,7 +267,8 @@ final class PreviewControllerTest extends FunctionalTestCase
 
     private function renderPreviewResponse(array $queryParams = []): ResponseInterface
     {
-        $request = new ServerRequest('https://example.com/typo3/workspace/preview-control', 'GET', null, [], ['HTTP_HOST' => 'example.com', 'HTTPS' => 'on', 'SCRIPT_NAME' => '/typo3/index.php'])
+        $request = new ServerRequest('https://example.com/typo3/workspace/preview-control', 'GET', null, [], ['HTTP_HOST' => 'example.com', 'HTTPS' => 'on', 'SCRIPT_NAME' => '/typo3/index.php']);
+        $request = $request
             ->withAttribute('applicationType', SystemEnvironmentBuilder::REQUESTTYPE_BE)
             ->withAttribute('route', new Route('/workspace/preview-control', []))
             ->withQueryParams(array_replace(['id' => 1], $queryParams));

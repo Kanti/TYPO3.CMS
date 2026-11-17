@@ -93,8 +93,9 @@ final class PreviewAccessCacheHashTest extends FunctionalTestCase
         self::assertStringContainsString('cHash=', $link);
         self::assertStringContainsString('__t3ct=', $link);
 
+        $request = new InternalRequest('https://first.example' . $link);
         $response = $this->executeFrontendSubRequest(
-            new InternalRequest('https://first.example' . $link)
+            $request
                 ->withHeader('User-Agent', self::USER_AGENT)
                 ->withHeader('Sec-Fetch-Dest', 'iframe')
         );
@@ -110,8 +111,9 @@ final class PreviewAccessCacheHashTest extends FunctionalTestCase
         self::assertSame(1, preg_match('#href="([^"]*/other[^"]*)"#', $body, $matches));
         $link = PreviewTokenService::withToken(new Uri(html_entity_decode($matches[1])), $this->sign());
 
+        $request = new InternalRequest('https://first.example' . $link);
         $response = $this->executeFrontendSubRequest(
-            new InternalRequest('https://first.example' . $link)
+            $request
                 ->withHeader('User-Agent', self::USER_AGENT)
                 ->withHeader('Sec-Fetch-Dest', 'iframe')
         );
@@ -121,8 +123,9 @@ final class PreviewAccessCacheHashTest extends FunctionalTestCase
 
     private function preview(string $url, string $jwt): ResponseInterface
     {
+        $request = new InternalRequest($url . (str_contains($url, '?') ? '&' : '?') . '__t3ct=' . $jwt);
         return $this->executeFrontendSubRequest(
-            new InternalRequest($url . (str_contains($url, '?') ? '&' : '?') . '__t3ct=' . $jwt)
+            $request
                 ->withHeader('User-Agent', self::USER_AGENT)
                 ->withHeader('Sec-Fetch-Dest', 'iframe')
         );
@@ -130,7 +133,8 @@ final class PreviewAccessCacheHashTest extends FunctionalTestCase
 
     private function sign(): string
     {
-        return new PreviewTokenService(new SystemClock())
+        $previewTokenService = new PreviewTokenService(new SystemClock());
+        return $previewTokenService
             ->sign(new PreviewProfile(0, true, false, 0, []), self::BACKEND, self::USER_AGENT, 1)
             ->jwt;
     }

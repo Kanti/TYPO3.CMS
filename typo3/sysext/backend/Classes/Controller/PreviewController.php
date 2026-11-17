@@ -91,7 +91,8 @@ final readonly class PreviewController
         $this->pageRenderer->setTitle($languageService->sL('backend.preview:title'));
         $this->pageRenderer->loadJavaScriptModule('@typo3/backend/preview/preview-page.js');
         $this->pageRenderer->setBodyContent('<body>' . $view->render('Preview/Show'));
-        return new HtmlResponse($this->pageRenderer->render($request))
+        $response = new HtmlResponse($this->pageRenderer->render($request));
+        return $response
             ->withHeader('Cache-Control', 'private, no-store')
             ->withHeader('Referrer-Policy', 'no-referrer');
     }
