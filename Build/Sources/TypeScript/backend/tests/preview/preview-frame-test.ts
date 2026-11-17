@@ -250,6 +250,44 @@ describe('@typo3/backend/preview/preview-frame and its token', (): void => {
   });
 
   /**
+   * The page in the frame asks for a host of the preview on plain HTTP whose sites run on
+   * HTTPS only, such as an address an editor wrote down with "http://". A fresh token
+   * would go there in the clear, so the address opens in a new tab without one, as the
+   * links of the site lead there without the token.
+   */
+  it('opens a host of the preview on plain HTTP in a new tab when its sites run on HTTPS only', (): void => {
+    const open = stub(window, 'open');
+    const preview = new PreviewFrame(frame, { url: 'https://site.example/?__t3ct=token', renewUrl: '/renew', page: 3, hosts: ['site.example'], httpsHosts: ['site.example'], expiresIn: 900 });
+    try {
+      send(frame, { type: 'typo3:preview:navigate', url: 'http://site.example/page?__t3ct=token' });
+
+      expect(open.calledOnceWith('http://site.example/page', '_blank', 'noopener,noreferrer')).to.equal(true);
+      expect(backend.fetch.called).to.equal(false);
+    } finally {
+      preview.dispose();
+      open.restore();
+    }
+  });
+
+  /**
+   * A site with a base on plain HTTP is previewed on plain HTTP, so a host with such a
+   * site loads there with a fresh token, also when the page asking for it runs on HTTPS.
+   */
+  it('loads a host of the preview on plain HTTP with a fresh token when a site of it runs on plain HTTP', async (): Promise<void> => {
+    const open = stub(window, 'open');
+    const preview = new PreviewFrame(frame, { url: 'https://site.example/?__t3ct=token', renewUrl: '/renew', page: 3, hosts: ['site.example'], httpsHosts: [], expiresIn: 900 });
+    try {
+      send(frame, { type: 'typo3:preview:navigate', url: 'http://site.example/page' });
+
+      await waitUntil((): boolean => frame.getAttribute('src') === 'http://site.example/page?__t3ct=token-1');
+      expect(open.called).to.equal(false);
+    } finally {
+      preview.dispose();
+      open.restore();
+    }
+  });
+
+  /**
    * A page the editor returns to through the history may carry a token that expired.
    * The page is loaded again with a fresh token, and once it was shown there, a later
    * expiry at the same address is recovered the same way.

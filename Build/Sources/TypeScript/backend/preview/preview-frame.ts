@@ -18,6 +18,8 @@ export interface PreviewFrameSettings {
   renewUrl: string;
   page: number;
   hosts: string[];
+  // Hosts whose sites run on HTTPS only: their plain HTTP addresses never get a token
+  httpsHosts?: string[];
   expiresIn: number;
 }
 
@@ -69,6 +71,7 @@ export default class PreviewFrame {
   private address: URL;
   private token: string | null;
   private hosts: string[];
+  private httpsHosts: string[];
   private page: number;
   private expiresAt: number;
   private timer: number = 0;
@@ -84,6 +87,7 @@ export default class PreviewFrame {
     this.address = PreviewFrame.withoutToken(new URL(settings.url));
     this.token = readToken(new URL(settings.url));
     this.hosts = settings.hosts;
+    this.httpsHosts = settings.httpsHosts ?? [];
     this.page = settings.page;
     this.expiresAt = Date.now() + settings.expiresIn * 1000;
     if (this.token === null) {
@@ -136,6 +140,10 @@ export default class PreviewFrame {
     return this.hosts.includes(url.host.toLowerCase());
   }
 
+  private isInsecure(url: URL): boolean {
+    return url.protocol === 'http:' && this.httpsHosts.includes(url.host.toLowerCase());
+  }
+
   private readonly receive = (event: MessageEvent): void => {
     if (event.source !== this.frame.contentWindow) {
       return;
@@ -184,11 +192,12 @@ export default class PreviewFrame {
 
   /**
    * A host of the preview loads in the frame with a fresh token, another address of the
-   * web opens in a new tab. A script of the site can ask for any address, so nothing
-   * else opens, such as javascript: or data:.
+   * web opens in a new tab. So does the plain HTTP address of a host whose sites run on
+   * HTTPS only, which would get the token in the clear. A script of the site can ask for
+   * any address, so nothing else opens, such as javascript: or data:.
    */
   private navigate(url: URL): void {
-    if (this.allows(url)) {
+    if (this.allows(url) && !this.isInsecure(url)) {
       this.load(url);
       return;
     }
@@ -292,10 +301,13 @@ export default class PreviewFrame {
     return new AjaxRequest(this.settings.renewUrl)
       .post({ previewToken: this.token, url: address.href, page: this.page })
       .then(response => response.resolve())
-      .then((result: { url: string, expiresIn: number, hosts?: unknown }): string => {
+      .then((result: { url: string, expiresIn: number, hosts?: unknown, httpsHosts?: unknown }): string => {
         // The hosts of the preview are resolved again with every token
         if (Array.isArray(result.hosts) && result.hosts.every((host: unknown): host is string => typeof host === 'string')) {
           this.hosts = result.hosts;
+        }
+        if (Array.isArray(result.httpsHosts) && result.httpsHosts.every((host: unknown): host is string => typeof host === 'string')) {
+          this.httpsHosts = result.httpsHosts;
         }
         const url = new URL(result.url);
         if (!this.allows(url)) {

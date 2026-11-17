@@ -18,6 +18,7 @@ declare(strict_types=1);
 namespace TYPO3\CMS\Backend\Tests\Functional\Preview;
 
 use PHPUnit\Framework\Attributes\Test;
+use TYPO3\CMS\Backend\Preview\AddressOutsidePreviewException;
 use TYPO3\CMS\Backend\Preview\PreviewAccessDeniedException;
 use TYPO3\CMS\Backend\Preview\PreviewTokenIssuer;
 use TYPO3\CMS\Core\Database\ConnectionPool;
@@ -92,7 +93,22 @@ final class PreviewTokenIssuerTest extends FunctionalTestCase
         self::assertTrue($preview->scope->includesSite('first'));
         self::assertFalse($preview->scope->includesSite('second'));
         self::assertSame(['first.example'], $this->get(PreviewTokenIssuer::class)->getFrameSettings($preview, 2)['hosts']);
+        self::assertSame(['first.example'], $this->get(PreviewTokenIssuer::class)->getFrameSettings($preview, 2)['httpsHosts']);
         self::assertSame(9, $preview->token->userId);
+    }
+
+    /**
+     * The site of first.example runs on HTTPS. A token for its plain HTTP address would
+     * travel in the clear, so the backend signs none: the address opens as it is.
+     */
+    #[Test]
+    public function noTokenIsSignedForThePlainHttpAddressOfASiteOnHttps(): void
+    {
+        $user = $this->setUpBackendUser(1);
+
+        $this->expectException(AddressOutsidePreviewException::class);
+        $this->expectExceptionCode(1793265780);
+        $this->get(PreviewTokenIssuer::class)->issue($this->createRequest(), $user, new Uri('http://first.example/'), 2);
     }
 
     #[Test]

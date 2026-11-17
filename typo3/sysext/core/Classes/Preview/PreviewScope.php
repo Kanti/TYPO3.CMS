@@ -63,6 +63,26 @@ final readonly class PreviewScope
         return in_array($identifier, array_column($this->bases, 'site'), true);
     }
 
+    /**
+     * The hosts whose sites have a base on HTTPS and none on plain HTTP: an address on plain
+     * HTTP there would carry the token in the clear before the site redirects to HTTPS.
+     *
+     * @return list<string>
+     */
+    public function getHttpsOnlyHosts(): array
+    {
+        $plainHosts = [];
+        $secureHosts = [];
+        foreach ($this->bases as $base) {
+            if (str_starts_with($base['origin'], 'https://')) {
+                $secureHosts[] = $base['host'];
+            } else {
+                $plainHosts[] = $base['host'];
+            }
+        }
+        return array_values(array_unique(array_diff($secureHosts, $plainHosts)));
+    }
+
     public function allowsHost(string $host): bool
     {
         return in_array(strtolower($host), array_column($this->bases, 'host'), true);
@@ -76,7 +96,11 @@ final readonly class PreviewScope
         if ($uri->getUserInfo() !== '') {
             return false;
         }
-        return $this->allowsHost(self::hostOf($uri));
+        $host = self::hostOf($uri);
+        if ($uri->getScheme() === 'http' && in_array($host, $this->getHttpsOnlyHosts(), true)) {
+            return false;
+        }
+        return $this->allowsHost($host);
     }
 
     /**

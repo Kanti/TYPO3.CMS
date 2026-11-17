@@ -152,6 +152,7 @@ final readonly class PreviewTokenIssuer
             'renewUrl' => (string)$this->uriBuilder->buildUriFromRoute('ajax_preview_token'),
             'page' => $pageId,
             'hosts' => $preview->scope->getHosts(),
+            'httpsHosts' => $preview->scope->getHttpsOnlyHosts(),
             'expiresIn' => max(0, $preview->token->expires - $this->clock->now()->getTimestamp()),
         ];
     }
@@ -167,6 +168,7 @@ final readonly class PreviewTokenIssuer
             'renewUrl' => '',
             'page' => $pageId,
             'hosts' => [],
+            'httpsHosts' => [],
             'expiresIn' => 0,
         ];
     }

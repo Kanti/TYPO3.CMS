@@ -118,7 +118,7 @@ final readonly class PreviewController
         }
         $settings = $this->issuer->getFrameSettings($preview, $pageId);
         return new JsonResponse(
-            ['url' => $settings['url'], 'expiresIn' => $settings['expiresIn'], 'hosts' => $settings['hosts']],
+            ['url' => $settings['url'], 'expiresIn' => $settings['expiresIn'], 'hosts' => $settings['hosts'], 'httpsHosts' => $settings['httpsHosts']],
             200,
             ['Cache-Control' => 'private, no-store']
         );

@@ -180,6 +180,9 @@ final class PreviewControllerTest extends FunctionalTestCase
         self::assertStringStartsWith('https://second.example/?__t3ct=', $result['url']);
         self::assertSame(['first.example', 'second.example'], $result['hosts']);
         self::assertSame(['first.example', 'second.example'], $settings['hosts']);
+        // Both sites run on HTTPS only, so the page around the frame never sends a token to their plain HTTP address
+        self::assertSame(['first.example', 'second.example'], $result['httpsHosts']);
+        self::assertSame(['first.example', 'second.example'], $settings['httpsHosts']);
     }
 
     private function getFrameSettings(ResponseInterface $response): array

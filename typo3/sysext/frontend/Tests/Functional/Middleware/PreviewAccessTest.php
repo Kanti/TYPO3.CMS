@@ -1124,6 +1124,40 @@ final class PreviewAccessTest extends FunctionalTestCase
     }
 
     /**
+     * An editor may write a link to a host of the preview with "http://" while the site of
+     * that host runs on HTTPS. The browser would send the token in the clear before the
+     * site redirects to HTTPS, so the link is rendered as it is written, without the token.
+     * A site with a base on plain HTTP keeps the token in its links, see
+     * linksKeepTheTokenOnlyForHostsTheEditorMayPreview().
+     */
+    #[Test]
+    public function linkOnPlainHttpToAHostWhoseSiteUsesHttpsIsRenderedWithoutToken(): void
+    {
+        $this->get(ConnectionPool::class)->getConnectionForTable('pages')
+            ->insert('pages', ['uid' => 42, 'pid' => 1, 'title' => 'Insecure', 'slug' => '/insecure', 'doktype' => 3, 'link' => 'http://first.example/page']);
+
+        $body = (string)$this->preview('https://first.example/', $this->sign())->getBody();
+
+        self::assertStringContainsString('href="http://first.example/page"', $body);
+    }
+
+    /**
+     * A redirect to the plain HTTP address of a host whose site runs on HTTPS leads there
+     * without the token, for the same reason.
+     */
+    #[Test]
+    public function redirectOnPlainHttpToAHostWhoseSiteUsesHttpsLosesTheToken(): void
+    {
+        $this->get(ConnectionPool::class)->getConnectionForTable('pages')
+            ->insert('pages', ['uid' => 9, 'pid' => 1, 'title' => 'Insecure', 'slug' => '/to-insecure', 'doktype' => 3, 'link' => 'http://first.example/page']);
+
+        $response = $this->preview('https://first.example/to-insecure', $this->sign());
+
+        self::assertSame(303, $response->getStatusCode());
+        self::assertSame('http://first.example/page', $response->getHeaderLine('Location'));
+    }
+
+    /**
      * The base of a site may name an internationalized domain name as editors write it,
      * while browsers request the ASCII form of the host. Such a site is previewed like
      * any other: on the host the browser requests, with the token in its links.

@@ -173,14 +173,17 @@ Links, redirects and forms
 
 *   Links rendered by TYPO3 and redirects of the site, of languages, of
     shortcuts and of :composer:`typo3/cms-redirects` keep the token for the
-    hosts of the preview, never for any other host. Only the token is added or
-    removed; the rest of the address keeps its bytes, and a redirect to
-    another host without a token is left as it is.
+    hosts of the preview, never for any other host. The plain HTTP address of
+    a host whose sites run on HTTPS only gets no token either, as the browser
+    would send it in the clear. Only the token is added or removed; the rest
+    of the address keeps its bytes, and a redirect to another host without a
+    token is left as it is.
 *   Redirects of :composer:`typo3/cms-redirects` that respect query parameters
     ignore the token.
 *   A small script keeps the token in navigations started by scripts and asks
     the backend for a token when a navigation leads to another host of the
-    preview.
+    preview. The plain HTTP address of a host whose sites run on HTTPS only
+    opens in a new tab without a token.
 *   When the backend renews the token, the script puts the new one into the
     links, the form actions, the token fields and the data attributes of the
     page. An address a script of the site keeps elsewhere, for example in a

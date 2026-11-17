@@ -91,6 +91,50 @@ final class PreviewScopeTest extends UnitTestCase
         self::assertSame($allowed, $this->createScope()->allowsUrl($address, new Uri('https://example.com/current')));
     }
 
+    public static function plainHttpDataProvider(): \Generator
+    {
+        yield 'address on plain HTTP of a host whose site uses HTTPS' => ['http://secure.example/page', false];
+        yield 'address relative to the scheme from a page on plain HTTP to a host whose site uses HTTPS' => ['//secure.example/page', false];
+        yield 'address on HTTPS of a host whose site uses HTTPS' => ['https://secure.example/page', true];
+        yield 'address on plain HTTP of a host whose site uses plain HTTP' => ['http://plain.example/page', true];
+        yield 'address on HTTPS of a host whose site uses plain HTTP' => ['https://plain.example/page', true];
+        yield 'address on plain HTTP of a host with sites on both' => ['http://mixed.example/page', true];
+    }
+
+    /**
+     * An editor may write down an address of a host of the scope with "http://", for
+     * example in a link page, while the site of that host runs on HTTPS. The browser would
+     * send the token in the clear before the site redirects to HTTPS, so such an address
+     * never carries it. A host with a site on plain HTTP keeps the token on plain HTTP:
+     * that site is previewed there anyway.
+     */
+    #[Test]
+    #[DataProvider('plainHttpDataProvider')]
+    public function addressesOnPlainHttpAreNotAllowedOnHostsWhoseSitesUseHttpsOnly(string $address, bool $allowed): void
+    {
+        self::assertSame($allowed, $this->createScopeWithSchemes()->allowsUrl($address, new Uri('http://plain.example/current')));
+    }
+
+    #[Test]
+    public function hostsWhoseSitesUseHttpsOnlyAreListed(): void
+    {
+        $scope = $this->createScopeWithSchemes();
+
+        self::assertSame(['secure.example'], $scope->getHttpsOnlyHosts());
+        self::assertFalse($scope->allowsUri(new Uri('http://secure.example/')));
+        self::assertTrue($scope->allowsUri(new Uri('http://mixed.example/')));
+    }
+
+    private function createScopeWithSchemes(): PreviewScope
+    {
+        return new PreviewScope([
+            ['site' => 'secure', 'host' => 'secure.example', 'origin' => 'https://secure.example'],
+            ['site' => 'plain', 'host' => 'plain.example', 'origin' => 'http://plain.example'],
+            ['site' => 'mixed', 'host' => 'mixed.example', 'origin' => 'https://mixed.example'],
+            ['site' => 'mixed', 'host' => 'mixed.example', 'origin' => 'http://mixed.example'],
+        ]);
+    }
+
     /**
      * A site whose base names an internationalized domain name is requested by browsers
      * with the ASCII form of the host, as the site matching of TYPO3 compares it.
