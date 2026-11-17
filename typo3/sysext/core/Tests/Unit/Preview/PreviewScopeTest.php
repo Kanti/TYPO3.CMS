@@ -113,8 +113,8 @@ final class PreviewScopeTest extends UnitTestCase
      * breaks, strip control characters and spaces at both ends, and take a backslash before
      * the query for a slash. "/\evil.example/x" is a path to PHP and the host evil.example
      * to a browser. Such an address never carries the token, so a link, a form or a redirect
-     * of an extension cannot hand it to another host; a backslash in the query or the
-     * fragment changes no host and keeps it.
+     * of an extension cannot hand it to another host. A backslash in the query or the
+     * fragment changes no host and keeps the token.
      */
     #[Test]
     #[DataProvider('addressesBrowsersReadDifferentlyDataProvider')]

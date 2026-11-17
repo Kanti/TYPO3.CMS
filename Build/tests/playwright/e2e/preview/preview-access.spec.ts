@@ -340,7 +340,7 @@ test.describe('Preview page around the frame', () => {
 
   /**
    * A link of the site may target the window around the frame, as target="_top" does.
-   * In the preview it would replace the backend with the page; it stays in the frame,
+   * In the preview it would replace the backend with the page. It stays in the frame,
    * as forms rendered with f:form do.
    */
   test('keeps a link that targets the window around the frame in the frame', async ({ browser }) => {

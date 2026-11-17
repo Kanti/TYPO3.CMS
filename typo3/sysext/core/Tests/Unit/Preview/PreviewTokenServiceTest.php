@@ -463,7 +463,7 @@ final class PreviewTokenServiceTest extends UnitTestCase
     }
 
     /**
-     * A link to a mail address or a phone number names no web address; removing the token
+     * A link to a mail address or a phone number names no web address. Removing the token
      * from it leaves it as it is, whatever its query looks like.
      */
     #[Test]

@@ -129,8 +129,8 @@ final class ViewModuleController
         $custom['height'] = MathUtility::forceIntegerInRange($custom['height'] ?? 480, 300);
 
         try {
-            // Always with a preview token, so the page stays in the frame; the site shows it as a
-            // preview only where something is previewed
+            // Always with a preview token, so the page stays in the frame. The site shows it as
+            // a preview only where something is previewed.
             $preview = $this->previewTokenIssuer->issue($request, $this->getBackendUser(), $targetUri, $this->pageContext->pageId);
             $previewSettings = $this->previewTokenIssuer->getFrameSettings($preview, $this->pageContext->pageId);
             $frameSources = array_map(static fn(string $origin): UriValue => new UriValue($origin), $preview->scope->getOrigins());

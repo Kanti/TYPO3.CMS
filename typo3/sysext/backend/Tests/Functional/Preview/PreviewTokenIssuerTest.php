@@ -425,7 +425,7 @@ final class PreviewTokenIssuerTest extends FunctionalTestCase
     /**
      * The page around the frame renews the token of the editor who opened it. Another
      * editor logged in to the same browser in the meantime gets no token from the
-     * simulation of the previous one; the preview page opens again for this editor.
+     * simulation of the previous one. The preview page opens again for this editor.
      */
     #[Test]
     public function renewalRefusesTheTokenOfAnotherEditor(): void

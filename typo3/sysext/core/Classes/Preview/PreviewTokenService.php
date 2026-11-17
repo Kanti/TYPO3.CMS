@@ -24,11 +24,10 @@ use TYPO3\CMS\Core\Security\JwtTrait;
 use TYPO3\CMS\Core\Utility\StringUtility;
 
 /**
- * Signs and verifies short-lived preview tokens. A token carries the editor it
- * was signed for and the whole preview profile, verifying it needs no session.
- * It names no hosts, so its size does not grow with the sites of an installation:
- * the site resolves them from the editor on every request. A visitor token only
- * shows the pages as a visitor sees them; its editor decides only where it is valid.
+ * Signs and verifies short-lived preview tokens. A token carries the editor it was
+ * signed for and the whole preview profile, so verifying it needs no session. It names
+ * no hosts, so its size does not grow with the sites of an installation. The site
+ * resolves them from the editor on every request.
  *
  * @internal
  */

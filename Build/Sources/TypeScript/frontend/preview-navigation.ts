@@ -15,9 +15,9 @@
  * Module: @typo3/frontend/preview-navigation
  *
  * Added to pages shown with a preview token. Links rendered by TYPO3 already carry the
- * token; this is the fallback for navigations started by scripts, and it reports the
- * address of the frame to the backend page around it. That page answers the messages in
- * @typo3/backend/preview/preview-frame; the error page of PreviewAccess sends
+ * token. This script is the fallback for navigations started by scripts, and it reports
+ * the address of the frame to the backend page around it. That page answers the messages
+ * in @typo3/backend/preview/preview-frame. The error page of PreviewAccess sends
  * typo3:preview:expired.
  */
 
@@ -166,7 +166,7 @@ if (script && window.parent !== window) {
     });
   });
 
-  // A link to the window around the frame would replace the backend with the page; it
+  // A link to the window around the frame would replace the backend with the page. It
   // stays in the frame, as forms rendered with f:form do. The target is read and set as
   // an attribute, which also reaches links in inline SVG.
   document.addEventListener('click', (event: MouseEvent): void => {

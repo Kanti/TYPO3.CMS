@@ -105,7 +105,7 @@ final readonly class PreviewScope
 
     /**
      * Whether an address as it is written in a link, a form or a redirect leads to a host
-     * of the scope. A relative address is resolved against the address of the request; an
+     * of the scope. A relative address is resolved against the address of the request. An
      * address of another scheme, such as mailto: or tel:, or a malformed one never does.
      */
     public function allowsUrl(string $url, UriInterface $base): bool

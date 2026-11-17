@@ -105,7 +105,7 @@ final readonly class PreviewTokenIssuer
 
     /**
      * Signs a fresh token for an address of the frame. The simulation stays as signed in the
-     * previous token, and a token without the editor stays one; all rights of the editor are
+     * previous token, and a token without the editor stays one. All rights of the editor are
      * checked again, also for its groups.
      *
      * @throws PreviewAccessDeniedException
@@ -224,7 +224,7 @@ final readonly class PreviewTokenIssuer
 
     /**
      * Only groups the editor may read and groups named by the access restrictions of the page
-     * are simulated; others are left out. "-1" (hide at login) and "-2" (any login, already
+     * are simulated. Others are left out. "-1" (hide at login) and "-2" (any login, already
      * replaced by a group) need no group.
      *
      * @param list<int> $groups

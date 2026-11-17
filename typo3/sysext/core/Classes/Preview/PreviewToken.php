@@ -18,12 +18,10 @@ declare(strict_types=1);
 namespace TYPO3\CMS\Core\Preview;
 
 /**
- * A signed preview token and the claims it carries. It names the editor who opened
- * the preview; the site builds this editor again on every request, so rights changed
- * in the meantime apply, also to the sites and hosts the token is valid on, see
- * PreviewScopeResolver. A visitor token shows the pages as a visitor sees them, see
- * PreviewProfile::isVisitorView(): its editor only decides where it is valid and
- * does not become the backend user of the request.
+ * A signed preview token and the claims it carries: the editor who opened the preview
+ * and the simulation to show. A visitor token names its editor only to decide where it
+ * is valid. The changelog entry Important-110664-PreviewsOfHiddenPagesWorkOnEveryDomain
+ * describes the design.
  *
  * @internal
  */

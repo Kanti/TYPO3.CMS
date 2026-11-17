@@ -311,8 +311,8 @@ describe('@typo3/backend/preview/preview-frame and its token', (): void => {
   });
 
   /**
-   * A token the site keeps refusing at an address would load the page again and again;
-   * a second expiry before the page was shown there stops the preview with its notice.
+   * A token the site keeps refusing at an address would load the page again and again.
+   * A second expiry before the page was shown there stops the preview with its notice.
    */
   it('stops when an address expires again before the page was shown there', async (): Promise<void> => {
     const failure = stub();

@@ -53,11 +53,10 @@ use TYPO3\CMS\Frontend\Authentication\PreviewBackendUserInitializer;
 use TYPO3\CMS\Frontend\Cache\CacheInstruction;
 
 /**
- * Turns a preview token in the address (`__t3ct`) into a preview context. The editor
- * the token was signed for becomes a stateless backend user of the request, built
- * again on every request; a token without an editor shows the pages as a visitor
- * sees them. The token replaces any backend login, workspace preview keyword and
- * simulation parameter. An invalid token never falls back to the live page.
+ * Turns a preview token in the address (`__t3ct`) into a preview context for the
+ * request. An invalid token never falls back to the live page. The changelog entry
+ * Important-110664-PreviewsOfHiddenPagesWorkOnEveryDomain lists the checks and what
+ * the token replaces.
  *
  * @internal
  */
@@ -161,8 +160,8 @@ final readonly class PreviewAccess implements MiddlewareInterface
             $GLOBALS['SIM_ACCESS_TIME'] = $token->profile->date - ($token->profile->date % 60);
             $this->context->setAspect('date', new DateTimeAspect(DateTimeFactory::createFromTimestamp($token->profile->date)));
         }
-        // A token previews something only where its simulation asks for more than a visitor sees;
-        // a requested hidden page is one more case, see PreviewSimulator
+        // A token previews something only where its simulation asks for more than a visitor
+        // sees. A requested hidden page is one more case, see PreviewSimulator.
         $this->context->setAspect('frontend.preview', new PreviewAspect(!$token->profile->isVisitorView()));
         $cacheInstruction = $request->getAttribute('frontend.cache.instruction', new CacheInstruction());
         $cacheInstruction->disableCache('EXT:frontend: Preview token bypasses the page cache.');
@@ -195,8 +194,8 @@ final readonly class PreviewAccess implements MiddlewareInterface
 
     /**
      * A redirect to a host of the preview carries the token on. Any other target is left
-     * as it is, as signed addresses of login or payment services must keep their bytes;
-     * only a token it would carry to another host is removed.
+     * as it is, as signed addresses of login or payment services must keep their bytes.
+     * Only a token it would carry to another host is removed.
      */
     private function withTokenInLocation(ServerRequestInterface $request, ResponseInterface $response, PreviewToken $token, PreviewScope $scope): ResponseInterface
     {
@@ -224,8 +223,8 @@ final readonly class PreviewAccess implements MiddlewareInterface
     }
 
     /**
-     * Whether the request loads the page into a frame, as browsers tell it to HTTPS sites;
-     * without the header, as on a plain HTTP site, it is taken as one.
+     * Whether the request loads the page into a frame, as browsers tell it to HTTPS sites.
+     * Without the header, as on a plain HTTP site, it is taken as one.
      */
     public static function isFrameRequest(ServerRequestInterface $request): bool
     {

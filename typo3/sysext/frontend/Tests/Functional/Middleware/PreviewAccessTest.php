@@ -1162,7 +1162,7 @@ final class PreviewAccessTest extends FunctionalTestCase
 
     /**
      * A redirect relative to the page stays relative and keeps its query as it is
-     * written; only the token is added, as the target is on the host of the preview.
+     * written. Only the token is added, as the target is on the host of the preview.
      */
     #[Test]
     public function relativeRedirectKeepsItsAddressAndOnlyGetsTheToken(): void
@@ -1290,7 +1290,7 @@ final class PreviewAccessTest extends FunctionalTestCase
 
     /**
      * A frame-ancestors directive the site sends itself is its decision on who may frame
-     * the page; the preview adds none beside it.
+     * the page. The preview adds none beside it.
      */
     #[Test]
     public function frameAncestorsOfThePolicyOfTheSiteAreLeftAsTheyAre(): void
@@ -1357,8 +1357,8 @@ final class PreviewAccessTest extends FunctionalTestCase
     }
 
     /**
-     * Runs the middleware for a page in the frame of a site, on HTTPS or on plain HTTP; the
-     * page renders as "Rendered page"
+     * Runs the middleware for a page in the frame of a site, on HTTPS or on plain HTTP.
+     * The page renders as "Rendered page".
      */
     private function processPreviewAccessOfSite(string $identifier, string $url, bool $https): ResponseInterface
     {

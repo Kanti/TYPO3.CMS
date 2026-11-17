@@ -77,7 +77,7 @@ final class PreviewUriBuilderBackendPreviewTest extends FunctionalTestCase
 
     /**
      * An editor gets the preview page for the same pages as an administrator, within the
-     * mounts and the page permissions of the editor; a visible page opens directly.
+     * mounts and the page permissions of the editor. A visible page opens directly.
      */
     #[Test]
     public function editorGetsThePreviewPageForAHiddenPageOfItsMounts(): void

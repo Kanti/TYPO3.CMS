@@ -248,7 +248,7 @@ export default class PreviewFrame {
 
   /**
    * Reloads the frame with a fresh token once per address and reason until the page is
-   * shown there; a second refusal before that stops, so a token the site keeps refusing
+   * shown there. A second refusal before that stops, so a token the site keeps refusing
    * never loops.
    */
   private recover(address: URL, reason: string): void {
@@ -278,7 +278,7 @@ export default class PreviewFrame {
 
   /**
    * Signs one address at a time. Asked for the address it is signing, it hands out that
-   * result; another address waits and is signed after it with the token it brings, so
+   * result. Another address waits and is signed after it with the token it brings, so
    * it never gets the address of the other request.
    */
   private sign(address: URL): Promise<string> {

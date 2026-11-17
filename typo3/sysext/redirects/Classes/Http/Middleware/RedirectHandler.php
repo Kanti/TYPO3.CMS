@@ -58,7 +58,7 @@ class RedirectHandler implements MiddlewareInterface
     public function process(ServerRequestInterface $request, RequestHandlerInterface $handler): ResponseInterface
     {
         $port = $request->getUri()->getPort();
-        // A preview token is carried over to the target of a redirect; it selects no redirect
+        // A preview token selects no redirect. It is carried over to the target.
         $requestUri = PreviewTokenService::withoutToken($request->getUri());
         $matchedRedirect = $this->redirectService->matchRedirect(
             $requestUri->getHost() . ($port ? ':' . $port : ''),

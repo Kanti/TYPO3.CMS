@@ -26,10 +26,10 @@ use TYPO3\CMS\Core\Type\Bitmask\Permission;
  * The editor of a preview token as backend user of a frontend request. Nothing
  * of it outlives the request: there is no session and no cookie, and neither the
  * user settings nor the workspace are written back to the user record. The
- * workspace is the one of the token; a workspace the editor may not enter is
+ * workspace is the one of the token. A workspace the editor may not enter is
  * refused rather than replaced by another one. A preview only shows: the editor has
  * no right to change tables, pages or files, see also PreviewDataHandlerGuard. As for
- * a backend login, the admin panel is available; it stores its settings through the
+ * a backend login, the admin panel is available. It stores its settings through the
  * backend around the frame.
  *
  * @internal only to be created by the PreviewBackendUserInitializer
