@@ -15,7 +15,7 @@ declare(strict_types=1);
  * The TYPO3 project - inspiring people to share!
  */
 
-namespace TYPO3\CMS\Frontend\Middleware;
+namespace TYPO3\CMS\Frontend\Preview;
 
 use Psr\Http\Message\ServerRequestInterface;
 

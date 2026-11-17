@@ -51,6 +51,7 @@ use TYPO3\CMS\Core\Utility\GeneralUtility;
 use TYPO3\CMS\Frontend\Aspect\PreviewAspect;
 use TYPO3\CMS\Frontend\Authentication\PreviewBackendUserInitializer;
 use TYPO3\CMS\Frontend\Cache\CacheInstruction;
+use TYPO3\CMS\Frontend\Preview\PreviewRequestKind;
 
 /**
  * Turns a preview token in the address (`__t3ct`) into a preview context for the

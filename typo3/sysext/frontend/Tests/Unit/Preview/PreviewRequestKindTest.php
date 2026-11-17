@@ -15,13 +15,13 @@ declare(strict_types=1);
  * The TYPO3 project - inspiring people to share!
  */
 
-namespace TYPO3\CMS\Frontend\Tests\Unit\Middleware;
+namespace TYPO3\CMS\Frontend\Tests\Unit\Preview;
 
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Test;
 use TYPO3\CMS\Core\Http\ServerRequest;
-use TYPO3\CMS\Frontend\Middleware\PreviewRequestKind;
 use TYPO3\CMS\Frontend\Middleware\PreviewTokenAuthenticator;
+use TYPO3\CMS\Frontend\Preview\PreviewRequestKind;
 use TYPO3\TestingFramework\Core\Unit\UnitTestCase;
 
 final class PreviewRequestKindTest extends UnitTestCase
