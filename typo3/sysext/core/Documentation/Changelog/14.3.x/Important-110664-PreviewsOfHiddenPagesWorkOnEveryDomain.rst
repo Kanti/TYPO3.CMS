@@ -212,8 +212,14 @@ Links, redirects and forms
     HTTP POST, and in a hidden field when it is sent via HTTP GET.
 *   Links with the target :html:`_top` or :html:`_parent` open in the frame
     as well, links in inline SVG included.
-*   Other forms get no token of their own: a form sent via HTTP POST without
-    the token in its action shows the page without the preview.
+*   Other forms get no token of their own. A form sent via HTTP POST to a
+    host of the preview without the token in its action shows the page
+    without the preview. A form sent to a host outside the preview is
+    blocked by the backend page, whose frame shows only the hosts of the
+    preview; to send it, open the page in a tab of its own. In
+    installations with very many sites, where the backend allows every
+    HTTPS address in the frame, such a form shows the page there without
+    the preview.
 
 The script runs under the Content-Security-Policy of the site: it carries the
 nonce of the request, and where the site uses hash values
