@@ -340,6 +340,23 @@ final class PreviewAccessTest extends FunctionalTestCase
         }
     }
 
+    /**
+     * The tab is sent to the address the browser requested, without the token and with
+     * every other byte as it was: brackets, a pipe and a stray percent sign, which an URI
+     * object would encode anew, so that a signed address still matches.
+     */
+    #[Test]
+    public function topLevelNavigationIsRedirectedToTheAddressAsTheBrowserSentIt(): void
+    {
+        $response = $this->processPreviewAccess(
+            'https://first.example/page?items[]=1&a|b=2&q=%zz&__t3ct=' . $this->sign() . '&sig=ab%2bcd',
+            ['Sec-Fetch-Dest' => 'document', 'Sec-Fetch-Mode' => 'navigate']
+        );
+
+        self::assertSame(303, $response->getStatusCode());
+        self::assertSame('https://first.example/page?items[]=1&a|b=2&q=%zz&sig=ab%2bcd', $response->getHeaderLine('Location'));
+    }
+
     public static function namesPhpReadsAsTheTokenDataProvider(): \Generator
     {
         yield 'an array' => ['__t3ct%5B%5D=x'];
@@ -1343,9 +1360,12 @@ final class PreviewAccessTest extends FunctionalTestCase
      */
     private function processPreviewAccess(string $url, array $headers, ?RequestHandlerInterface $handler = null): ResponseInterface
     {
-        parse_str((string)parse_url($url, PHP_URL_QUERY), $queryParams);
+        $query = parse_url($url, PHP_URL_QUERY);
+        parse_str((string)$query, $queryParams);
         $site = $this->get(SiteFinder::class)->getSiteByIdentifier('first');
-        $request = new ServerRequest($url, 'GET', null, $headers + ['User-Agent' => self::USER_AGENT], ['HTTPS' => 'on', 'HTTP_HOST' => 'first.example'])
+        // The web server hands over the address as the browser sent it
+        $requestUri = parse_url($url, PHP_URL_PATH) . (is_string($query) ? '?' . $query : '');
+        $request = new ServerRequest($url, 'GET', null, $headers + ['User-Agent' => self::USER_AGENT], ['HTTPS' => 'on', 'HTTP_HOST' => 'first.example', 'REQUEST_URI' => $requestUri])
             ->withQueryParams($queryParams)
             ->withAttribute('applicationType', SystemEnvironmentBuilder::REQUESTTYPE_FE)
             ->withAttribute('site', $site)

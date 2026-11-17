@@ -185,6 +185,29 @@ final class PreviewControllerTest extends FunctionalTestCase
         self::assertSame(['first.example', 'second.example'], $settings['httpsHosts']);
     }
 
+    /**
+     * The page around the frame posts the address to renew a token for. One that cannot
+     * be parsed gets the same refusal as an address outside the preview instead of an
+     * error, and no cache keeps it.
+     */
+    #[Test]
+    public function renewalOfAMalformedAddressIsRefused(): void
+    {
+        $settings = $this->getFrameSettings($this->showPreviewPage('https://first.example/'));
+        parse_str((string)parse_url($settings['url'], PHP_URL_QUERY), $query);
+        $request = $this->createBackendRequest()->withMethod('POST')->withParsedBody([
+            'previewToken' => $query[PreviewTokenService::PARAMETER],
+            'url' => 'https://[first.example/',
+            'page' => 1,
+        ]);
+
+        $response = $this->get(PreviewController::class)->tokenAction($request);
+
+        self::assertSame(403, $response->getStatusCode());
+        self::assertSame('private, no-store', $response->getHeaderLine('Cache-Control'));
+        self::assertSame(['error' => 'denied'], json_decode((string)$response->getBody(), true, flags: JSON_THROW_ON_ERROR));
+    }
+
     private function getFrameSettings(ResponseInterface $response): array
     {
         self::assertSame(1, preg_match('/data-preview-settings="([^"]+)"/', (string)$response->getBody(), $matches));

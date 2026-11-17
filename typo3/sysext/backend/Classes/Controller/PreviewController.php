@@ -106,15 +106,21 @@ final readonly class PreviewController
         $body = $request->getParsedBody();
         $pageId = (int)($body['page'] ?? 0);
         try {
+            $frontendUri = new Uri(is_string($body['url'] ?? null) ? $body['url'] : '');
+        } catch (\InvalidArgumentException) {
+            // An address the page around the frame could not have taken from the frame
+            return $this->createDeniedJsonResponse();
+        }
+        try {
             $preview = $this->issuer->renew(
                 $request,
                 $this->getBackendUser(),
                 is_string($body['previewToken'] ?? null) ? $body['previewToken'] : '',
-                new Uri(is_string($body['url'] ?? null) ? $body['url'] : ''),
+                $frontendUri,
                 $pageId,
             );
         } catch (PreviewAccessDeniedException) {
-            return new JsonResponse(['error' => 'denied'], 403, ['Cache-Control' => 'private, no-store']);
+            return $this->createDeniedJsonResponse();
         }
         $settings = $this->issuer->getFrameSettings($preview, $pageId);
         return new JsonResponse(
@@ -122,6 +128,11 @@ final readonly class PreviewController
             200,
             ['Cache-Control' => 'private, no-store']
         );
+    }
+
+    private function createDeniedJsonResponse(): ResponseInterface
+    {
+        return new JsonResponse(['error' => 'denied'], 403, ['Cache-Control' => 'private, no-store']);
     }
 
     private function createDeniedResponse(): ResponseInterface

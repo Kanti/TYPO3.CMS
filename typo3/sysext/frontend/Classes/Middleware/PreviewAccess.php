@@ -214,10 +214,31 @@ final readonly class PreviewAccess implements MiddlewareInterface
     private function redirectWithoutToken(ServerRequestInterface $request): ResponseInterface
     {
         return new RedirectResponse(
-            (string)PreviewTokenService::withoutToken($request->getUri()),
+            PreviewTokenService::removeFromUrl($this->getAddressAsSent($request)),
             303,
             ['Cache-Control' => 'private, no-store', 'Referrer-Policy' => 'no-referrer', 'X-Robots-Tag' => 'noindex']
         );
+    }
+
+    /**
+     * The address as the browser sent it, so that every byte besides the token stays: the
+     * address of the request is an URI object, which encodes brackets, pipes or a stray
+     * percent sign anew. A request the web server did not hand over for this address, such
+     * as a sub-request, keeps the address of the request.
+     */
+    private function getAddressAsSent(ServerRequestInterface $request): string
+    {
+        $uri = (string)$request->getUri();
+        if (empty($request->getServerParams()['REQUEST_URI'])) {
+            return $uri;
+        }
+        $normalizedParams = $request->getAttribute('normalizedParams') ?? NormalizedParams::createFromRequest($request);
+        $address = $normalizedParams->getRequestHost() . $normalizedParams->getRequestUri();
+        try {
+            return (string)new Uri($address) === $uri ? $address : $uri;
+        } catch (\InvalidArgumentException) {
+            return $uri;
+        }
     }
 
     /**
