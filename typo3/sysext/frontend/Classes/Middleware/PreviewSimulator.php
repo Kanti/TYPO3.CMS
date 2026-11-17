@@ -67,7 +67,7 @@ readonly class PreviewSimulator implements MiddlewareInterface
                     // A login without any group still counts as login: "-2" applies, "-1" does not
                     $this->context->setAspect('frontend.user', new UserAspect($request->getAttribute('frontend.user'), [0, -2]));
                 }
-            } elseif ($previewToken->userId === null) {
+            } elseif ($previewToken->showsLive()) {
                 // A token without an editor shows the page as a visitor sees it, who is not logged in: "-1" applies
                 $this->context->setAspect('frontend.user', new UserAspect(null, [0, -1]));
             }
@@ -154,7 +154,7 @@ readonly class PreviewSimulator implements MiddlewareInterface
      */
     protected function editorSeesHiddenPage(PreviewToken $previewToken, ServerRequestInterface $request): bool
     {
-        if ($previewToken->userId === null) {
+        if ($previewToken->showsLive()) {
             return false;
         }
         if ($previewToken->profile->hiddenPages) {

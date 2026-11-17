@@ -73,13 +73,15 @@ final class PreviewTokenIssuerTest extends FunctionalTestCase
         self::assertSame('https://backend.example', $preview->token->backendOrigin);
         self::assertTrue($preview->scope->includesSite('first'));
         self::assertTrue($preview->scope->includesSite('second'));
-        self::assertSame(1, $preview->token->userId);
+        self::assertFalse($preview->token->showsLive());
+        self::assertSame(1, $preview->token->editorId);
         self::assertSame(1796083200, $preview->token->profile->date);
         self::assertSame([5], $preview->token->profile->groups);
         self::assertSame('https://first.example/de/?a=1&__t3ct=' . $preview->token->jwt, (string)$preview->uri);
         $verified = $this->get(PreviewTokenService::class)->verify($preview->token->jwt, self::USER_AGENT);
         self::assertEquals($preview->token->profile, $verified->profile);
-        self::assertSame($preview->token->userId, $verified->userId);
+        self::assertSame($preview->token->editorId, $verified->editorId);
+        self::assertFalse($verified->showsLive());
     }
 
     #[Test]
@@ -94,7 +96,8 @@ final class PreviewTokenIssuerTest extends FunctionalTestCase
         self::assertFalse($preview->scope->includesSite('second'));
         self::assertSame(['first.example'], $this->get(PreviewTokenIssuer::class)->getFrameSettings($preview, 2)['hosts']);
         self::assertSame(['first.example'], $this->get(PreviewTokenIssuer::class)->getFrameSettings($preview, 2)['httpsHosts']);
-        self::assertSame(9, $preview->token->userId);
+        self::assertFalse($preview->token->showsLive());
+        self::assertSame(9, $preview->token->editorId);
     }
 
     /**
@@ -281,8 +284,8 @@ final class PreviewTokenIssuerTest extends FunctionalTestCase
 
         $preview = $this->get(PreviewTokenIssuer::class)->issueForVisitor($this->createRequest(), $user, new Uri('https://first.example/?ADMCMD_simUser=5'), 2);
 
-        self::assertNull($preview->token->userId);
-        self::assertTrue($preview->token->profile->isVisitorView());
+        self::assertTrue($preview->token->showsLive());
+        self::assertTrue($preview->token->profile->showsLiveView());
         self::assertSame([], $preview->token->profile->groups);
         self::assertSame('https://first.example/?__t3ct=' . $preview->token->jwt, (string)$preview->uri);
     }
@@ -307,8 +310,8 @@ final class PreviewTokenIssuerTest extends FunctionalTestCase
 
         $renewed = $issuer->renew($this->createRequest(), $user, $previous->token->jwt, new Uri('https://first.example/de/'), 3);
 
-        self::assertNull($renewed->token->userId);
-        self::assertTrue($renewed->token->profile->isVisitorView());
+        self::assertTrue($renewed->token->showsLive());
+        self::assertTrue($renewed->token->profile->showsLiveView());
     }
 
     #[Test]
@@ -318,8 +321,7 @@ final class PreviewTokenIssuerTest extends FunctionalTestCase
 
         $preview = $this->get(PreviewTokenIssuer::class)->issueForVisitor($this->createRequest(), $user, new Uri('https://first.example/de/'), 2);
 
-        self::assertNull($preview->token->userId);
-        self::assertTrue($preview->token->visitor);
+        self::assertTrue($preview->token->showsLive());
         self::assertSame(1, $preview->token->editorId);
         self::assertSame(['first.example', 'second.example:8443'], $preview->scope->getHosts());
     }
@@ -333,8 +335,7 @@ final class PreviewTokenIssuerTest extends FunctionalTestCase
 
         $renewed = $issuer->renew($this->createRequest(), $user, $previous->token->jwt, new Uri('https://second.example:8443/'), 2);
 
-        self::assertNull($renewed->token->userId);
-        self::assertTrue($renewed->token->visitor);
+        self::assertTrue($renewed->token->showsLive());
         self::assertSame(1, $renewed->token->editorId);
         self::assertSame('https://second.example:8443/?__t3ct=' . $renewed->token->jwt, (string)$renewed->uri);
     }

@@ -54,10 +54,12 @@ final readonly class PreviewProfile
     }
 
     /**
-     * Whether the pages are shown as a visitor sees them now: live, without
-     * hidden records, at the current time and without a frontend login.
+     * Whether the profile shows the live view as visitors see it now: live, without
+     * hidden records, at the current time and without a frontend login. A token of an
+     * editor may carry such a profile too. Whether a token shows live, as the visitor
+     * token of the live frame does, says PreviewToken::showsLive().
      */
-    public function isVisitorView(): bool
+    public function showsLiveView(): bool
     {
         if ($this->workspace !== 0) {
             return false;

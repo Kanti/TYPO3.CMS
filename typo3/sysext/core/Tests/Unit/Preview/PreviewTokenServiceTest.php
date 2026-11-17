@@ -51,12 +51,13 @@ final class PreviewTokenServiceTest extends UnitTestCase
         $verified = $subject->verify($signed->jwt, self::USER_AGENT);
 
         self::assertEquals($profile, $verified->profile);
-        self::assertFalse($verified->visitor);
+        self::assertFalse($verified->showsLive());
         self::assertSame(5, $verified->editorId);
         self::assertSame('https://site-a.com', $verified->backendOrigin);
         self::assertSame($signed->expires, $verified->expires);
         self::assertEqualsWithDelta(time() + PreviewTokenService::LIFETIME, $verified->expires, 2);
-        self::assertSame(5, $verified->userId);
+        self::assertFalse($verified->showsLive());
+        self::assertSame(5, $verified->editorId);
     }
 
     #[Test]
@@ -68,9 +69,8 @@ final class PreviewTokenServiceTest extends UnitTestCase
 
         $verified = $subject->verify($jwt, self::USER_AGENT);
 
-        self::assertNull($verified->userId);
-        self::assertTrue($verified->visitor);
-        self::assertTrue($verified->profile->isVisitorView());
+        self::assertTrue($verified->showsLive());
+        self::assertTrue($verified->profile->showsLiveView());
         self::assertSame(5, $verified->editorId);
     }
 
@@ -268,7 +268,8 @@ final class PreviewTokenServiceTest extends UnitTestCase
 
         $verified = new PreviewTokenService(new SystemClock())->verify($jwt, self::USER_AGENT);
 
-        self::assertSame(5, $verified->userId);
+        self::assertFalse($verified->showsLive());
+        self::assertSame(5, $verified->editorId);
     }
 
     #[Test]
@@ -338,7 +339,8 @@ final class PreviewTokenServiceTest extends UnitTestCase
 
         $verified = new PreviewTokenService(new SystemClock())->verify($jwt, self::USER_AGENT);
 
-        self::assertSame(5, $verified->userId);
+        self::assertFalse($verified->showsLive());
+        self::assertSame(5, $verified->editorId);
     }
 
     public static function backendClockMoreThanAMinuteAheadDataProvider(): \Generator
@@ -383,7 +385,8 @@ final class PreviewTokenServiceTest extends UnitTestCase
 
         $token = new PreviewTokenService(new SystemClock())->readForRenewal($jwt, self::USER_AGENT);
         self::assertEquals($profile, $token->profile);
-        self::assertSame(5, $token->userId);
+        self::assertFalse($token->showsLive());
+        self::assertSame(5, $token->editorId);
     }
 
     #[Test]
@@ -394,7 +397,8 @@ final class PreviewTokenServiceTest extends UnitTestCase
 
         $token = new PreviewTokenService(new SystemClock())->readForRenewal($jwt, self::USER_AGENT);
 
-        self::assertSame(5, $token->userId);
+        self::assertFalse($token->showsLive());
+        self::assertSame(5, $token->editorId);
     }
 
     #[Test]
