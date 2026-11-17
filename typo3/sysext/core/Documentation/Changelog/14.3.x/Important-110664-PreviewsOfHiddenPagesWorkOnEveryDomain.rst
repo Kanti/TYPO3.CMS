@@ -50,7 +50,7 @@ Where previews use a preview token
     *   -   Module :guilabel:`Content > Preview`
         -   always
     *   -   Workspace preview
-        -   always; the live frame gets a visitor token
+        -   always. The live frame gets a visitor token
 
 **Where needed** means: the backend login cookie does not reach the site, and
 the page needs the backend login to be shown as a preview. The cookie does not
@@ -120,7 +120,7 @@ The token
 *   names no hosts, so its size does not grow with the number of sites,
 *   is bound to the backend that signed it and to the browser it was signed
     for,
-*   is valid for 15 minutes; the backend page around the frame renews it
+*   is valid for 15 minutes. The backend page around the frame renews it
     before it expires. Clocks of backend and site servers may differ by up to
     60 seconds.
 
@@ -147,7 +147,7 @@ request, stateless: no session is created and no cookie is set.
             origin
         -   *This preview is only available in the backend.*
     *   -   The host belongs to a site the editor may preview now: web mounts
-            and languages; a base without a host counts on the host of the
+            and languages. A base without a host counts on the host of the
             backend
         -   *This preview is not valid.*
     *   -   The editor exists, is enabled and may log in: backend lock,
@@ -194,7 +194,7 @@ Links, redirects and forms
     would send it in the clear. Neither does an address that a browser reads
     differently than it is written: one with a tab or a line break, a control
     character or a space at either end, or a backslash before its query.
-    Only the token is added or removed; the rest of the address keeps its
+    Only the token is added or removed. The rest of the address keeps its
     bytes, and a redirect to another host without a token is left as it is.
 *   Redirects of :composer:`typo3/cms-redirects` that respect query parameters
     ignore the token.
@@ -218,7 +218,7 @@ Links, redirects and forms
     host of the preview without the token in its action shows the page
     without the preview. A form sent to a host outside the preview is
     blocked by the backend page, whose frame shows only the hosts of the
-    preview; to send it, open the page in a tab of its own. In
+    preview. To send it, open the page in a tab of its own. In
     installations with very many sites, where the backend allows every
     HTTPS address in the frame, such a form shows the page there without
     the preview.
@@ -246,15 +246,15 @@ Requests
     :code:`ADMCMD_simTime`. :code:`ADMCMD_simUser` applies only with the admin
     panel open, as without a token.
 *   A request with an invalid or expired token, or of an editor who may not
-    see the page, answers with status 403 and the reason; it never falls back
+    see the page, answers with status 403 and the reason. It never falls back
     to the live page.
 *   A preview token is accepted for the page in the frame and for the requests
     this page sends itself to its own origin
     (:http:`Sec-Fetch-Site: same-origin`), such as fetch, XHR and elements on
-    pages of TYPO3; requests from anywhere else are refused.
+    pages of TYPO3. Requests from anywhere else are refused.
 *   A window or tab opened with a token, such as a link opened in a new tab or
     with the target :html:`_blank`, is redirected to the address it requested
-    without the token; every other byte of the address stays as it is.
+    without the token. Every other byte of the address stays as it is.
 *   Requests without :code:`__t3ct` behave as before.
 
 In a frame on another domain than the backend, browsers block the cookies of a
@@ -268,7 +268,7 @@ Caching
 holds.
 
 Responses to a request with a preview token are never cached, as links and
-forms of the page carry the token; the module :guilabel:`Content > Preview`
+forms of the page carry the token. The module :guilabel:`Content > Preview`
 therefore renders every page without the page cache. The responses are sent
 with :http:`Cache-Control: private, no-store`, :http:`X-Robots-Tag: noindex`
 and :http:`Referrer-Policy: no-referrer`, and their :http:`frame-ancestors`
@@ -290,7 +290,7 @@ Server configuration
         -   Must pass the :http:`User-Agent` and :http:`Sec-Fetch-*` headers
             unchanged for requests with :code:`__t3ct`. A rewritten
             :http:`User-Agent`, for example a device class, makes every token
-            look like one of another browser; dropped :http:`Sec-Fetch-*`
+            look like one of another browser. Dropped :http:`Sec-Fetch-*`
             headers make an HTTPS site refuse every token.
     *   -   :http:`Content-Security-Policy` of the web server
         -   A :http:`frame-ancestors` directive must allow the backend origin,
@@ -317,7 +317,7 @@ Server configuration
 
 ..  note::
 
-    A token ends at its expiry; logging out of the backend does not revoke
+    A token ends at its expiry. Logging out of the backend does not revoke
     tokens already handed out, but a disabled editor can no longer use them.
 
 ..  index:: Backend, Frontend, ext:backend, ext:frontend, ext:workspaces

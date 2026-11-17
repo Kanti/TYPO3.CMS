@@ -120,7 +120,7 @@ final readonly class PreviewTokenService
     private function decode(string $jwt): array
     {
         // The JWT library reads its clock and leeway from public static properties any code may
-        // set; a preview token is checked against the clock and grace of this service only
+        // set. A preview token is checked against the clock and grace of this service only
         $timestamp = JWT::$timestamp;
         $leeway = JWT::$leeway;
         JWT::$timestamp = $this->clock->now()->getTimestamp();

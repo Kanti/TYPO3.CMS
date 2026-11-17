@@ -207,7 +207,7 @@ if (script && window.parent !== window) {
       post({ type: 'typo3:preview:navigate', url: withoutToken(url).href });
       return;
     }
-    // The origin of this page is a host of the preview; a blob: address shares it but takes no token
+    // The origin of this page is a host of the preview. A blob: address shares it but takes no token
     if (!['http:', 'https:'].includes(url.protocol)) {
       return;
     }
