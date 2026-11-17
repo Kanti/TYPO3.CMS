@@ -224,6 +224,52 @@ describe('@typo3/backend/preview/preview-frame and its token', (): void => {
     }
   });
 
+  /**
+   * The backend can hand out the plain HTTP address of a host whose sites run on HTTPS
+   * only. A fresh token would go there in the clear, so a reload, such as the one of the
+   * refresh button, loads the address as it is without asking the backend for a token.
+   */
+  it('reloads a page on plain HTTP of a host whose sites run on HTTPS only without a token', async (): Promise<void> => {
+    backend.fetch.restore();
+    backend = stubBackend(['site.example'], ['site.example']);
+    const preview = new PreviewFrame(frame, { url: 'http://site.example/one?__t3ct=token', renewUrl: '/renew', page: 3, hosts: ['site.example'], httpsHosts: ['site.example'], expiresIn: 900 });
+    try {
+      frame.removeAttribute('src');
+
+      preview.reload();
+
+      await new Promise((resolve): number => window.setTimeout(resolve, 50));
+      expect(backend.fetch.called).to.equal(false);
+      expect(frame.getAttribute('src')).to.equal('http://site.example/one');
+    } finally {
+      preview.dispose();
+    }
+  });
+
+  /**
+   * The sites of a host previewed on plain HTTP can switch to HTTPS only while the
+   * preview is open. The admin panel then reloads the page with a token signed for its
+   * address, and the signing names the host among those on HTTPS only. The page loads
+   * without the token, which would go there in the clear.
+   */
+  it('reloads a page on plain HTTP without a token once the signing names its host among those on HTTPS only', async (): Promise<void> => {
+    window.TYPO3 = window.TYPO3 || {} as typeof window.TYPO3;
+    window.TYPO3.settings = { ajaxUrls: { adminPanel_toggle: '/typo3/ajax/adminpanel/toggleActiveState' } } as unknown as typeof window.TYPO3.settings;
+    backend.fetch.restore();
+    backend = stubBackend(['site.example'], ['site.example']);
+    const page = standInForThePageIn(frame);
+    const preview = new PreviewFrame(frame, { url: 'http://site.example/one?__t3ct=token', renewUrl: '/renew', page: 3, hosts: ['site.example'], httpsHosts: [], expiresIn: 900 });
+    try {
+      send(frame, { type: 'typo3:preview:admin-panel', url: 'http://site.example/one', action: 'toggle', fields: [] }, page, 'http://site.example');
+
+      await waitUntil((): boolean => frame.getAttribute('src') !== 'http://site.example/one?__t3ct=token');
+      expect(backend.renewals).to.deep.equal([{ previewToken: 'token', url: 'http://site.example/one', page: '3' }]);
+      expect(frame.getAttribute('src')).to.equal('http://site.example/one');
+    } finally {
+      preview.dispose();
+    }
+  });
+
   it('takes the hosts of the preview from every renewal', async (): Promise<void> => {
     backend.fetch.restore();
     backend = stubBackend(['site.example', 'other.example']);

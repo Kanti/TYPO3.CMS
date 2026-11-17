@@ -264,10 +264,21 @@ export default class PreviewFrame {
     this.load(address);
   }
 
+  /**
+   * Loads an address with a fresh token. The plain HTTP address of a host whose sites run
+   * on HTTPS only would get the token in the clear, so it loads without one, as reload()
+   * loads an address outside the sites of the installation. The address is checked again
+   * once signed, as every renewal names the hosts on HTTPS only again.
+   */
   private load(address: URL): void {
-    this.address = PreviewFrame.withoutToken(address);
-    this.sign(this.address).then((url: string): void => {
-      this.frame.src = url;
+    const target = PreviewFrame.withoutToken(address);
+    this.address = target;
+    if (this.isInsecure(target)) {
+      this.frame.src = target.href;
+      return;
+    }
+    this.sign(target).then((url: string): void => {
+      this.frame.src = this.isInsecure(target) ? target.href : url;
     }).catch((): void => this.fail());
   }
 
