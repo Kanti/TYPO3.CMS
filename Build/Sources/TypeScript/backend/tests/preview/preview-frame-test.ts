@@ -28,10 +28,11 @@ type Backend = {
 
 /**
  * Answers the requests of the backend page as the backend does: the token endpoint signs
- * the requested address with the next token and names the hosts of the preview, the
- * endpoints of the admin panel store its settings.
+ * the requested address with the next token and names the hosts of the preview and, if
+ * given, those whose sites run on HTTPS only, the endpoints of the admin panel store its
+ * settings.
  */
-function stubBackend(hosts: string[] = ['site.example']): Backend {
+function stubBackend(hosts: string[] = ['site.example'], httpsHosts?: string[]): Backend {
   const backend: Backend = { fetch: null, renewals: [], adminPanelRequests: [], answer: Promise.resolve() };
   backend.fetch = stub(window, 'fetch').callsFake(async (input: RequestInfo | URL): Promise<Response> => {
     const request = input as Request;
@@ -44,7 +45,7 @@ function stubBackend(hosts: string[] = ['site.example']): Backend {
       await backend.answer;
       const signed = new URL(renewal.url);
       signed.searchParams.set('__t3ct', 'token-' + issued);
-      return new Response(JSON.stringify({ url: signed.href, expiresIn: 900, hosts }), { headers: { 'Content-Type': 'application/json' } });
+      return new Response(JSON.stringify({ url: signed.href, expiresIn: 900, hosts, httpsHosts }), { headers: { 'Content-Type': 'application/json' } });
     }
     backend.adminPanelRequests.push({ url: path, fields });
     return new Response('{}', { headers: { 'Content-Type': 'application/json' } });
@@ -164,6 +165,59 @@ describe('@typo3/backend/preview/preview-frame and its token', (): void => {
       send(frame, { type: 'typo3:preview:location', url: 'https://site.example/two', page: 4, expires: 1 });
 
       expect(postMessage.calledOnceWith({ type: 'typo3:preview:token', token: 'token-1' }, 'https://site.example')).to.equal(true);
+    } finally {
+      preview.dispose();
+      clock.restore();
+    }
+  });
+
+  /**
+   * A page on plain HTTP of a host whose sites run on HTTPS only is no page of the
+   * preview, such as a page the server delivers without redirecting to HTTPS. The backend
+   * page ignores what it reports, so neither its current nor a fresh token goes there.
+   */
+  it('ignores a page on plain HTTP of a host whose sites run on HTTPS only', async (): Promise<void> => {
+    const page = standInForThePageIn(frame);
+    const postMessage = stub(page, 'postMessage') as unknown as SinonStub;
+    const preview = new PreviewFrame(frame, { url: 'https://site.example/one?__t3ct=token', renewUrl: '/renew', page: 3, hosts: ['site.example'], httpsHosts: ['site.example'], expiresIn: 900 });
+    try {
+      send(frame, { type: 'typo3:preview:location', url: 'http://site.example/two', page: 4, expires: 1 }, page, 'http://site.example');
+      send(frame, { type: 'typo3:preview:expired', url: 'http://site.example/two?__t3ct=token', reason: 'expired' }, page, 'http://site.example');
+
+      await new Promise((resolve): number => window.setTimeout(resolve, 50));
+      expect(postMessage.called).to.equal(false);
+      expect(backend.fetch.called).to.equal(false);
+      expect(frame.getAttribute('src')).to.equal('https://site.example/one?__t3ct=token');
+    } finally {
+      preview.dispose();
+    }
+  });
+
+  /**
+   * The sites of a host previewed on plain HTTP can switch to HTTPS only while the
+   * preview is open. The renewal names the host among those on HTTPS only, so the
+   * renewed token does not go to the page on plain HTTP, which would get it in the clear.
+   */
+  it('posts no renewed token to a page on plain HTTP of a host whose sites run on HTTPS only', async (): Promise<void> => {
+    backend.fetch.restore();
+    backend = stubBackend(['site.example'], ['site.example']);
+    let answer = (): void => undefined;
+    backend.answer = new Promise((resolve): void => {
+      answer = resolve;
+    });
+    const clock = useFakeTimers({ shouldAdvanceTime: true });
+    const page = standInForThePageIn(frame);
+    const postMessage = stub(page, 'postMessage') as unknown as SinonStub;
+    const preview = new PreviewFrame(frame, { url: 'http://site.example/one?__t3ct=token', renewUrl: '/renew', page: 3, hosts: ['site.example'], httpsHosts: [], expiresIn: 90 });
+    try {
+      await clock.tickAsync(31_000);
+      await waitUntil((): boolean => backend.renewals.length === 1);
+      // Another address waits for the running renewal, so it loads once the renewal was handled
+      send(frame, { type: 'typo3:preview:navigate', url: 'https://site.example/two' }, page, 'http://site.example');
+      answer();
+
+      await waitUntil((): boolean => frame.getAttribute('src') === 'https://site.example/two?__t3ct=token-2');
+      expect(postMessage.called).to.equal(false);
     } finally {
       preview.dispose();
       clock.restore();

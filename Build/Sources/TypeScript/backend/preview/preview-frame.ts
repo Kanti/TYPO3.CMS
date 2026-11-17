@@ -162,6 +162,9 @@ export default class PreviewFrame {
     if (!this.allows(origin)) {
       return;
     }
+    if (this.isInsecure(origin)) {
+      return;
+    }
     switch (event.data.type) {
       case 'typo3:preview:location':
         if (url.origin === origin.origin) {
@@ -271,6 +274,10 @@ export default class PreviewFrame {
   private renew(): void {
     const address = this.address;
     this.sign(address).then((url: string): void => {
+      // Checked once signed, as every renewal names the hosts on HTTPS only again
+      if (this.isInsecure(address)) {
+        return;
+      }
       const token = readToken(new URL(url));
       this.frame.contentWindow?.postMessage({ type: 'typo3:preview:token', token }, address.origin);
     }).catch((): void => this.fail());
