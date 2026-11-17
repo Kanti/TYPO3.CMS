@@ -459,6 +459,26 @@ final class PreviewTokenAuthenticatorTest extends FunctionalTestCase
         self::assertSame(200, $response->getStatusCode());
     }
 
+    public static function baseWithoutSchemeDataProvider(): \Generator
+    {
+        yield 'base with a host' => ['//second.example/', 'second.example/'];
+        yield 'base without a host' => ['/second/', 'backend.example/second/'];
+    }
+
+    /**
+     * A site whose base names no scheme is served on HTTPS and on plain HTTP. Browsers
+     * send Fetch Metadata on HTTPS, so the token goes without it on plain HTTP only.
+     */
+    #[Test]
+    #[DataProvider('baseWithoutSchemeDataProvider')]
+    public function tokenWithoutFrameHeaderIsAcceptedOnASiteWithoutSchemeOnPlainHttpOnly(string $base, string $address): void
+    {
+        $this->writeSiteConfiguration('second', $this->buildSiteConfiguration(7, $base), [$this->buildDefaultLanguageConfiguration('EN', '/')]);
+
+        self::assertSame(200, $this->preview('http://' . $address, $this->sign(), null)->getStatusCode());
+        $this->assertRejected('notInFrame', $this->preview('https://' . $address, $this->sign(), null));
+    }
+
     /**
      * The live frame of a workspace preview navigates between the sites of the editor
      */

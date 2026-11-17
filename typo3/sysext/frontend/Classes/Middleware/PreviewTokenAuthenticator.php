@@ -268,8 +268,9 @@ final readonly class PreviewTokenAuthenticator implements MiddlewareInterface
 
     /**
      * A token is accepted for the page in the frame and for the requests that page sends
-     * itself. Without Fetch Metadata, a token is accepted only where the installation and
-     * the site allow plain HTTP.
+     * itself. Without Fetch Metadata, which browsers send on HTTPS, a token is accepted
+     * only where the installation and the site allow plain HTTP: by the scheme of the base
+     * of the site, or by the scheme of the request for a base without one.
      */
     private function isFramed(ServerRequestInterface $request, PreviewRequestKind $kind): bool
     {
@@ -279,7 +280,10 @@ final readonly class PreviewTokenAuthenticator implements MiddlewareInterface
             }
             $language = $request->getAttribute('language');
             $scheme = $language instanceof SiteLanguage ? $language->getBase()->getScheme() : '';
-            return in_array($scheme, ['http', ''], true);
+            if ($scheme === '') {
+                $scheme = $request->getUri()->getScheme();
+            }
+            return $scheme === 'http';
         }
         return $kind === PreviewRequestKind::Frame || $kind === PreviewRequestKind::OfThePage;
     }
