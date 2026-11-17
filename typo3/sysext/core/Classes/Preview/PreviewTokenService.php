@@ -18,6 +18,7 @@ declare(strict_types=1);
 namespace TYPO3\CMS\Core\Preview;
 
 use Firebase\JWT\ExpiredException;
+use Firebase\JWT\JWT;
 use Psr\Clock\ClockInterface;
 use Psr\Http\Message\UriInterface;
 use TYPO3\CMS\Core\Security\JwtTrait;
@@ -39,9 +40,10 @@ final readonly class PreviewTokenService
     public const LIFETIME = 900;
     private const TYPE = 'preview';
     /**
-     * Seconds the clock of a site may lag behind the clock of the backend that signed a token
+     * Seconds the clocks of a site and of the backend that signed a token may differ: a token
+     * is accepted that long before it was signed and after its expiry
      */
-    private const CLOCK_SKEW = 60;
+    private const LEEWAY = 60;
 
     public function __construct(private ClockInterface $clock) {}
 
@@ -59,7 +61,7 @@ final readonly class PreviewTokenService
         $claims = [
             'typ' => self::TYPE,
             'iat' => $issuedAt,
-            'nbf' => $issuedAt - self::CLOCK_SKEW,
+            'nbf' => $issuedAt,
             'exp' => $issuedAt + self::LIFETIME,
             'uah' => self::hashUserAgent($userAgent),
             'bk' => $backendOrigin,
@@ -78,9 +80,10 @@ final readonly class PreviewTokenService
      */
     public function verify(string $jwt, string $userAgent): PreviewToken
     {
-        [$token, $userAgentHash] = $this->decode($jwt, false);
-        if ($token->expires <= $this->clock->now()->getTimestamp()) {
-            throw new PreviewTokenRejectedException(PreviewRejection::Expired, 'Preview token expired', 1793265768, token: $token);
+        try {
+            [$token, $userAgentHash] = $this->decode($jwt);
+        } catch (ExpiredException $exception) {
+            throw new PreviewTokenRejectedException(PreviewRejection::Expired, 'Preview token expired', 1793265765, previous: $exception, token: $this->createTokenOrNull($jwt, self::claimsOf($exception)));
         }
         if (!hash_equals($userAgentHash, self::hashUserAgent($userAgent))) {
             throw new PreviewTokenRejectedException(PreviewRejection::OtherBrowser, 'Preview token belongs to another browser', 1793265771, token: $token);
@@ -97,7 +100,12 @@ final readonly class PreviewTokenService
      */
     public function readForRenewal(string $jwt, string $userAgent): PreviewToken
     {
-        [$token, $userAgentHash] = $this->decode($jwt, true);
+        try {
+            [$token, $userAgentHash] = $this->decode($jwt);
+        } catch (ExpiredException $exception) {
+            $claims = self::claimsOf($exception);
+            [$token, $userAgentHash] = [$this->createToken($jwt, $claims), $claims['uah']];
+        }
         if (!hash_equals($userAgentHash, self::hashUserAgent($userAgent))) {
             throw new PreviewTokenRejectedException(PreviewRejection::OtherBrowser, 'Preview token belongs to another browser', 1793276925, token: $token);
         }
@@ -106,21 +114,33 @@ final readonly class PreviewTokenService
 
     /**
      * @return array{PreviewToken, string} the token and the hash of the browser it was signed for
+     * @throws ExpiredException for a token past its expiry and the grace, which the caller decides on
      * @throws PreviewTokenRejectedException
      */
-    private function decode(string $jwt, bool $allowExpired): array
+    private function decode(string $jwt): array
     {
+        // The JWT library reads its clock and leeway from public static properties any code may
+        // set; a preview token is checked against the clock and grace of this service only
+        $timestamp = JWT::$timestamp;
+        $leeway = JWT::$leeway;
+        JWT::$timestamp = $this->clock->now()->getTimestamp();
+        JWT::$leeway = self::LEEWAY;
         try {
             $claims = self::decodeJwt($jwt, self::createSigningKeyFromEncryptionKey(), true);
         } catch (ExpiredException $exception) {
-            $claims = json_decode(json_encode($exception->getPayload(), JSON_THROW_ON_ERROR), true, flags: JSON_THROW_ON_ERROR);
-            if (!$allowExpired) {
-                throw new PreviewTokenRejectedException(PreviewRejection::Expired, 'Preview token expired', 1793265765, previous: $exception, token: $this->createTokenOrNull($jwt, $claims));
-            }
+            throw $exception;
         } catch (\Throwable $exception) {
             throw new PreviewTokenRejectedException(PreviewRejection::Invalid, 'Preview token invalid', 1793265766, previous: $exception);
+        } finally {
+            JWT::$timestamp = $timestamp;
+            JWT::$leeway = $leeway;
         }
         return [$this->createToken($jwt, $claims), $claims['uah']];
+    }
+
+    private static function claimsOf(ExpiredException $exception): array
+    {
+        return json_decode(json_encode($exception->getPayload(), JSON_THROW_ON_ERROR), true, flags: JSON_THROW_ON_ERROR);
     }
 
     /**

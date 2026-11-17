@@ -249,26 +249,22 @@ final class PreviewTokenServiceTest extends UnitTestCase
     #[Test]
     public function expiredTokenIsRefused(): void
     {
-        $past = new PreviewTokenService($this->createClock(time() - PreviewTokenService::LIFETIME - 10));
+        $past = new PreviewTokenService($this->createClock(time() - PreviewTokenService::LIFETIME - 120));
         $jwt = $past->sign($this->createProfile(), 'https://site-a.com', self::USER_AGENT, $this->createUser())->jwt;
         $subject = new PreviewTokenService(new SystemClock());
 
         $this->assertRejected(PreviewRejection::Expired, fn() => $subject->verify($jwt, self::USER_AGENT));
     }
 
+    /**
+     * The expiry is checked against the clock of the service, with a grace of 60 seconds
+     * for a site whose clock runs up to a minute ahead of the backend.
+     */
     #[Test]
-    public function tokenIsRefusedOnceTheClockPassedItsExpiry(): void
+    public function tokenIsValidWithinTheGraceAfterItsExpiry(): void
     {
-        $jwt = new PreviewTokenService(new SystemClock())->sign($this->createProfile(), 'https://site-a.com', self::USER_AGENT, $this->createUser())->jwt;
-        $subject = new PreviewTokenService($this->createClock(time() + PreviewTokenService::LIFETIME + 1));
-
-        $this->assertRejected(PreviewRejection::Expired, fn() => $subject->verify($jwt, self::USER_AGENT));
-    }
-
-    #[Test]
-    public function tokenOfABackendWhoseClockIsUpToAMinuteAheadIsAccepted(): void
-    {
-        $jwt = new PreviewTokenService($this->createClock(time() + 30))->sign($this->createProfile(), 'https://site-a.com', self::USER_AGENT, $this->createUser())->jwt;
+        $past = new PreviewTokenService($this->createClock(time() - PreviewTokenService::LIFETIME - 50));
+        $jwt = $past->sign($this->createProfile(), 'https://site-a.com', self::USER_AGENT, $this->createUser())->jwt;
 
         $verified = new PreviewTokenService(new SystemClock())->verify($jwt, self::USER_AGENT);
 
@@ -276,9 +272,86 @@ final class PreviewTokenServiceTest extends UnitTestCase
     }
 
     #[Test]
-    public function tokenOfABackendWhoseClockIsMoreThanAMinuteAheadIsRefused(): void
+    public function tokenIsRefusedOnceTheClockPassedTheGraceAfterItsExpiry(): void
     {
-        $jwt = new PreviewTokenService($this->createClock(time() + 120))->sign($this->createProfile(), 'https://site-a.com', self::USER_AGENT, $this->createUser())->jwt;
+        $jwt = new PreviewTokenService(new SystemClock())->sign($this->createProfile(), 'https://site-a.com', self::USER_AGENT, $this->createUser())->jwt;
+        $subject = new PreviewTokenService($this->createClock(time() + PreviewTokenService::LIFETIME + 60));
+
+        $this->assertRejected(PreviewRejection::Expired, fn() => $subject->verify($jwt, self::USER_AGENT));
+    }
+
+    /**
+     * The JWT library keeps its leeway and its clock in public static properties that any
+     * code may set. Neither extends the lifetime of a preview token, and the service leaves
+     * both as it found them, also when it refuses the token.
+     */
+    #[Test]
+    public function leewayAndClockOfTheJwtLibraryDoNotExtendTheLifetime(): void
+    {
+        $past = new PreviewTokenService($this->createClock(time() - PreviewTokenService::LIFETIME - 120));
+        $jwt = $past->sign($this->createProfile(), 'https://site-a.com', self::USER_AGENT, $this->createUser())->jwt;
+        $leeway = JWT::$leeway;
+        $timestamp = JWT::$timestamp;
+        $anHourAgo = time() - 3600;
+        JWT::$leeway = 300;
+        JWT::$timestamp = $anHourAgo;
+        try {
+            $this->assertRejected(PreviewRejection::Expired, fn() => new PreviewTokenService(new SystemClock())->verify($jwt, self::USER_AGENT));
+            self::assertSame(300, JWT::$leeway);
+            self::assertSame($anHourAgo, JWT::$timestamp);
+        } finally {
+            JWT::$leeway = $leeway;
+            JWT::$timestamp = $timestamp;
+        }
+    }
+
+    #[Test]
+    public function leewayAndClockOfTheJwtLibraryAreRestoredAfterAnAcceptedToken(): void
+    {
+        $subject = new PreviewTokenService(new SystemClock());
+        $jwt = $subject->sign($this->createProfile(), 'https://site-a.com', self::USER_AGENT, $this->createUser())->jwt;
+        $leeway = JWT::$leeway;
+        $timestamp = JWT::$timestamp;
+        JWT::$leeway = 7;
+        JWT::$timestamp = null;
+        try {
+            $subject->verify($jwt, self::USER_AGENT);
+            self::assertSame(7, JWT::$leeway);
+            self::assertNull(JWT::$timestamp);
+        } finally {
+            JWT::$leeway = $leeway;
+            JWT::$timestamp = $timestamp;
+        }
+    }
+
+    public static function backendClockUpToAMinuteAheadDataProvider(): \Generator
+    {
+        yield 'thirty seconds' => [30];
+        yield 'fifty seconds' => [50];
+    }
+
+    #[Test]
+    #[DataProvider('backendClockUpToAMinuteAheadDataProvider')]
+    public function tokenOfABackendWhoseClockIsUpToAMinuteAheadIsAccepted(int $seconds): void
+    {
+        $jwt = new PreviewTokenService($this->createClock(time() + $seconds))->sign($this->createProfile(), 'https://site-a.com', self::USER_AGENT, $this->createUser())->jwt;
+
+        $verified = new PreviewTokenService(new SystemClock())->verify($jwt, self::USER_AGENT);
+
+        self::assertSame(5, $verified->userId);
+    }
+
+    public static function backendClockMoreThanAMinuteAheadDataProvider(): \Generator
+    {
+        yield 'seventy seconds' => [70];
+        yield 'two minutes' => [120];
+    }
+
+    #[Test]
+    #[DataProvider('backendClockMoreThanAMinuteAheadDataProvider')]
+    public function tokenOfABackendWhoseClockIsMoreThanAMinuteAheadIsRefused(int $seconds): void
+    {
+        $jwt = new PreviewTokenService($this->createClock(time() + $seconds))->sign($this->createProfile(), 'https://site-a.com', self::USER_AGENT, $this->createUser())->jwt;
         $subject = new PreviewTokenService(new SystemClock());
 
         $this->assertRejected(PreviewRejection::Invalid, fn() => $subject->verify($jwt, self::USER_AGENT));
@@ -310,6 +383,17 @@ final class PreviewTokenServiceTest extends UnitTestCase
 
         $token = new PreviewTokenService(new SystemClock())->readForRenewal($jwt, self::USER_AGENT);
         self::assertEquals($profile, $token->profile);
+        self::assertSame(5, $token->userId);
+    }
+
+    #[Test]
+    public function tokenExpiredAnHourAgoIsReadForRenewal(): void
+    {
+        $past = new PreviewTokenService($this->createClock(time() - PreviewTokenService::LIFETIME - 3600));
+        $jwt = $past->sign($this->createProfile(), 'https://site-a.com', self::USER_AGENT, $this->createUser())->jwt;
+
+        $token = new PreviewTokenService(new SystemClock())->readForRenewal($jwt, self::USER_AGENT);
+
         self::assertSame(5, $token->userId);
     }
 
