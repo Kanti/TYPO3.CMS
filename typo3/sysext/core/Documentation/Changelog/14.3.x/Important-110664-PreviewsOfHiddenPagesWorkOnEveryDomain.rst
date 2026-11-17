@@ -182,10 +182,10 @@ Links, redirects and forms
     the backend for a token when a navigation leads to another host of the
     preview.
 *   When the backend renews the token, the script puts the new one into the
-    links, the form actions and the token fields of the page. An address a
-    script of the site keeps elsewhere, for example in a data attribute for
-    fetch or XHR requests, keeps the token it was rendered with and is refused
-    once that token expired.
+    links, the form actions, the token fields and the data attributes of the
+    page. An address a script of the site keeps elsewhere, for example in a
+    variable or in JSON inside a script element, keeps the token it was
+    rendered with and is refused once that token expired.
 *   Forms rendered with :html:`<f:form>` stay in the frame: a target
     :html:`_top` or :html:`_parent`, as the login form of
     :composer:`typo3/cms-felogin` uses, becomes :html:`_self`. A form to a

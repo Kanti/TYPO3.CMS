@@ -150,6 +150,18 @@ if (script && window.parent !== window) {
         field.value = token;
       }
     });
+    if (previous === null || previous === '') {
+      return;
+    }
+    // Scripts of the site keep addresses for later requests in data attributes, as an
+    // address or inside JSON, so the token is replaced wherever it stands in them
+    document.querySelectorAll('*').forEach((element: Element): void => {
+      Array.from(element.attributes).forEach((attribute: Attr): void => {
+        if (attribute.name.startsWith('data-') && attribute.value.includes(previous)) {
+          attribute.value = attribute.value.split(previous).join(token);
+        }
+      });
+    });
   });
 
   // A link to the window around the frame would replace the backend with the page; it

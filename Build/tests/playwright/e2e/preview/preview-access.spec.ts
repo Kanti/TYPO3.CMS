@@ -111,9 +111,14 @@ async function serve(context: BrowserContext, options: ServeOptions = {}): Promi
     const unreadableLinks = url.pathname === '/unreadable-links'
       ? `<svg><a href="${url.origin}/drawing?__t3ct=${token}"><text>Drawing</text></a></svg><a href="http://[broken">Broken</a>`
       : '';
+    // Addresses a script of the page requests later, kept in data attributes
+    const list = url.pathname === '/list'
+      ? `<div id="list" data-next="${url.origin}/list?page=2&amp;__t3ct=${token}" data-config='{"search":"/search?__t3ct=${token}&amp;q="}' data-label="Next"></div>`
+      : '';
     await route.fulfill({
       contentType: 'text/html', body: `<!doctype html><h1>${url.host}${url.pathname}</h1>
         ${unreadableLinks}
+        ${list}
         <a href="${url.origin}/two?__t3ct=${token}">Two</a>
         <a href="${url.origin}/two?__t3ct=${token}" target="_top">Two in the window</a>
         <form id="login" method="post" action="${url.origin}/posted?__t3ct=${token}"><button>Log in</button></form>
@@ -304,6 +309,27 @@ test.describe('Preview page around the frame', () => {
     await expect(frame.locator('#login')).toHaveAttribute('action', /__t3ct=token-2$/);
     await expect(frame.locator('#search input[name="__t3ct"]')).toHaveValue('token-2');
     await expect(frame.getByRole('link', { name: 'Broken' })).toHaveAttribute('href', 'http://[broken');
+    await context.close();
+  });
+
+  /**
+   * Scripts of a site keep addresses for later requests in data attributes, such as the
+   * next page of a list or the endpoint of a search. They carry the token the page was
+   * rendered with and get the renewed one wherever it stands in the attribute, so these
+   * requests keep working after the first token expired.
+   */
+  test('renews the token in addresses that scripts of the page keep in data attributes', async ({ browser }) => {
+    const context = await browser.newContext();
+    const site = await serve(context, { expiresIn: 61, start: first + '/list' });
+    const page = await context.newPage();
+    await page.goto(backendOrigin + '/typo3/preview?page=1');
+    const frame = page.locator('iframe').contentFrame();
+    await expect(frame.getByRole('heading')).toHaveText('preview-first.example/list');
+
+    await expect.poll(() => site.renewals.length, { timeout: 5000 }).toBe(1);
+    await expect(frame.locator('#list')).toHaveAttribute('data-next', first + '/list?page=2&__t3ct=token-2');
+    await expect(frame.locator('#list')).toHaveAttribute('data-config', '{"search":"/search?__t3ct=token-2&q="}');
+    await expect(frame.locator('#list')).toHaveAttribute('data-label', 'Next');
     await context.close();
   });
 
