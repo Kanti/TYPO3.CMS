@@ -91,8 +91,9 @@ PHP API
     methods that build the attributes of a preview button follow the same
     rule, also in extensions.
 *   Listeners of :php:`\TYPO3\CMS\Workspaces\Event\RetrievedPreviewUrlEvent`
-    get, for a page, the preview page of the backend where a preview token is
-    needed, as the preview buttons of the workspace module open it.
+    get, for a page or a record, the preview page of the backend where a
+    preview token is needed, as the preview buttons of the workspace module
+    open it.
 *   The template :file:`Show.fluid.html` of the module
     :guilabel:`Content > Preview` no longer gets the variable :html:`{url}`.
     A script loads its frame from the attribute
