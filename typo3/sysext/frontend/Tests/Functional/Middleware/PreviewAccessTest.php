@@ -1090,6 +1090,32 @@ final class PreviewAccessTest extends FunctionalTestCase
     }
 
     /**
+     * A redirect of an extension may name an address that cannot be parsed, such as one
+     * with an unclosed bracket. The preview neither fails on it nor changes it: the
+     * address stays as it is, without the token, and the answer is still one of the
+     * preview, never cached, never indexed and framed only by the site and the backend.
+     */
+    #[Test]
+    public function redirectToAMalformedAddressKeepsItsAddressAndTheHeadersOfThePreview(): void
+    {
+        $handler = new class implements RequestHandlerInterface {
+            public function handle(ServerRequestInterface $request): ResponseInterface
+            {
+                return new RedirectResponse('https://[first.example/next', 303);
+            }
+        };
+        $jwt = $this->sign();
+
+        $response = $this->processPreviewAccess('https://first.example/contact?__t3ct=' . $jwt, ['Sec-Fetch-Dest' => 'iframe'], $handler);
+
+        self::assertSame(303, $response->getStatusCode());
+        self::assertSame('https://[first.example/next', $response->getHeaderLine('Location'));
+        self::assertSame('private, no-store', $response->getHeaderLine('Cache-Control'));
+        self::assertSame('noindex', $response->getHeaderLine('X-Robots-Tag'));
+        self::assertSame(self::FRAME_ANCESTORS, $response->getHeaderLine('Content-Security-Policy'));
+    }
+
+    /**
      * An extension may redirect to an address taken from the request. A browser reads
      * "/\evil.example/x" as the host evil.example, so the redirect keeps its address and
      * gets no token, where a URI parser would see a path on the host of the request.
