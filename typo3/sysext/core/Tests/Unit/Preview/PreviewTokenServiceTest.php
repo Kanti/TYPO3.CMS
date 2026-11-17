@@ -131,6 +131,61 @@ final class PreviewTokenServiceTest extends UnitTestCase
         $this->assertRejected(PreviewRejection::Invalid, fn() => $subject->verify($forged, self::USER_AGENT));
     }
 
+    public static function invalidClaimsDataProvider(): \Generator
+    {
+        yield 'token without type' => [false, ['typ' => null], 'typ is not "preview"'];
+        yield 'expiry as text' => [false, ['exp' => '9999999999'], 'exp is not an integer'];
+        yield 'browser hash as number' => [false, ['uah' => 5], 'uah is not a string'];
+        yield 'backend origin with a path' => [false, ['bk' => 'https://site-a.com/typo3'], 'bk is not the origin of a backend'];
+        yield 'profile as text' => [false, ['prf' => 'all'], 'prf is not an object'];
+        yield 'profile with a negative workspace' => [false, ['prf' => ['ws' => -1]], 'prf.ws is not a workspace id'];
+        yield 'profile with a group as text' => [false, ['prf' => ['groups' => ['3']]], 'prf.groups is not a list of group ids'];
+        yield 'profile without login' => [false, ['prf' => ['login' => null]], 'prf.login is not a boolean'];
+        yield 'editor naming a second editor' => [false, ['scp' => 7], 'sub and scp are both set'];
+        yield 'editor zero' => [false, ['sub' => 0], 'sub is not a positive user id'];
+        yield 'token naming no editor' => [true, ['scp' => null], 'sub or scp is missing'];
+        yield 'visitor editor as text' => [true, ['scp' => '5'], 'scp is not a positive user id'];
+        yield 'visitor token asking for more than the visitor view' => [true, ['prf' => ['hiddenPages' => true]], 'prf asks for more than the visitor view an scp token shows'];
+    }
+
+    /**
+     * An administrator who looks for the reason a site refused a preview finds which claim
+     * did not fit in the message of the rejection, for example for a token built by hand
+     * or signed by a backend that writes the claims differently.
+     */
+    #[Test]
+    #[DataProvider('invalidClaimsDataProvider')]
+    public function rejectionOfATokenWithInvalidClaimsNamesTheClaim(bool $visitor, array $changes, string $reason): void
+    {
+        $subject = new PreviewTokenService(new SystemClock());
+        $profile = $visitor ? PreviewProfile::visitor() : $this->createProfile();
+        $claims = $this->decodeClaims($subject->sign($profile, 'https://site-a.com', self::USER_AGENT, $this->createUser(), $visitor)->jwt);
+        foreach ($changes as $name => $value) {
+            if ($value === null) {
+                unset($claims[$name]);
+            } elseif (is_array($value)) {
+                foreach ($value as $field => $fieldValue) {
+                    if ($fieldValue === null) {
+                        unset($claims[$name][$field]);
+                    } else {
+                        $claims[$name][$field] = $fieldValue;
+                    }
+                }
+            } else {
+                $claims[$name] = $value;
+            }
+        }
+        $forged = JWT::encode($claims, hash_hkdf('sha256', $GLOBALS['TYPO3_CONF_VARS']['SYS']['encryptionKey'], 32, PreviewTokenService::class), 'HS256');
+
+        try {
+            $subject->verify($forged, self::USER_AGENT);
+            self::fail('Preview token was accepted');
+        } catch (PreviewTokenRejectedException $exception) {
+            self::assertSame(PreviewRejection::Invalid, $exception->rejection);
+            self::assertSame('Preview token claims invalid: ' . $reason, $exception->getMessage());
+        }
+    }
+
     #[Test]
     public function tokenWithoutUserAskingForMoreThanTheVisitorViewIsRefused(): void
     {

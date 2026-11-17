@@ -116,16 +116,12 @@ final readonly class PreviewTokenService
         } catch (ExpiredException $exception) {
             $claims = json_decode(json_encode($exception->getPayload(), JSON_THROW_ON_ERROR), true, flags: JSON_THROW_ON_ERROR);
             if (!$allowExpired) {
-                throw new PreviewTokenRejectedException(PreviewRejection::Expired, 'Preview token expired', 1793265765, $exception, $this->createToken($jwt, $claims));
+                throw new PreviewTokenRejectedException(PreviewRejection::Expired, 'Preview token expired', 1793265765, $exception, $this->createTokenOrNull($jwt, $claims));
             }
         } catch (\Throwable $exception) {
             throw new PreviewTokenRejectedException(PreviewRejection::Invalid, 'Preview token invalid', 1793265766, $exception);
         }
-        $token = $this->createToken($jwt, $claims);
-        if ($token === null) {
-            throw new PreviewTokenRejectedException(PreviewRejection::Invalid, 'Preview token claims invalid', 1793265767);
-        }
-        return [$token, $claims['uah']];
+        return [$this->createToken($jwt, $claims), $claims['uah']];
     }
 
     /**
@@ -215,52 +211,71 @@ final readonly class PreviewTokenService
         return [substr($address, 0, $queryStart), substr($address, $queryStart + 1), $fragment];
     }
 
-    private function createToken(string $jwt, array $claims): ?PreviewToken
+    /**
+     * Both kinds of token carry the same claims but the one that names the editor: `sub`
+     * for a token of the editor, `scp` for a visitor token, which shows no more than the
+     * visitor view.
+     *
+     * @throws PreviewTokenRejectedException whose message names the first claim that does not fit
+     */
+    private function createToken(string $jwt, array $claims): PreviewToken
     {
         if (($claims['typ'] ?? null) !== self::TYPE) {
-            return null;
+            throw self::invalidClaims('typ is not "' . self::TYPE . '"');
         }
-        if (!is_int($claims['exp'] ?? null)) {
-            return null;
+        $expires = $claims['exp'] ?? null;
+        if (!is_int($expires)) {
+            throw self::invalidClaims('exp is not an integer');
         }
         if (!is_string($claims['uah'] ?? null)) {
-            return null;
+            throw self::invalidClaims('uah is not a string');
         }
-        if (!is_string($claims['bk'] ?? null)) {
-            return null;
-        }
-        if (!preg_match('#^https?://[^/?\#@]+$#', $claims['bk'])) {
-            return null;
+        $backendOrigin = $claims['bk'] ?? null;
+        if (!is_string($backendOrigin) || !preg_match('#^https?://[^/?\#@]+$#', $backendOrigin)) {
+            throw self::invalidClaims('bk is not the origin of a backend');
         }
         if (!is_array($claims['prf'] ?? null)) {
+            throw self::invalidClaims('prf is not an object');
+        }
+        try {
+            $profile = PreviewProfile::fromArray($claims['prf']);
+        } catch (\UnexpectedValueException $exception) {
+            throw self::invalidClaims('prf.' . $exception->getMessage(), $exception);
+        }
+        if (array_key_exists('sub', $claims) && array_key_exists('scp', $claims)) {
+            throw self::invalidClaims('sub and scp are both set');
+        }
+        $editorClaim = array_key_exists('sub', $claims) ? 'sub' : 'scp';
+        if (!array_key_exists($editorClaim, $claims)) {
+            throw self::invalidClaims('sub or scp is missing');
+        }
+        $editorId = $claims[$editorClaim];
+        if (!is_int($editorId) || $editorId <= 0) {
+            throw self::invalidClaims($editorClaim . ' is not a positive user id');
+        }
+        $visitor = $editorClaim === 'scp';
+        if ($visitor && !$profile->isVisitorView()) {
+            throw self::invalidClaims('prf asks for more than the visitor view an scp token shows');
+        }
+        return new PreviewToken($jwt, $profile, $backendOrigin, $expires, $editorId, $visitor);
+    }
+
+    /**
+     * An expired token still names the backend that signed it, which the error page tells
+     * about the expiry. A token whose claims do not fit names none.
+     */
+    private function createTokenOrNull(string $jwt, array $claims): ?PreviewToken
+    {
+        try {
+            return $this->createToken($jwt, $claims);
+        } catch (PreviewTokenRejectedException) {
             return null;
         }
-        $profile = PreviewProfile::fromArray($claims['prf']);
-        if ($profile === null) {
-            return null;
-        }
-        if (array_key_exists('sub', $claims)) {
-            if (!is_int($claims['sub'])) {
-                return null;
-            }
-            if ($claims['sub'] <= 0) {
-                return null;
-            }
-            if (array_key_exists('scp', $claims)) {
-                return null;
-            }
-            return new PreviewToken($jwt, $profile, $claims['bk'], $claims['exp'], $claims['sub']);
-        }
-        if (!$profile->isVisitorView()) {
-            return null;
-        }
-        if (!is_int($claims['scp'] ?? null)) {
-            return null;
-        }
-        if ($claims['scp'] <= 0) {
-            return null;
-        }
-        return new PreviewToken($jwt, $profile, $claims['bk'], $claims['exp'], $claims['scp'], true);
+    }
+
+    private static function invalidClaims(string $reason, ?\Throwable $previous = null): PreviewTokenRejectedException
+    {
+        return new PreviewTokenRejectedException(PreviewRejection::Invalid, 'Preview token claims invalid: ' . $reason, 1793265767, $previous);
     }
 
     private static function hashUserAgent(string $userAgent): string

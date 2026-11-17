@@ -87,46 +87,46 @@ final readonly class PreviewProfile
     }
 
     /**
-     * The profile as a token carries it, or null if the data is no profile
+     * The profile as a token carries it
+     *
+     * @throws \UnexpectedValueException whose message names the first field that does not fit
      */
-    public static function fromArray(array $data): ?self
+    public static function fromArray(array $data): self
     {
-        if (!is_int($data['ws'] ?? null)) {
-            return null;
+        $workspace = $data['ws'] ?? null;
+        if (!is_int($workspace) || $workspace < 0) {
+            throw self::invalidField('ws is not a workspace id');
         }
-        if ($data['ws'] < 0) {
-            return null;
+        $hiddenPages = $data['hiddenPages'] ?? null;
+        if (!is_bool($hiddenPages)) {
+            throw self::invalidField('hiddenPages is not a boolean');
         }
-        if (!is_bool($data['hiddenPages'] ?? null)) {
-            return null;
+        $hiddenContent = $data['hiddenContent'] ?? null;
+        if (!is_bool($hiddenContent)) {
+            throw self::invalidField('hiddenContent is not a boolean');
         }
-        if (!is_bool($data['hiddenContent'] ?? null)) {
-            return null;
+        $date = $data['date'] ?? null;
+        if (!is_int($date) || $date < 0) {
+            throw self::invalidField('date is not a timestamp');
         }
-        if (!is_int($data['date'] ?? null)) {
-            return null;
-        }
-        if ($data['date'] < 0) {
-            return null;
-        }
-        if (!is_bool($data['login'] ?? null)) {
-            return null;
+        $loggedIn = $data['login'] ?? null;
+        if (!is_bool($loggedIn)) {
+            throw self::invalidField('login is not a boolean');
         }
         $groups = $data['groups'] ?? null;
-        if (!is_array($groups)) {
-            return null;
-        }
-        if (!array_is_list($groups)) {
-            return null;
+        if (!is_array($groups) || !array_is_list($groups)) {
+            throw self::invalidField('groups is not a list of group ids');
         }
         foreach ($groups as $group) {
-            if (!is_int($group)) {
-                return null;
-            }
-            if ($group < 1) {
-                return null;
+            if (!is_int($group) || $group < 1) {
+                throw self::invalidField('groups is not a list of group ids');
             }
         }
-        return new self($data['ws'], $data['hiddenPages'], $data['hiddenContent'], $data['date'], $groups, $data['login']);
+        return new self($workspace, $hiddenPages, $hiddenContent, $date, $groups, $loggedIn);
+    }
+
+    private static function invalidField(string $reason): \UnexpectedValueException
+    {
+        return new \UnexpectedValueException($reason, 1794908493);
     }
 }
