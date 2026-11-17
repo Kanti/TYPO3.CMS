@@ -16,7 +16,9 @@
  *
  * Added to pages shown with a preview token. Links rendered by TYPO3 already carry the
  * token; this is the fallback for navigations started by scripts, and it reports the
- * address of the frame to the backend page around it.
+ * address of the frame to the backend page around it. That page answers the messages in
+ * @typo3/backend/preview/preview-frame; the error page of PreviewAccess sends
+ * typo3:preview:expired.
  */
 
 const parameter = '__t3ct';
@@ -178,6 +180,9 @@ if (script && window.parent !== window) {
     link.setAttribute('target', '_self');
   }, { capture: true });
 
+  // The order of the checks below decides the outcome. A form with data and an address
+  // with a fresh token of the page around the frame pass before another origin is handed
+  // to that page, and only an address on this origin is given the token of this page.
   const navigation = 'navigation' in window ? window.navigation : null;
   navigation?.addEventListener('navigate', (event: NavigateEvent): void => {
     if (!event.cancelable) {
