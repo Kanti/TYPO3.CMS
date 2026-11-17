@@ -91,7 +91,7 @@ final readonly class PreviewAccess implements MiddlewareInterface
             $scope = $this->authorize($request, $token);
             return $this->respond($this->applyProfile($request, $token, $scope), $handler, $token, $scope);
         } catch (PreviewTokenRejectedException $exception) {
-            // Every refusal of the preview ends here, also those of PreviewPageAccess further down the
+            // Every refusal of the preview ends here, also those of PreviewSimulator further down the
             // stack. An invalid preview tells the backend nothing: its token could not be verified, or
             // the page is on a host outside the preview.
             $reportedToken = $exception->rejection === PreviewRejection::Invalid ? null : ($exception->token ?? $token);
@@ -174,7 +174,7 @@ final readonly class PreviewAccess implements MiddlewareInterface
     /**
      * Lets the rest of the stack answer and makes that answer one of the preview: never
      * cached, never indexed, framed only by the backend, and redirects keep the token.
-     * A refusal of PreviewPageAccess leaves through process().
+     * A refusal of PreviewSimulator leaves through process().
      *
      * @throws PreviewTokenRejectedException
      */

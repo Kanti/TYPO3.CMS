@@ -70,16 +70,6 @@ return [
                 'typo3/cms-frontend/base-redirect-resolver',
             ],
         ],
-        'typo3/cms-frontend/preview-page-access' => [
-            'target' => \TYPO3\CMS\Frontend\Middleware\PreviewPageAccess::class,
-            'after' => [
-                'typo3/cms-frontend/page-resolver',
-            ],
-            'before' => [
-                'typo3/cms-frontend/page-argument-validator',
-                'typo3/cms-frontend/preview-simulator',
-            ],
-        ],
         'typo3/cms-frontend/preview-simulator' => [
             'target' => \TYPO3\CMS\Frontend\Middleware\PreviewSimulator::class,
             'after' => [

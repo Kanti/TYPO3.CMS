@@ -35,6 +35,8 @@ use TYPO3\CMS\Core\Utility\RootlineUtility;
 use TYPO3\CMS\Frontend\Aspect\PreviewAspect;
 use TYPO3\CMS\Frontend\Controller\ErrorController;
 use TYPO3\CMS\Frontend\Page\PageAccessFailureReasons;
+use TYPO3\CMS\Frontend\Preview\PreviewNavigationScript;
+use TYPO3\CMS\Frontend\Preview\PreviewPageAccess;
 
 /**
  * Middleware for handling preview settings
@@ -46,6 +48,8 @@ readonly class PreviewSimulator implements MiddlewareInterface
     public function __construct(
         protected Context $context,
         protected PageRepository $pageRepository,
+        private PreviewPageAccess $previewPageAccess,
+        private PreviewNavigationScript $previewNavigationScript,
     ) {}
 
     /**
@@ -58,10 +62,18 @@ readonly class PreviewSimulator implements MiddlewareInterface
         // A preview token brings date, visibility and workspace along, see PreviewAccess
         $previewToken = $request->getAttribute(PreviewAccess::ATTRIBUTE);
         if ($previewToken instanceof PreviewToken) {
+            $pageArguments = $request->getAttribute('routing');
+            if (!$pageArguments instanceof PageArguments) {
+                return GeneralUtility::makeInstance(ErrorController::class)->pageNotFoundAction(
+                    $request,
+                    'Page Arguments could not be resolved',
+                    ['code' => PageAccessFailureReasons::INVALID_PAGE_ARGUMENTS]
+                );
+            }
+            // A refusal leaves the stack through PreviewAccess, which answers with the error page
+            $groups = $this->previewPageAccess->authorize($previewToken, $pageArguments->getPageId());
             // An editor without a simulated login keeps a frontend login of the frame, as with a backend login
             if ($previewToken->profile->loggedIn) {
-                // Only the groups the editor may simulate on this page, see PreviewPageAccess
-                $groups = $request->getAttribute(PreviewPageAccess::GROUPS_ATTRIBUTE, []);
                 $this->replaceUserGroups($request, $groups);
                 if ($groups === []) {
                     // A login without any group still counts as login: "-2" applies, "-1" does not
@@ -75,7 +87,7 @@ readonly class PreviewSimulator implements MiddlewareInterface
                 $this->context->setAspect('visibility', $this->context->getAspect('visibility')->withIncludeHiddenPages(true));
                 $this->context->setAspect('frontend.preview', new PreviewAspect(true));
             }
-            return $handler->handle($request);
+            return $this->previewNavigationScript->addToPage($request, $handler, $previewToken, $pageArguments->getPageId());
         }
         $isLoggedIn = $this->context->getPropertyFromAspect('backend.user', 'isLoggedIn', false);
         $isOfflineWorkspace = $this->context->getPropertyFromAspect('workspace', 'isOffline', false);
