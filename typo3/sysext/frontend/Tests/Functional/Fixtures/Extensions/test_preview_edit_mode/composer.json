@@ -1,0 +1,23 @@
+{
+	"name": "typo3tests/test-preview-edit-mode",
+	"type": "typo3-cms-extension",
+	"description": "a fixture extension for an edit mode on top of the frontend preview",
+	"version": "1.0.0",
+	"license": "GPL-2.0-or-later",
+	"require": {
+		"typo3/cms-core": "15.0.*@dev"
+	},
+	"autoload": {
+		"psr-4": {
+			"TYPO3Tests\\TestPreviewEditMode\\": "Classes"
+		}
+	},
+	"extra": {
+		"typo3/cms": {
+			"extension-key": "test_preview_edit_mode",
+			"Package": {
+				"providesPackages": []
+			}
+		}
+	}
+}

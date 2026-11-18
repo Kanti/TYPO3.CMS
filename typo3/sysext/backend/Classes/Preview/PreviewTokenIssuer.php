@@ -31,6 +31,7 @@ use TYPO3\CMS\Core\Http\Uri;
 use TYPO3\CMS\Core\Preview\PreviewGroupFilter;
 use TYPO3\CMS\Core\Preview\PreviewHosts;
 use TYPO3\CMS\Core\Preview\PreviewHostsResolver;
+use TYPO3\CMS\Core\Preview\PreviewMode;
 use TYPO3\CMS\Core\Preview\PreviewProfile;
 use TYPO3\CMS\Core\Preview\PreviewTokenRejectedException;
 use TYPO3\CMS\Core\Preview\PreviewTokenService;
@@ -71,6 +72,7 @@ final readonly class PreviewTokenIssuer
      * date and user groups of an access-restricted page move from that address into the token.
      *
      * @param int|null $workspace the workspace of the preview, null for the workspace of the editor
+     * @param PreviewMode $mode how the site shows the pages, PreviewMode::Edit for the frame of the editing interface
      * @throws PreviewAccessDeniedException
      */
     public function issue(
@@ -79,6 +81,7 @@ final readonly class PreviewTokenIssuer
         UriInterface $frontendUri,
         int $pageId,
         ?int $workspace = null,
+        PreviewMode $mode = PreviewMode::View,
     ): IssuedPreview {
         parse_str($frontendUri->getQuery(), $query);
         $groups = GeneralUtility::intExplode(',', (string)($query['ADMCMD_simUser'] ?? ''), true);
@@ -88,6 +91,7 @@ final readonly class PreviewTokenIssuer
             hiddenContent: false,
             date: max(0, (int)($query['ADMCMD_simTime'] ?? 0)),
             groups: $this->filterGroups($user, $pageId, $groups),
+            mode: $mode,
         ));
     }
 
@@ -111,11 +115,11 @@ final readonly class PreviewTokenIssuer
     }
 
     /**
-     * Signs a fresh token for an address of the frame. The simulation stays as signed in the
-     * previous token, and a token without the editor stays one. For a token of the editor
-     * all rights of the editor are checked again, also for its groups. A token without the editor is
-     * renewed without a check of the rights of the editor, as its frame goes wherever a
-     * visitor goes.
+     * Signs a fresh token for an address of the frame. The simulation and the mode stay as
+     * signed in the previous token, and a token without the editor stays one. For a token of
+     * the editor all rights of the editor are checked again, also for its groups. A token
+     * without the editor is renewed without a check of the rights of the editor, as its frame
+     * goes wherever a visitor goes.
      *
      * @throws PreviewAccessDeniedException
      */
@@ -148,6 +152,7 @@ final readonly class PreviewTokenIssuer
             date: $profile->date,
             groups: $this->filterGroups($user, $pageId, $profile->groups),
             loggedIn: $profile->loggedIn,
+            mode: $profile->mode,
         ));
     }
 

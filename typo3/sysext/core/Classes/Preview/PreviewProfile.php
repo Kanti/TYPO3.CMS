@@ -33,6 +33,7 @@ final readonly class PreviewProfile
      * @param int $date simulated timestamp, 0 for the current time
      * @param list<int> $groups simulated frontend user groups
      * @param bool $loggedIn whether a frontend login is simulated, always if groups are
+     * @param PreviewMode $mode how the pages are shown, the mode view for a visitor
      */
     public function __construct(
         public int $workspace,
@@ -41,13 +42,14 @@ final readonly class PreviewProfile
         public int $date,
         public array $groups,
         bool $loggedIn = false,
+        public PreviewMode $mode = PreviewMode::View,
     ) {
         $this->loggedIn = $loggedIn || $groups !== [];
     }
 
     /**
      * The pages as a visitor sees them now: live, without hidden records, at the current
-     * time and without a frontend login
+     * time, without a frontend login and in the mode view
      */
     public static function visitor(): self
     {
@@ -58,7 +60,8 @@ final readonly class PreviewProfile
      * Whether the profile shows no more than the visitor view: live, without hidden
      * records, at the current time and without a frontend login. A token of an editor,
      * who is the backend user of the request, may carry such a profile too. Whether a
-     * token is a visitor token says PreviewToken::isVisitorWithoutBackendUser().
+     * token is a visitor token says PreviewToken::isVisitorWithoutBackendUser(). The mode
+     * does not count here: it changes how the pages are shown, not which records.
      */
     public function showsVisitorView(): bool
     {
@@ -86,6 +89,7 @@ final readonly class PreviewProfile
             'date' => $this->date,
             'groups' => $this->groups,
             'login' => $this->loggedIn,
+            'mode' => $this->mode->value,
         ];
     }
 
@@ -125,7 +129,12 @@ final readonly class PreviewProfile
                 throw self::invalidField('groups is not a list of group ids');
             }
         }
-        return new self($workspace, $hiddenPages, $hiddenContent, $date, $groups, $loggedIn);
+        $mode = $data['mode'] ?? null;
+        $mode = is_string($mode) ? PreviewMode::tryFrom($mode) : null;
+        if ($mode === null) {
+            throw self::invalidField('mode is not a preview mode');
+        }
+        return new self($workspace, $hiddenPages, $hiddenContent, $date, $groups, $loggedIn, $mode);
     }
 
     private static function invalidField(string $reason): \UnexpectedValueException

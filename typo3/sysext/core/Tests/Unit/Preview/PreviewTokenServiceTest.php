@@ -24,6 +24,7 @@ use PHPUnit\Framework\Attributes\Test;
 use Psr\Clock\ClockInterface;
 use TYPO3\CMS\Core\Clock\SystemClock;
 use TYPO3\CMS\Core\Http\Uri;
+use TYPO3\CMS\Core\Preview\PreviewMode;
 use TYPO3\CMS\Core\Preview\PreviewProfile;
 use TYPO3\CMS\Core\Preview\PreviewRejection;
 use TYPO3\CMS\Core\Preview\PreviewTokenRejectedException;
@@ -72,6 +73,43 @@ final class PreviewTokenServiceTest extends UnitTestCase
         self::assertTrue($verified->isVisitorWithoutBackendUser());
         self::assertTrue($verified->profile->showsVisitorView());
         self::assertSame(5, $verified->editorId);
+    }
+
+    #[Test]
+    public function profileShowsThePagesInTheModeViewByDefault(): void
+    {
+        $jwt = new PreviewTokenService(new SystemClock())->sign($this->createProfile(), 'https://site-a.com', self::USER_AGENT, $this->createUser())->jwt;
+
+        self::assertSame(PreviewMode::View, $this->createProfile()->mode);
+        self::assertSame(PreviewMode::View, PreviewProfile::visitor()->mode);
+        self::assertSame('view', $this->decodeClaims($jwt)['prf']['mode']);
+    }
+
+    #[Test]
+    public function modeOfTheProfileIsCarriedByTheToken(): void
+    {
+        $subject = new PreviewTokenService(new SystemClock());
+        $profile = new PreviewProfile(workspace: 0, hiddenPages: false, hiddenContent: false, date: 0, groups: [], mode: PreviewMode::Edit);
+        $jwt = $subject->sign($profile, 'https://site-a.com', self::USER_AGENT, $this->createUser())->jwt;
+
+        $verified = $subject->verify($jwt, self::USER_AGENT);
+
+        self::assertSame('edit', $this->decodeClaims($jwt)['prf']['mode']);
+        self::assertSame(PreviewMode::Edit, $verified->profile->mode);
+        self::assertEquals($profile, $verified->profile);
+    }
+
+    /**
+     * A visitor token shows the pages as visitors see them, which is never the mode edit
+     */
+    #[Test]
+    public function visitorTokenInTheModeEditIsRefused(): void
+    {
+        $subject = new PreviewTokenService(new SystemClock());
+        $profile = new PreviewProfile(workspace: 0, hiddenPages: false, hiddenContent: false, date: 0, groups: [], mode: PreviewMode::Edit);
+        $jwt = $subject->sign($profile, 'https://site-a.com', self::USER_AGENT, $this->createUser(), true)->jwt;
+
+        $this->assertRejected(PreviewRejection::Invalid, fn() => $subject->verify($jwt, self::USER_AGENT));
     }
 
     #[Test]
@@ -141,11 +179,14 @@ final class PreviewTokenServiceTest extends UnitTestCase
         yield 'profile with a negative workspace' => [false, ['prf' => ['ws' => -1]], 'prf.ws is not a workspace id'];
         yield 'profile with a group as text' => [false, ['prf' => ['groups' => ['3']]], 'prf.groups is not a list of group ids'];
         yield 'profile without login' => [false, ['prf' => ['login' => null]], 'prf.login is not a boolean'];
+        yield 'profile without mode' => [false, ['prf' => ['mode' => null]], 'prf.mode is not a preview mode'];
+        yield 'profile with an unknown mode' => [false, ['prf' => ['mode' => 'admin']], 'prf.mode is not a preview mode'];
         yield 'editor naming a second editor' => [false, ['scp' => 7], 'sub and scp are both set'];
         yield 'editor zero' => [false, ['sub' => 0], 'sub is not a positive user id'];
         yield 'token naming no editor' => [true, ['scp' => null], 'sub or scp is missing'];
         yield 'visitor editor as text' => [true, ['scp' => '5'], 'scp is not a positive user id'];
         yield 'visitor token asking for more than the visitor view' => [true, ['prf' => ['hiddenPages' => true]], 'prf asks for more than the visitor view an scp token shows'];
+        yield 'visitor token in the mode edit' => [true, ['prf' => ['mode' => 'edit']], 'prf.mode is not "view", the only mode of an scp token'];
     }
 
     /**
