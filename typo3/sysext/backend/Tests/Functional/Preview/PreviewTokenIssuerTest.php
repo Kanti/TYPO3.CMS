@@ -18,12 +18,15 @@ declare(strict_types=1);
 namespace TYPO3\CMS\Backend\Tests\Functional\Preview;
 
 use PHPUnit\Framework\Attributes\Test;
+use Symfony\Component\DependencyInjection\Container;
 use TYPO3\CMS\Backend\Preview\AddressOutsidePreviewException;
 use TYPO3\CMS\Backend\Preview\IssuedPreview;
 use TYPO3\CMS\Backend\Preview\PreviewAccessDeniedException;
 use TYPO3\CMS\Backend\Preview\PreviewTokenIssuer;
+use TYPO3\CMS\Core\Authentication\Event\AfterGroupsResolvedEvent;
 use TYPO3\CMS\Core\Context\Context;
 use TYPO3\CMS\Core\Database\ConnectionPool;
+use TYPO3\CMS\Core\EventDispatcher\ListenerProvider;
 use TYPO3\CMS\Core\Http\ServerRequest;
 use TYPO3\CMS\Core\Http\Uri;
 use TYPO3\CMS\Core\Preview\PreviewGroupFilter;
@@ -398,7 +401,9 @@ final class PreviewTokenIssuerTest extends FunctionalTestCase
     /**
      * The site resolves the hosts of a token with the editor in the workspace of the token.
      * The workspace limits the web mounts of the editor to the first site. The editor
-     * switched the backend to the live workspace in another tab since.
+     * switched the backend to the live workspace in another tab since. The context of the
+     * request keeps its aspects. The editor built in the workspace of the token has the
+     * same uid, so only the identity of the aspects tells them apart.
      */
     #[Test]
     public function renewalResolvesTheHostsInTheWorkspaceOfTheToken(): void
@@ -408,6 +413,9 @@ final class PreviewTokenIssuerTest extends FunctionalTestCase
         $editorInLive = $this->setUpBackendUser(9);
         self::assertSame(0, $editorInLive->workspace);
         $issuer = $this->get(PreviewTokenIssuer::class);
+        $context = $this->get(Context::class);
+        $userAspect = $context->getAspect('backend.user');
+        $workspaceAspect = $context->getAspect('workspace');
 
         $renewed = $issuer->renew($this->createRequest(), $editorInLive, $previous->token->jwt, new Uri('https://first.example/de/'), 3);
 
@@ -416,9 +424,80 @@ final class PreviewTokenIssuerTest extends FunctionalTestCase
         self::assertSame(['first.example'], $issuer->getFrameSettings($renewed, 3)['hosts']);
         self::assertSame(['first.example'], $issuer->getFrameSettings($renewed, 3)['httpsHosts']);
         self::assertSame(0, $editorInLive->workspace);
+        self::assertSame($userAspect, $context->getAspect('backend.user'));
+        self::assertSame($workspaceAspect, $context->getAspect('workspace'));
+    }
+
+    /**
+     * The hosts depend on user TSconfig through the languages of the editor in a workspace,
+     * options.workspaces.allowed_languages. Its conditions are evaluated in the workspace of
+     * the token, as on the site. Here a condition on the workspace leaves the editor only
+     * the default language in the workspace, so the host of the German language is left out.
+     */
+    #[Test]
+    public function renewalEvaluatesUserTsConfigConditionsInTheWorkspaceOfTheToken(): void
+    {
+        $this->writeSiteConfiguration('first', $this->buildSiteConfiguration(1, 'https://first.example/'), [
+            $this->buildDefaultLanguageConfiguration('EN', '/'),
+            $this->buildLanguageConfiguration('DE', 'https://first.de/'),
+        ]);
+        $this->importCSVDataSet(__DIR__ . '/Fixtures/sys_workspace.csv');
+        $this->get(ConnectionPool::class)->getConnectionForTable('be_groups')->update(
+            'be_groups',
+            ['TSconfig' => '[workspace.workspaceId == 1]' . LF . 'options.workspaces.allowed_languages.1 = 0' . LF . '[END]'],
+            ['uid' => 9]
+        );
+        $editorInLive = $this->setUpBackendUser(9);
+        $issuer = $this->get(PreviewTokenIssuer::class);
+        self::assertSame(['first.example', 'first.de'], $issuer->issue($this->createRequest(), $editorInLive, new Uri('https://first.example/'), 2)->hosts->getHosts());
+        $previous = $this->get(PreviewTokenService::class)->sign(new PreviewProfile(workspace: 1, hiddenPages: false, hiddenContent: false, date: 0, groups: []), 'https://backend.example', self::USER_AGENT, 9);
+
+        $renewed = $issuer->renew($this->createRequest(), $editorInLive, $previous->jwt, new Uri('https://first.example/'), 2);
+
+        self::assertSame(1, $renewed->token->profile->workspace);
+        self::assertSame(['first.example'], $renewed->hosts->getHosts());
+    }
+
+    /**
+     * The groups of an editor may depend on the workspace, through a listener of
+     * AfterGroupsResolvedEvent. Here the editor enters the live workspace and the workspace
+     * of the token only through a group the listener leaves out outside the live workspace.
+     * The web mounts come from another group. The site resolves the groups in the workspace
+     * of the token as well and refuses the token, so the backend renews none. The core would
+     * enter another workspace instead and write it to the user record. The renewal writes
+     * nothing and keeps the context.
+     */
+    #[Test]
+    public function renewalRefusesAWorkspaceTheGroupsOfTheEditorInThatWorkspaceDoNotGrant(): void
+    {
+        $this->importCSVDataSet(__DIR__ . '/Fixtures/sys_workspace.csv');
+        $connectionPool = $this->get(ConnectionPool::class);
+        $connectionPool->getConnectionForTable('be_groups')->insert('be_groups', ['uid' => 10, 'pid' => 0, 'title' => 'Live and draft', 'workspace_perms' => 1]);
+        $connectionPool->getConnectionForTable('be_users')->update('be_users', ['usergroup' => '9,10', 'workspace_perms' => 0], ['uid' => 9]);
+        $connectionPool->getConnectionForTable('sys_workspace')->update('sys_workspace', ['members' => 'be_groups_10'], ['uid' => 1]);
+        $editorInLive = $this->setUpBackendUser(9);
+        $previous = $this->get(PreviewTokenService::class)->sign(new PreviewProfile(workspace: 1, hiddenPages: false, hiddenContent: false, date: 0, groups: []), 'https://backend.example', self::USER_AGENT, 9);
+        $context = $this->get(Context::class);
+        /** @var Container $container */
+        $container = $this->getContainer();
+        $container->set('live-and-draft-in-the-live-workspace-only', static function (AfterGroupsResolvedEvent $event) use ($context): void {
+            if ($context->getPropertyFromAspect('workspace', 'isOffline')) {
+                $event->setGroups(array_values(array_filter($event->getGroups(), static fn(array $group): bool => (int)$group['uid'] !== 10)));
+            }
+        });
+        $container->get(ListenerProvider::class)->addListener(AfterGroupsResolvedEvent::class, 'live-and-draft-in-the-live-workspace-only');
+        $userAspect = $context->getAspect('backend.user');
+        $workspaceAspect = $context->getAspect('workspace');
+
+        try {
+            $this->get(PreviewTokenIssuer::class)->renew($this->createRequest(), $editorInLive, $previous->jwt, new Uri('https://first.example/'), 2);
+            self::fail('The token is renewed for a workspace the groups of the editor in that workspace do not grant');
+        } catch (PreviewAccessDeniedException $exception) {
+            self::assertSame(1794991246, $exception->getCode());
+        }
         self::assertSame(0, $this->getWorkspaceOfTheEditorRecord());
-        self::assertSame(0, $this->get(Context::class)->getPropertyFromAspect('workspace', 'id'));
-        self::assertSame(9, $this->get(Context::class)->getPropertyFromAspect('backend.user', 'id'));
+        self::assertSame($userAspect, $context->getAspect('backend.user'));
+        self::assertSame($workspaceAspect, $context->getAspect('workspace'));
     }
 
     #[Test]
@@ -455,7 +534,6 @@ final class PreviewTokenIssuerTest extends FunctionalTestCase
         self::assertSame(0, $renewed->token->profile->workspace);
         self::assertSame(['first.example', 'second.example:8443'], $renewed->hosts->getHosts());
         self::assertSame(1, $editorInWorkspace->workspace);
-        self::assertSame(1, $this->getWorkspaceOfTheEditorRecord());
     }
 
     #[Test]
