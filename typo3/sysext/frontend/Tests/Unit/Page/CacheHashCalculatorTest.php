@@ -95,7 +95,24 @@ final class CacheHashCalculatorTest extends UnitTestCase
                 'type=3&no_cache=1',
                 [],
             ],
+            'Preview parameters should be omitted whatever the excluded parameters are' => [
+                'id=1&key=x&__t3ct=token&ADMCMD_prev=keyword&ADMCMD_simTime=1&ADMCMD_simUser=2',
+                ['id', 'key'],
+            ],
         ];
+    }
+
+    #[Test]
+    public function previewTokenNeitherRequiresNorChangesTheCacheHash(): void
+    {
+        $GLOBALS['TYPO3_CONF_VARS']['SYS']['encryptionKey'] = 't3lib_cacheHashTest';
+        $subject = new CacheHashCalculator(new CacheHashConfiguration(['excludedParameters' => []]), new HashService());
+
+        self::assertSame([], $subject->getRelevantParameters('id=1&__t3ct=token'));
+        self::assertSame(
+            $subject->generateForParameters('id=1&key=x'),
+            $subject->generateForParameters('id=1&key=x&__t3ct=token')
+        );
     }
 
     #[DataProvider('getRelevantParametersDataProvider')]
