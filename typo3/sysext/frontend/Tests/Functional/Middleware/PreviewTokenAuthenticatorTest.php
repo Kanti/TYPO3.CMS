@@ -480,6 +480,20 @@ final class PreviewTokenAuthenticatorTest extends FunctionalTestCase
     }
 
     /**
+     * With lockSSL the backend is reachable via HTTPS only, and browsers send Fetch Metadata
+     * on HTTPS. So a token without it is refused also on a site on plain HTTP.
+     */
+    #[Test]
+    public function tokenWithoutFrameHeaderIsRefusedOnPlainHttpSiteWhileTheBackendIsLockedToHttps(): void
+    {
+        $GLOBALS['TYPO3_CONF_VARS']['BE']['lockSSL'] = true;
+
+        $response = $this->processTokenAuthenticatorOfSite('second', 'http://second.example/?__t3ct=' . $this->sign(), false, null);
+
+        $this->assertRejected('notInFrame', $response);
+    }
+
+    /**
      * A visitor token shows only what a visitor sees, so it is valid on every site of the
      * installation, also on one the editor who opened it may not preview.
      */
@@ -1447,13 +1461,13 @@ final class PreviewTokenAuthenticatorTest extends FunctionalTestCase
      * Runs the middleware for a page in the frame of a site, on HTTPS or on plain HTTP.
      * The page renders as "Rendered page".
      */
-    private function processTokenAuthenticatorOfSite(string $identifier, string $url, bool $https): ResponseInterface
+    private function processTokenAuthenticatorOfSite(string $identifier, string $url, bool $https, ?string $secFetchDest = 'iframe'): ResponseInterface
     {
         // Every request starts without a backend user, as the preview builds the editor
         unset($GLOBALS['BE_USER']);
         parse_str((string)parse_url($url, PHP_URL_QUERY), $queryParams);
         $site = $this->get(SiteFinder::class)->getSiteByIdentifier($identifier);
-        $request = new ServerRequest($url, 'GET', null, ['Sec-Fetch-Dest' => 'iframe', 'User-Agent' => self::USER_AGENT], array_filter(['HTTPS' => $https ? 'on' : null, 'HTTP_HOST' => (string)parse_url($url, PHP_URL_HOST)]))
+        $request = new ServerRequest($url, 'GET', null, array_filter(['Sec-Fetch-Dest' => $secFetchDest, 'User-Agent' => self::USER_AGENT]), array_filter(['HTTPS' => $https ? 'on' : null, 'HTTP_HOST' => (string)parse_url($url, PHP_URL_HOST)]))
             ->withQueryParams($queryParams)
             ->withAttribute('applicationType', SystemEnvironmentBuilder::REQUESTTYPE_FE)
             ->withAttribute('site', $site)
