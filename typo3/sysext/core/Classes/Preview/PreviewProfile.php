@@ -20,7 +20,8 @@ namespace TYPO3\CMS\Core\Preview;
 /**
  * What a preview simulates, chosen in the backend when it signs a preview
  * token. What the editor may see is not part of it: the site checks the
- * rights of the editor on every request.
+ * rights of the editor on every request. A visitor token needs no rights,
+ * as it shows only what visitors see.
  *
  * @internal
  */

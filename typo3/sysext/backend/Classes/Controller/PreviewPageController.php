@@ -96,9 +96,10 @@ final readonly class PreviewPageController
     }
 
     /**
-     * Signs a fresh token for an address of the frame. Rights are checked again on every call,
-     * the simulation is taken from the previous token, and the hosts of the preview are
-     * resolved again.
+     * Signs a fresh token for an address of the frame. The simulation is taken from the
+     * previous token, and the hosts of the preview are resolved again. The rights of the
+     * editor are checked again on every call, except for a visitor token, see
+     * PreviewTokenIssuer::renew().
      */
     public function tokenAction(ServerRequestInterface $request): ResponseInterface
     {

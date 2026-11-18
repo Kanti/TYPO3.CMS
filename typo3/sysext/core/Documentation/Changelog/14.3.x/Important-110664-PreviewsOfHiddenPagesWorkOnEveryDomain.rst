@@ -104,8 +104,9 @@ Preview tokens
 
 The backend checks the rights of the editor (web mounts, page permission,
 workspace and languages) and signs a preview token: a JSON Web Token with its
-own key derived from the encryption key. It travels in the query parameter
-:code:`__t3ct`:
+own key derived from the encryption key. For a visitor token it checks only
+the right to show the page the preview is opened for, see below. The token
+travels in the query parameter :code:`__t3ct`:
 
 ..  code-block:: text
     :caption: The address of a page in the frame of a preview
@@ -129,7 +130,9 @@ What the site checks
 
 On every request with a token the site checks the token and the rights of the
 editor as they are now. The editor then becomes the backend user of the
-request, stateless: no session is created and no cookie is set.
+request, stateless: no session is created and no cookie is set. A visitor
+token is the exception: the site checks no rights for it and loads no editor,
+see below.
 
 ..  list-table::
     :header-rows: 1
@@ -147,8 +150,8 @@ request, stateless: no session is created and no cookie is set.
             origin
         -   *This preview is only available in the backend.*
     *   -   The host belongs to a site the editor may preview now: web mounts
-            and languages. A base without a host counts on the host of the
-            backend
+            and languages. A visitor token is valid on every site, see below.
+            A base without a host counts on the host of the backend
         -   *This preview is not valid.*
     *   -   The editor exists, is enabled and may log in: backend lock,
             IP mask, :php:`$GLOBALS['TYPO3_CONF_VARS']['BE']['lockSSL']`
@@ -161,9 +164,10 @@ request, stateless: no session is created and no cookie is set.
 A frontend user group of the token that the editor may not read is only
 simulated on pages whose access restrictions name it. A group that the admin
 panel simulates applies as without a token. When every check passes, the page
-is shown as for a backend login. Every renewal checks the rights of the editor
-and the hosts of the preview again. Only the editor who opened a preview gets a
-renewed token for it.
+is shown as for a backend login. Every renewal of the token of an editor
+checks his rights and the hosts of the preview again. A visitor token is
+renewed without a check of the rights of the editor, see below. Either kind of
+token is renewed only for the editor who opened the preview.
 
 ..  important::
 
