@@ -24,9 +24,12 @@ use Psr\Http\Message\UriInterface;
 use TYPO3\CMS\Backend\Routing\UriBuilder;
 use TYPO3\CMS\Backend\Utility\BackendUtility;
 use TYPO3\CMS\Core\Authentication\BackendUserAuthentication;
+use TYPO3\CMS\Core\Context\Context;
+use TYPO3\CMS\Core\Context\WorkspaceAspect;
 use TYPO3\CMS\Core\Http\NormalizedParams;
 use TYPO3\CMS\Core\Http\Uri;
 use TYPO3\CMS\Core\Preview\PreviewGroupFilter;
+use TYPO3\CMS\Core\Preview\PreviewHosts;
 use TYPO3\CMS\Core\Preview\PreviewHostsResolver;
 use TYPO3\CMS\Core\Preview\PreviewProfile;
 use TYPO3\CMS\Core\Preview\PreviewTokenRejectedException;
@@ -58,6 +61,7 @@ final readonly class PreviewTokenIssuer
         private UriBuilder $uriBuilder,
         private ClockInterface $clock,
         private PreviewGroupFilter $groupFilter,
+        private Context $context,
     ) {}
 
     /**
@@ -200,7 +204,9 @@ final readonly class PreviewTokenIssuer
             $backendUri,
             $frontendUri->withQuery(PreviewTokenService::withoutParameters($frontendUri->getQuery(), self::PREVIEW_PARAMETERS))
         );
-        $hosts = $visitor ? $this->hostsResolver->resolveForVisitor($backendUri) : $this->hostsResolver->resolve($user, $backendUri);
+        $hosts = $visitor
+            ? $this->hostsResolver->resolveForVisitor($backendUri)
+            : $this->resolveHostsInWorkspace($user, $profile->workspace, $backendUri);
         if ($hosts->isEmpty()) {
             throw new PreviewAccessDeniedException('No site is accessible', 1793265779);
         }
@@ -215,6 +221,44 @@ final readonly class PreviewTokenIssuer
             $visitor,
         );
         return new IssuedPreview($token, PreviewTokenService::withToken($frontendUri, $token->jwt), $hosts);
+    }
+
+    /**
+     * The site resolves the hosts of a token with the editor in the workspace of the token.
+     * Web mounts, languages and user TSconfig depend on the workspace. The editor may have
+     * switched the workspace of the backend since the token was signed, so the hosts are
+     * resolved with the editor built again in the workspace of the token. Neither the user
+     * record, the backend session nor the context of the request changes.
+     *
+     * @throws PreviewAccessDeniedException
+     */
+    private function resolveHostsInWorkspace(BackendUserAuthentication $user, int $workspace, UriInterface $backendUri): PreviewHosts
+    {
+        if ($user->workspace === $workspace) {
+            return $this->hostsResolver->resolve($user, $backendUri);
+        }
+        $userAspect = $this->context->getAspect('backend.user');
+        $workspaceAspect = $this->context->getAspect('workspace');
+        // User TSconfig conditions are evaluated in the workspace of the token, as on the site
+        $this->context->setAspect('workspace', new WorkspaceAspect($workspace));
+        try {
+            $editor = new class extends BackendUserAuthentication {
+                public function setWorkspace($workspaceId)
+                {
+                    // Entered for the hosts only, never written to the user record
+                    $this->checkWorkspaceCurrent_cache = null;
+                    if (!$this->setTemporaryWorkspace((int)$workspaceId)) {
+                        throw new PreviewAccessDeniedException('Workspace is not accessible', 1794991246);
+                    }
+                }
+            };
+            $editor->user = ['workspace_id' => $workspace] + $user->user;
+            $editor->fetchGroupData();
+            return $this->hostsResolver->resolve($editor, $backendUri);
+        } finally {
+            $this->context->setAspect('backend.user', $userAspect);
+            $this->context->setAspect('workspace', $workspaceAspect);
+        }
     }
 
     private function getBackendUri(ServerRequestInterface $request): UriInterface

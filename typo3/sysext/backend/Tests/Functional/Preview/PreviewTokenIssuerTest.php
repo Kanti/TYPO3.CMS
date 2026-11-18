@@ -19,8 +19,10 @@ namespace TYPO3\CMS\Backend\Tests\Functional\Preview;
 
 use PHPUnit\Framework\Attributes\Test;
 use TYPO3\CMS\Backend\Preview\AddressOutsidePreviewException;
+use TYPO3\CMS\Backend\Preview\IssuedPreview;
 use TYPO3\CMS\Backend\Preview\PreviewAccessDeniedException;
 use TYPO3\CMS\Backend\Preview\PreviewTokenIssuer;
+use TYPO3\CMS\Core\Context\Context;
 use TYPO3\CMS\Core\Database\ConnectionPool;
 use TYPO3\CMS\Core\Http\ServerRequest;
 use TYPO3\CMS\Core\Http\Uri;
@@ -393,6 +395,69 @@ final class PreviewTokenIssuerTest extends FunctionalTestCase
         self::assertSame(['first.example', 'second.example:8443'], $issuer->getFrameSettings($renewed, 2)['hosts']);
     }
 
+    /**
+     * The site resolves the hosts of a token with the editor in the workspace of the token.
+     * The workspace limits the web mounts of the editor to the first site. The editor
+     * switched the backend to the live workspace in another tab since.
+     */
+    #[Test]
+    public function renewalResolvesTheHostsInTheWorkspaceOfTheToken(): void
+    {
+        $previous = $this->issueInWorkspaceWithMountOfTheFirstSite();
+        $this->get(ConnectionPool::class)->getConnectionForTable('be_users')->update('be_users', ['workspace_id' => 0], ['uid' => 9]);
+        $editorInLive = $this->setUpBackendUser(9);
+        self::assertSame(0, $editorInLive->workspace);
+        $issuer = $this->get(PreviewTokenIssuer::class);
+
+        $renewed = $issuer->renew($this->createRequest(), $editorInLive, $previous->token->jwt, new Uri('https://first.example/de/'), 3);
+
+        self::assertSame(1, $renewed->token->profile->workspace);
+        self::assertSame(['first.example'], $renewed->hosts->getHosts());
+        self::assertSame(['first.example'], $issuer->getFrameSettings($renewed, 3)['hosts']);
+        self::assertSame(['first.example'], $issuer->getFrameSettings($renewed, 3)['httpsHosts']);
+        self::assertSame(0, $editorInLive->workspace);
+        self::assertSame(0, $this->getWorkspaceOfTheEditorRecord());
+        self::assertSame(0, $this->get(Context::class)->getPropertyFromAspect('workspace', 'id'));
+        self::assertSame(9, $this->get(Context::class)->getPropertyFromAspect('backend.user', 'id'));
+    }
+
+    #[Test]
+    public function renewalRefusesAHostOutsideTheWorkspaceOfTheToken(): void
+    {
+        $previous = $this->issueInWorkspaceWithMountOfTheFirstSite();
+        $this->get(ConnectionPool::class)->getConnectionForTable('be_users')->update('be_users', ['workspace_id' => 0], ['uid' => 9]);
+        $editorInLive = $this->setUpBackendUser(9);
+
+        $this->expectException(AddressOutsidePreviewException::class);
+        $this->expectExceptionCode(1793265780);
+        $this->get(PreviewTokenIssuer::class)->renew($this->createRequest(), $editorInLive, $previous->token->jwt, new Uri('https://second.example:8443/'), 2);
+    }
+
+    /**
+     * The other way round: a live token renewed while the backend is in the workspace
+     * keeps the hosts of the live workspace.
+     */
+    #[Test]
+    public function renewalOfALiveTokenKeepsTheHostsOfTheLiveWorkspace(): void
+    {
+        $this->importCSVDataSet(__DIR__ . '/Fixtures/sys_workspace.csv');
+        $this->get(ConnectionPool::class)->getConnectionForTable('sys_workspace')->update('sys_workspace', ['db_mountpoints' => '1'], ['uid' => 1]);
+        $this->get(ConnectionPool::class)->getConnectionForTable('be_groups')->update('be_groups', ['db_mountpoints' => '1,7'], ['uid' => 9]);
+        $issuer = $this->get(PreviewTokenIssuer::class);
+        $previous = $issuer->issue($this->createRequest(), $this->setUpBackendUser(9), new Uri('https://first.example/'), 2);
+        self::assertSame(['first.example', 'second.example:8443'], $previous->hosts->getHosts());
+        $this->get(ConnectionPool::class)->getConnectionForTable('be_users')->update('be_users', ['workspace_id' => 1], ['uid' => 9]);
+        $editorInWorkspace = $this->setUpBackendUser(9);
+        self::assertSame(1, $editorInWorkspace->workspace);
+
+        $renewed = $issuer->renew($this->createRequest(), $editorInWorkspace, $previous->token->jwt, new Uri('https://second.example:8443/'), 2);
+
+        self::assertSame(0, $renewed->token->profile->workspace);
+        self::assertSame(['first.example', 'second.example:8443'], $renewed->hosts->getHosts());
+        self::assertSame(1, $editorInWorkspace->workspace);
+        self::assertSame(1, $this->getWorkspaceOfTheEditorRecord());
+    }
+
     #[Test]
     public function tokenLengthDoesNotDependOnTheNumberOfSites(): void
     {
@@ -614,6 +679,29 @@ final class PreviewTokenIssuerTest extends FunctionalTestCase
         self::assertSame(['first.example', 'xn--bcher-kva.example:8443'], $preview->hosts->getHosts());
         self::assertSame(['https://first.example', 'https://xn--bcher-kva.example:8443'], $preview->hosts->getOrigins());
         self::assertStringStartsWith('https://bücher.example:8443/?__t3ct=', (string)$preview->uri);
+    }
+
+    /**
+     * The editor mounts both sites, the workspace only the first one.
+     */
+    private function issueInWorkspaceWithMountOfTheFirstSite(): IssuedPreview
+    {
+        $this->importCSVDataSet(__DIR__ . '/Fixtures/sys_workspace.csv');
+        $this->get(ConnectionPool::class)->getConnectionForTable('sys_workspace')->update('sys_workspace', ['db_mountpoints' => '1'], ['uid' => 1]);
+        $this->get(ConnectionPool::class)->getConnectionForTable('be_groups')->update('be_groups', ['db_mountpoints' => '1,7'], ['uid' => 9]);
+        $this->get(ConnectionPool::class)->getConnectionForTable('be_users')->update('be_users', ['workspace_id' => 1], ['uid' => 9]);
+        $editorInWorkspace = $this->setUpBackendUser(9);
+        self::assertSame(1, $editorInWorkspace->workspace);
+        $preview = $this->get(PreviewTokenIssuer::class)->issue($this->createRequest(), $editorInWorkspace, new Uri('https://first.example/'), 2);
+        self::assertSame(1, $preview->token->profile->workspace);
+        self::assertSame(['first.example'], $preview->hosts->getHosts());
+        return $preview;
+    }
+
+    private function getWorkspaceOfTheEditorRecord(): int
+    {
+        return (int)$this->get(ConnectionPool::class)->getConnectionForTable('be_users')
+            ->select(['workspace_id'], 'be_users', ['uid' => 9])->fetchOne();
     }
 
     private function allowEditorToReadFrontendUserGroups(): void
