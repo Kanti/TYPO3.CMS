@@ -43,7 +43,9 @@ use TYPO3\CMS\Core\Utility\GeneralUtility;
  * is needed. The site checks these rights again on every request, with the editor
  * as backend user. Frontend user groups come from the access restrictions of the
  * page. Hidden pages are shown as for a backend login: the requested hidden page,
- * unless the token asks for all hidden pages.
+ * unless the token asks for all hidden pages. A visitor token needs only the right
+ * to show the page it is opened for. The site checks no rights for it, see
+ * issueForVisitor().
  *
  * @internal
  */
@@ -110,9 +112,10 @@ final readonly class PreviewTokenIssuer
 
     /**
      * Signs a fresh token for an address of the frame. The simulation stays as signed in the
-     * previous token, and a token without the editor stays one. All rights of the editor are
-     * checked again, also for its groups. A token without the editor needs no right on the
-     * page in the frame, as that frame goes wherever a visitor goes.
+     * previous token, and a token without the editor stays one. For a token of the editor
+     * all his rights are checked again, also for its groups. A token without the editor is
+     * renewed without a check of the rights of the editor, as its frame goes wherever a
+     * visitor goes.
      *
      * @throws PreviewAccessDeniedException
      */
@@ -224,11 +227,11 @@ final readonly class PreviewTokenIssuer
     }
 
     /**
-     * The site resolves the hosts of a token with the editor in the workspace of the token.
-     * Web mounts, languages and user TSconfig depend on the workspace. The editor may have
-     * switched the workspace of the backend since the token was signed, so the hosts are
-     * resolved with the editor built again in the workspace of the token. Neither the user
-     * record, the backend session nor the context of the request changes.
+     * For a token of the editor, the site resolves the hosts with the editor in the workspace
+     * of the token. Web mounts, languages and user TSconfig depend on the workspace. The
+     * editor may have switched the workspace of the backend since the token was signed, so
+     * the hosts are resolved with the editor built again in the workspace of the token.
+     * Neither the user record, the backend session nor the context of the request changes.
      *
      * @throws PreviewAccessDeniedException
      */

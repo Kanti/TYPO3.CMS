@@ -28,7 +28,8 @@ use TYPO3\CMS\Core\Utility\StringUtility;
  * Signs and verifies short-lived preview tokens. A token carries the editor it was
  * signed for and the whole preview profile, so verifying it needs no session. It names
  * no hosts, so its size does not grow with the sites of an installation. The site
- * resolves them from the editor on every request.
+ * resolves them on every request: from the rights the editor has now, or from all
+ * sites of the installation for a visitor token.
  *
  * @internal
  */
@@ -74,7 +75,8 @@ final readonly class PreviewTokenService
 
     /**
      * Checks signature, expiry and browser. Whether the token is valid on the host and
-     * site of the request is up to the site, which resolves them from the editor.
+     * site of the request is up to the site. It resolves them from the rights the editor
+     * has now, or from all sites of the installation for a visitor token.
      *
      * @throws PreviewTokenRejectedException
      */
