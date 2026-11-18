@@ -569,7 +569,7 @@ final class DatabaseRecordProvider implements SearchProviderInterface
         if ($this->hasPagesAccess($row)) {
             $previewUriBuilder = PreviewUriBuilder::createForRecordPreview($table, $row, (int)($row['pid'] ?? 0));
             if ($previewUriBuilder->isPreviewable()) {
-                $previewLink = (string)$previewUriBuilder->buildUri();
+                $previewLink = (string)$previewUriBuilder->buildBackendPreviewUri();
             }
         }
         return $previewLink;

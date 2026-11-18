@@ -477,7 +477,7 @@ final class PageRecordProvider implements SearchProviderInterface
         if ($this->hasPagesAccess($row)) {
             $previewUriBuilder = PreviewUriBuilder::create($row);
             if ($previewUriBuilder->isPreviewable()) {
-                $previewLink = (string)$previewUriBuilder->buildUri();
+                $previewLink = (string)$previewUriBuilder->buildBackendPreviewUri();
             }
         }
 

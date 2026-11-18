@@ -3,9 +3,14 @@
 declare(strict_types=1);
 
 use TYPO3\CMS\Core\Utility\ExtensionManagementUtility;
+use TYPO3\CMS\Frontend\Authentication\PreviewDataHandlerGuard;
 use TYPO3\CMS\Frontend\Controller\ShowImageController;
 
 defined('TYPO3') or die();
+
+// The backend user of a preview token changes no records
+$GLOBALS['TYPO3_CONF_VARS']['SC_OPTIONS']['t3lib/class.t3lib_tcemain.php']['processDatamapClass']['typo3/cms-frontend/preview'] = PreviewDataHandlerGuard::class;
+$GLOBALS['TYPO3_CONF_VARS']['SC_OPTIONS']['t3lib/class.t3lib_tcemain.php']['processCmdmapClass']['typo3/cms-frontend/preview'] = PreviewDataHandlerGuard::class;
 
 // Register eID provider for showpic
 $GLOBALS['TYPO3_CONF_VARS']['FE']['eID_include']['tx_cms_showpic'] = ShowImageController::class . '::processRequest';

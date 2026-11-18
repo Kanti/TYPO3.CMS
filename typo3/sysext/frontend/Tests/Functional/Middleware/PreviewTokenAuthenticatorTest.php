@@ -1,0 +1,1550 @@
+<?php
+
+declare(strict_types=1);
+
+/*
+ * This file is part of the TYPO3 CMS project.
+ *
+ * It is free software; you can redistribute it and/or modify it under
+ * the terms of the GNU General Public License, either version 2
+ * of the License, or any later version.
+ *
+ * For the full copyright and license information, please read the
+ * LICENSE.txt file that was distributed with this source code.
+ *
+ * The TYPO3 project - inspiring people to share!
+ */
+
+namespace TYPO3\CMS\Frontend\Tests\Functional\Middleware;
+
+use PHPUnit\Framework\Attributes\DataProvider;
+use PHPUnit\Framework\Attributes\Test;
+use Psr\Clock\ClockInterface;
+use Psr\Http\Message\ResponseInterface;
+use Psr\Http\Message\ServerRequestInterface;
+use Psr\Http\Server\RequestHandlerInterface;
+use TYPO3\CMS\Core\Clock\SystemClock;
+use TYPO3\CMS\Core\Core\SystemEnvironmentBuilder;
+use TYPO3\CMS\Core\Database\ConnectionPool;
+use TYPO3\CMS\Core\Http\HtmlResponse;
+use TYPO3\CMS\Core\Http\ImmediateResponseException;
+use TYPO3\CMS\Core\Http\NormalizedParams;
+use TYPO3\CMS\Core\Http\RedirectResponse;
+use TYPO3\CMS\Core\Http\ServerRequest;
+use TYPO3\CMS\Core\Preview\PreviewProfile;
+use TYPO3\CMS\Core\Preview\PreviewTokenService;
+use TYPO3\CMS\Core\Site\SiteFinder;
+use TYPO3\CMS\Core\Tests\Functional\SiteHandling\SiteBasedTestTrait;
+use TYPO3\CMS\Frontend\Middleware\PreviewTokenAuthenticator;
+use TYPO3\TestingFramework\Core\Functional\Framework\Frontend\InternalRequest;
+use TYPO3\TestingFramework\Core\Functional\Framework\Frontend\InternalRequestContext;
+use TYPO3\TestingFramework\Core\Functional\FunctionalTestCase;
+
+final class PreviewTokenAuthenticatorTest extends FunctionalTestCase
+{
+    use SiteBasedTestTrait;
+
+    private const USER_AGENT = 'Mozilla/5.0 (X11; Linux x86_64) Firefox/140.0';
+    private const BACKEND = 'https://backend.example';
+    private const FRAME_ANCESTORS = "frame-ancestors 'self' " . self::BACKEND;
+
+    protected const LANGUAGE_PRESETS = [
+        'EN' => ['id' => 0, 'title' => 'English', 'locale' => 'en_US.UTF8'],
+        'DE' => ['id' => 1, 'title' => 'German', 'locale' => 'de_DE.UTF8'],
+    ];
+
+    protected array $coreExtensionsToLoad = ['workspaces', 'redirects', 'adminpanel'];
+
+    protected array $configurationToUseInTestInstance = [
+        'SYS' => [
+            'encryptionKey' => '4408d27a916d51e624b69af3554f516dbab61037a9f7b9fd6f81b4d3bedeccb6',
+            'caching' => [
+                'cacheConfigurations' => [
+                    'pages' => [
+                        'backend' => \TYPO3\CMS\Core\Cache\Backend\Typo3DatabaseBackend::class,
+                    ],
+                ],
+            ],
+        ],
+    ];
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+        $this->importCSVDataSet(__DIR__ . '/../Fixtures/pages.csv');
+        $pages = $this->get(ConnectionPool::class)->getConnectionForTable('pages');
+        $pages->update('pages', ['slug' => '/'], ['uid' => 1]);
+        $pages->update('pages', ['slug' => '/hidden', 'hidden' => 1], ['uid' => 2]);
+        $pages->update('pages', ['slug' => '/hidden/protected', 'fe_group' => '5'], ['uid' => 3]);
+        $pages->update('pages', ['slug' => '/shortcut', 'doktype' => 4, 'shortcut' => 2, 'shortcut_mode' => 0], ['uid' => 4]);
+        $pages->update('pages', ['slug' => '/external', 'doktype' => 3, 'link' => 'https://outside.example/'], ['uid' => 5]);
+        $pages->update('pages', ['slug' => '/scheduled'], ['uid' => 6]);
+        $pages->update('pages', ['slug' => '/'], ['uid' => 7]);
+        $pages->insert('pages', ['uid' => 8, 'pid' => 1, 'title' => 'Root German', 'slug' => '/', 'sys_language_uid' => 1, 'l10n_parent' => 1]);
+        $this->get(ConnectionPool::class)->getConnectionForTable('fe_groups')
+            ->insert('fe_groups', ['uid' => 5, 'pid' => 1, 'title' => 'Preview group']);
+        $content = $this->get(ConnectionPool::class)->getConnectionForTable('tt_content');
+        $content->insert('tt_content', ['uid' => 1, 'pid' => 1, 'header' => 'Visible content']);
+        $content->insert('tt_content', ['uid' => 2, 'pid' => 1, 'header' => 'Hidden content', 'hidden' => 1]);
+        $setup = 'page = PAGE' . LF
+            . 'page.10 = TEXT' . LF . 'page.10.data = page:title' . LF
+            . 'page.20 = TEXT' . LF . 'page.20.value = Second site' . LF . 'page.20.typolink.parameter = 7' . LF
+            . 'page.30 = TEXT' . LF . 'page.30.value = Hidden' . LF . 'page.30.typolink.parameter = 2' . LF
+            . 'page.40 = TEXT' . LF . 'page.40.value = Outside' . LF . 'page.40.typolink.parameter = https://outside.example/' . LF
+            . 'page.50 = CONTENT' . LF . 'page.50.table = tt_content' . LF . 'page.50.select.pidInList = 1' . LF
+            . 'page.50.renderObj = TEXT' . LF . 'page.50.renderObj.field = header' . LF
+            . 'page.70 = TEXT' . LF . 'page.70.value = Mail' . LF . 'page.70.typolink.parameter = 40' . LF
+            . 'page.80 = TEXT' . LF . 'page.80.value = Phone' . LF . 'page.80.typolink.parameter = 41' . LF
+            . 'page.90 = TEXT' . LF . 'page.90.value = Signed' . LF . 'page.90.typolink.parameter = 42' . LF
+            . 'config.admPanel = 1' . LF
+            . '[backend.user.userId == 1]' . LF . 'page.60 = TEXT' . LF . 'page.60.value = Backend user 1' . LF . '[END]' . LF
+            . '[backend.user.userId == 2]' . LF . 'page.60 = TEXT' . LF . 'page.60.value = Backend user 2' . LF . '[END]' . LF;
+        $backendUsers = $this->get(ConnectionPool::class)->getConnectionForTable('be_users');
+        $backendUsers->insert('be_users', ['uid' => 1, 'pid' => 0, 'username' => 'admin', 'admin' => 1]);
+        $backendUsers->insert('be_users', ['uid' => 2, 'pid' => 0, 'username' => 'editor', 'admin' => 0, 'usergroup' => '1', 'options' => 3, 'workspace_perms' => 1]);
+        $this->get(ConnectionPool::class)->getConnectionForTable('be_groups')
+            ->insert('be_groups', ['uid' => 1, 'pid' => 0, 'title' => 'Editors', 'db_mountpoints' => '1', 'allowed_languages' => '0', 'workspace_perms' => 1]);
+        $this->get(ConnectionPool::class)->getConnectionForTable('sys_workspace')
+            ->insert('sys_workspace', ['uid' => 1, 'pid' => 0, 'title' => 'Draft']);
+        $this->setUpFrontendRootPage(1, [], ['config' => $setup]);
+        $this->setUpFrontendRootPage(7, [], ['config' => $setup]);
+        $this->writeSiteConfiguration('first', $this->buildSiteConfiguration(1, 'https://first.example/'), [
+            $this->buildDefaultLanguageConfiguration('EN', '/'),
+            array_replace($this->buildLanguageConfiguration('DE', '/de/'), ['enabled' => false]),
+        ]);
+        $this->writeSiteConfiguration(
+            'second',
+            $this->buildSiteConfiguration(7, 'http://second.example/'),
+            [$this->buildDefaultLanguageConfiguration('EN', '/')],
+            csp: ['enforce' => true]
+        );
+    }
+
+    #[Test]
+    public function validTokenShowsHiddenPageWithoutCookieOrCache(): void
+    {
+        $response = $this->preview('https://first.example/hidden', $this->sign());
+
+        self::assertSame(200, $response->getStatusCode());
+        self::assertStringContainsString('Dummy 1-2', (string)$response->getBody());
+        self::assertSame('private, no-store', $response->getHeaderLine('Cache-Control'));
+        self::assertSame('noindex', $response->getHeaderLine('X-Robots-Tag'));
+        self::assertSame('no-referrer', $response->getHeaderLine('Referrer-Policy'));
+        self::assertSame(self::FRAME_ANCESTORS, $response->getHeaderLine('Content-Security-Policy'));
+        self::assertFalse($response->hasHeader('Set-Cookie'));
+        self::assertFalse($response->hasHeader('ETag'));
+        self::assertStringContainsString('preview-navigation.js', (string)$response->getBody());
+        self::assertStringContainsString('data-preview-backend="' . self::BACKEND . '"', (string)$response->getBody());
+        self::assertStringContainsString('typo3-preview-info', (string)$response->getBody());
+
+        $live = $this->executeFrontendSubRequest(new InternalRequest('https://first.example/hidden'));
+        self::assertSame(404, $live->getStatusCode());
+    }
+
+    #[Test]
+    public function hiddenContentIsShownOnlyIfTheTokenAllowsIt(): void
+    {
+        $withHiddenContent = new PreviewProfile(workspace: 0, hiddenPages: false, hiddenContent: true, date: 0, groups: []);
+        self::assertStringContainsString('Hidden content', (string)$this->preview('https://first.example/', $this->sign($withHiddenContent))->getBody());
+
+        $withoutHiddenContent = new PreviewProfile(workspace: 0, hiddenPages: true, hiddenContent: false, date: 0, groups: []);
+        $response = $this->preview('https://first.example/', $this->sign($withoutHiddenContent));
+
+        self::assertSame(200, $response->getStatusCode());
+        self::assertStringContainsString('Visible content', (string)$response->getBody());
+        self::assertStringNotContainsString('Hidden content', (string)$response->getBody());
+    }
+
+    /**
+     * Browsers check every ancestor of a frame. A page of the site may frame another page
+     * of its own site, which then has the backend and the site as ancestors, so the policy
+     * of the site allows both to frame a page of the preview and no other origin.
+     */
+    #[Test]
+    public function siteContentSecurityPolicyAllowsOnlyTheSiteAndTheBackendToFrame(): void
+    {
+        $response = $this->preview('http://second.example/', $this->sign(), null);
+
+        self::assertSame(200, $response->getStatusCode());
+        self::assertStringContainsString(self::FRAME_ANCESTORS . ';', $response->getHeaderLine('Content-Security-Policy') . ';');
+    }
+
+    /**
+     * A previewed page may frame another page of its own site through a link TYPO3
+     * renders with the token. That page is framed by the site and, above it, by the
+     * backend, and both are allowed.
+     */
+    #[Test]
+    public function pageFramedByAPageOfItsOwnSiteMayBeShownInThePreview(): void
+    {
+        $request = new InternalRequest('https://first.example/hidden?__t3ct=' . $this->sign());
+        $request = $request
+            ->withHeader('User-Agent', self::USER_AGENT)
+            ->withHeader('Sec-Fetch-Dest', 'iframe')
+            ->withHeader('Sec-Fetch-Site', 'same-origin');
+
+        $response = $this->executeFrontendSubRequest($request);
+
+        self::assertSame(200, $response->getStatusCode());
+        self::assertSame(self::FRAME_ANCESTORS, $response->getHeaderLine('Content-Security-Policy'));
+    }
+
+    public static function invalidTokenDataProvider(): \Generator
+    {
+        yield 'empty' => [''];
+        yield 'malformed' => ['invalid'];
+        yield 'foreign signature' => ['eyJhbGciOiJIUzI1NiJ9.eyJ0eXAiOiJwcmV2aWV3IiwiZXhwIjo5OTk5OTk5OTk5fQ.c2lnbmF0dXJl'];
+    }
+
+    #[Test]
+    #[DataProvider('invalidTokenDataProvider')]
+    public function invalidTokenFailsClosed(string $jwt): void
+    {
+        $response = $this->preview('https://first.example/', $jwt);
+
+        $this->assertRejected('invalid', $response);
+        self::assertStringNotContainsString('postMessage', (string)$response->getBody());
+    }
+
+    #[Test]
+    public function expiredTokenShowsErrorPageAndTellsTheBackend(): void
+    {
+        $clock = new readonly class implements ClockInterface {
+            public function now(): \DateTimeImmutable
+            {
+                return new \DateTimeImmutable('-1 hour');
+            }
+        };
+        $jwt = new PreviewTokenService($clock)->sign($this->createProfile(), self::BACKEND, self::USER_AGENT, 1)->jwt;
+
+        $response = $this->preview('https://first.example/hidden', $jwt);
+
+        $this->assertRejected('expired', $response);
+        self::assertStringContainsString('typo3:preview:expired', (string)$response->getBody());
+        self::assertStringContainsString('"https://backend.example"', (string)$response->getBody());
+        self::assertSame(self::FRAME_ANCESTORS, $response->getHeaderLine('Content-Security-Policy'));
+    }
+
+    #[Test]
+    public function tokenOfAnotherBrowserIsRefused(): void
+    {
+        $response = $this->executeFrontendSubRequest(
+            new InternalRequest('https://first.example/?__t3ct=' . $this->sign())
+                ->withHeader('Sec-Fetch-Dest', 'iframe')
+                ->withHeader('User-Agent', 'curl/8.0')
+        );
+
+        $this->assertRejected('otherBrowser', $response);
+    }
+
+    #[Test]
+    public function tokenIsRefusedOnASiteOutsideTheMountsOfTheEditor(): void
+    {
+        $response = $this->preview('http://second.example/', $this->signForEditor(), null);
+
+        $this->assertRejected('invalid', $response);
+        self::assertStringNotContainsString('postMessage', (string)$response->getBody());
+        self::assertSame(200, $this->preview('http://second.example/', $this->sign(), null)->getStatusCode());
+    }
+
+    /**
+     * A site on a host of the preview whose root lies outside the web mounts of the editor
+     */
+    #[Test]
+    public function siteOnAHostOfThePreviewOutsideTheMountsOfTheEditorIsRefused(): void
+    {
+        $this->get(ConnectionPool::class)->getConnectionForTable('pages')->insert('pages', ['uid' => 20, 'pid' => 0, 'title' => 'Shop', 'slug' => '/', 'is_siteroot' => 1, 'perms_everybody' => 15]);
+        $this->setUpFrontendRootPage(20, [], ['config' => 'page = PAGE' . LF . 'page.10 = TEXT' . LF . 'page.10.value = Shop site']);
+        $this->writeSiteConfiguration('shop', $this->buildSiteConfiguration(20, 'https://first.example/shop/'), [$this->buildDefaultLanguageConfiguration('EN', '/')]);
+
+        $response = $this->preview('https://first.example/shop/', $this->signForEditor());
+
+        $this->assertRejected('outOfScope', $response);
+        self::assertStringContainsString('typo3:preview:expired', (string)$response->getBody());
+        self::assertStringContainsString('Shop site', (string)$this->preview('https://first.example/shop/', $this->sign())->getBody());
+    }
+
+    #[Test]
+    public function tokenIsRefusedOnTheHostOfALanguageWithoutAccess(): void
+    {
+        $this->writeSiteConfiguration('first', $this->buildSiteConfiguration(1, 'https://first.example/'), [
+            $this->buildDefaultLanguageConfiguration('EN', '/'),
+            $this->buildLanguageConfiguration('DE', 'https://first.de/'),
+        ]);
+
+        $this->assertRejected('invalid', $this->preview('https://first.de/', $this->signForEditor()));
+        self::assertSame(200, $this->preview('https://first.example/', $this->signForEditor())->getStatusCode());
+        self::assertSame(200, $this->preview('https://first.de/', $this->sign())->getStatusCode());
+    }
+
+    #[Test]
+    public function siteWithoutHostIsPreviewedOnTheHostOfTheBackendOnly(): void
+    {
+        $this->writeSiteConfiguration('second', $this->buildSiteConfiguration(7, '/second/'), [$this->buildDefaultLanguageConfiguration('EN', '/')]);
+        $jwt = $this->sign();
+
+        self::assertSame(200, $this->preview('https://backend.example/second/', $jwt)->getStatusCode());
+        $this->assertRejected('invalid', $this->preview('https://elsewhere.example/second/', $jwt));
+    }
+
+    #[Test]
+    public function siteIsRefusedOnTheNextRequestOnceTheEditorLosesItsMount(): void
+    {
+        $this->get(ConnectionPool::class)->getConnectionForTable('be_groups')->update('be_groups', ['db_mountpoints' => '1,7'], ['uid' => 1]);
+        $jwt = $this->signForEditor();
+        self::assertSame(200, $this->preview('http://second.example/', $jwt, null)->getStatusCode());
+
+        $this->get(ConnectionPool::class)->getConnectionForTable('be_groups')->update('be_groups', ['db_mountpoints' => '1'], ['uid' => 1]);
+
+        $this->assertRejected('invalid', $this->preview('http://second.example/', $jwt, null));
+    }
+
+    #[Test]
+    public function tokenSignedBeforeASiteWasCreatedIsValidOnIt(): void
+    {
+        $jwt = $this->sign();
+        $this->get(ConnectionPool::class)->getConnectionForTable('pages')->insert('pages', ['uid' => 20, 'pid' => 0, 'title' => 'Third', 'slug' => '/', 'is_siteroot' => 1, 'perms_everybody' => 15]);
+        $this->setUpFrontendRootPage(20, [], ['config' => 'page = PAGE' . LF . 'page.10 = TEXT' . LF . 'page.10.value = Third site']);
+        $this->writeSiteConfiguration('third', $this->buildSiteConfiguration(20, 'https://third.example/'), [$this->buildDefaultLanguageConfiguration('EN', '/')]);
+
+        $response = $this->preview('https://third.example/', $jwt);
+
+        self::assertSame(200, $response->getStatusCode());
+        self::assertStringContainsString('Third site', (string)$response->getBody());
+    }
+
+    public static function topLevelNavigationDataProvider(): \Generator
+    {
+        yield 'document' => [['Sec-Fetch-Dest' => 'document', 'Sec-Fetch-Mode' => 'navigate']];
+        yield 'document without mode' => [['Sec-Fetch-Dest' => 'document']];
+        yield 'navigation of another destination' => [['Sec-Fetch-Dest' => 'embed', 'Sec-Fetch-Mode' => 'navigate']];
+    }
+
+    /**
+     * A new tab, a target _blank or _top opens the address without the token: no
+     * backend user is built and the answer is the same for any token.
+     */
+    #[Test]
+    #[DataProvider('topLevelNavigationDataProvider')]
+    public function topLevelNavigationIsRedirectedToTheAddressWithoutToken(array $headers): void
+    {
+        foreach ([$this->sign(), 'invalid', ''] as $jwt) {
+            $GLOBALS['BE_USER'] = null;
+            $response = $this->processTokenAuthenticator('https://first.example/page?flag&q=a+b&__t3ct=' . $jwt . '&id=1&id=2', $headers);
+
+            self::assertSame(303, $response->getStatusCode());
+            self::assertSame('https://first.example/page?flag&q=a+b&id=1&id=2', $response->getHeaderLine('Location'));
+            self::assertSame('private, no-store', $response->getHeaderLine('Cache-Control'));
+            self::assertSame('', (string)$response->getBody());
+            self::assertNull($GLOBALS['BE_USER']);
+        }
+    }
+
+    /**
+     * The tab is sent to the address the browser requested, without the token and with
+     * every other byte as it was: brackets, a pipe and a stray percent sign, which an URI
+     * object would encode anew, so that a signed address still matches.
+     */
+    #[Test]
+    public function topLevelNavigationIsRedirectedToTheAddressAsTheBrowserSentIt(): void
+    {
+        $response = $this->processTokenAuthenticator(
+            'https://first.example/page?items[]=1&a|b=2&q=%zz&__t3ct=' . $this->sign() . '&sig=ab%2bcd',
+            ['Sec-Fetch-Dest' => 'document', 'Sec-Fetch-Mode' => 'navigate']
+        );
+
+        self::assertSame(303, $response->getStatusCode());
+        self::assertSame('https://first.example/page?items[]=1&a|b=2&q=%zz&sig=ab%2bcd', $response->getHeaderLine('Location'));
+    }
+
+    public static function namesPhpReadsAsTheTokenDataProvider(): \Generator
+    {
+        yield 'an array' => ['__t3ct%5B%5D=x'];
+        yield 'an array with a key' => ['__t3ct%5Bk%5D=x'];
+        yield 'a leading space' => ['%20__t3ct=x'];
+        yield 'a dot' => ['._t3ct=x'];
+    }
+
+    /**
+     * PHP reads "__t3ct[]", " __t3ct" and "._t3ct" as "__t3ct". A window opened with such
+     * a pair is redirected to the address without it, so the redirect never leads back to
+     * itself.
+     */
+    #[Test]
+    #[DataProvider('namesPhpReadsAsTheTokenDataProvider')]
+    public function topLevelNavigationWithANamePhpReadsAsTheTokenIsRedirectedWithoutIt(string $pair): void
+    {
+        $response = $this->processTokenAuthenticator('https://first.example/hidden?a=1&' . $pair . '&b=2', ['Sec-Fetch-Dest' => 'document', 'Sec-Fetch-Mode' => 'navigate']);
+
+        self::assertSame(303, $response->getStatusCode());
+        self::assertSame('https://first.example/hidden?a=1&b=2', $response->getHeaderLine('Location'));
+    }
+
+    #[Test]
+    public function topLevelNavigationOfTheSiteIsRedirectedWithoutToken(): void
+    {
+        $response = $this->executeFrontendSubRequest(
+            new InternalRequest('https://first.example/hidden?a=1&__t3ct=' . $this->sign())
+                ->withHeader('User-Agent', self::USER_AGENT)
+                ->withHeader('Sec-Fetch-Dest', 'document')
+                ->withHeader('Sec-Fetch-Mode', 'navigate')
+        );
+
+        self::assertSame(303, $response->getStatusCode());
+        self::assertSame('https://first.example/hidden?a=1', $response->getHeaderLine('Location'));
+    }
+
+    public static function requestsOfThePreviewItselfDataProvider(): \Generator
+    {
+        yield 'fetch' => [['Sec-Fetch-Dest' => 'empty', 'Sec-Fetch-Mode' => 'cors', 'Sec-Fetch-Site' => 'same-origin']];
+        yield 'script element' => [['Sec-Fetch-Dest' => 'script', 'Sec-Fetch-Mode' => 'no-cors', 'Sec-Fetch-Site' => 'same-origin']];
+        yield 'image element' => [['Sec-Fetch-Dest' => 'image', 'Sec-Fetch-Mode' => 'no-cors', 'Sec-Fetch-Site' => 'same-origin']];
+    }
+
+    /**
+     * Only a document of the site itself sends a same-origin request, and in a preview
+     * that is the page in the frame, which has the token anyway.
+     */
+    #[Test]
+    #[DataProvider('requestsOfThePreviewItselfDataProvider')]
+    public function requestOfThePageInTheFrameIsShownWithTheToken(array $headers): void
+    {
+        $response = $this->previewWithHeaders('https://first.example/hidden', $this->sign(), $headers);
+
+        self::assertSame(200, $response->getStatusCode());
+        self::assertStringContainsString('Dummy 1-2', (string)$response->getBody());
+        self::assertStringNotContainsString('preview-navigation.js', (string)$response->getBody());
+        self::assertSame('private, no-store', $response->getHeaderLine('Cache-Control'));
+    }
+
+    public static function requestsFromElsewhereDataProvider(): \Generator
+    {
+        yield 'fetch of another site' => [['Sec-Fetch-Dest' => 'empty', 'Sec-Fetch-Mode' => 'cors', 'Sec-Fetch-Site' => 'cross-site']];
+        yield 'fetch of another origin of the same site' => [['Sec-Fetch-Dest' => 'empty', 'Sec-Fetch-Mode' => 'cors', 'Sec-Fetch-Site' => 'same-site']];
+        yield 'image of another site' => [['Sec-Fetch-Dest' => 'image', 'Sec-Fetch-Mode' => 'no-cors', 'Sec-Fetch-Site' => 'cross-site']];
+        yield 'request typed by the user' => [['Sec-Fetch-Dest' => 'empty', 'Sec-Fetch-Mode' => 'cors', 'Sec-Fetch-Site' => 'none']];
+        yield 'no site named' => [['Sec-Fetch-Dest' => 'empty', 'Sec-Fetch-Mode' => 'cors']];
+    }
+
+    #[Test]
+    #[DataProvider('requestsFromElsewhereDataProvider')]
+    public function requestFromElsewhereIsRefused(array $headers): void
+    {
+        $response = $this->previewWithHeaders('https://first.example/hidden', $this->sign(), $headers);
+
+        $this->assertRejected('notInFrame', $response);
+        self::assertStringNotContainsString('Dummy 1-2', (string)$response->getBody());
+    }
+
+    #[Test]
+    public function tokenInAFrameIsStillShown(): void
+    {
+        self::assertSame(200, $this->preview('https://first.example/hidden', $this->sign(), 'iframe')->getStatusCode());
+    }
+
+    #[Test]
+    public function tokenWithoutFrameHeaderIsRefusedOnHttpsSite(): void
+    {
+        $response = $this->preview('https://first.example/', $this->sign(), null);
+
+        $this->assertRejected('notInFrame', $response);
+        self::assertStringContainsString('>This preview is only available in the backend.</p>', (string)$response->getBody());
+    }
+
+    #[Test]
+    public function tokenWithoutFrameHeaderIsAcceptedOnPlainHttpSite(): void
+    {
+        $response = $this->preview('http://second.example/', $this->sign(), null);
+
+        self::assertSame(200, $response->getStatusCode());
+    }
+
+    public static function baseWithoutSchemeDataProvider(): \Generator
+    {
+        yield 'base with a host' => ['//second.example/', 'second.example/'];
+        yield 'base without a host' => ['/second/', 'backend.example/second/'];
+    }
+
+    /**
+     * A site whose base names no scheme is served on HTTPS and on plain HTTP. Browsers
+     * send Fetch Metadata on HTTPS, so the token goes without it on plain HTTP only.
+     */
+    #[Test]
+    #[DataProvider('baseWithoutSchemeDataProvider')]
+    public function tokenWithoutFrameHeaderIsAcceptedOnASiteWithoutSchemeOnPlainHttpOnly(string $base, string $address): void
+    {
+        $this->writeSiteConfiguration('second', $this->buildSiteConfiguration(7, $base), [$this->buildDefaultLanguageConfiguration('EN', '/')]);
+
+        self::assertSame(200, $this->preview('http://' . $address, $this->sign(), null)->getStatusCode());
+        $this->assertRejected('notInFrame', $this->preview('https://' . $address, $this->sign(), null));
+    }
+
+    /**
+     * A visitor token shows only what a visitor sees, so it is valid on every site of the
+     * installation, also on one the editor who opened it may not preview.
+     */
+    #[Test]
+    public function visitorTokenIsValidOnSitesTheEditorWhoOpenedItMayNotPreview(): void
+    {
+        $this->get(ConnectionPool::class)->getConnectionForTable('tt_content')
+            ->insert('tt_content', ['uid' => 3, 'pid' => 1, 'header' => 'Draft content', 't3ver_oid' => 1, 't3ver_wsid' => 1]);
+        $jwt = $this->signForVisitor(editorId: 2);
+
+        self::assertStringContainsString('href="http://second.example/?__t3ct=' . $jwt . '"', (string)$this->preview('https://first.example/', $jwt)->getBody());
+        $response = $this->preview('http://second.example/', $jwt, null);
+        self::assertSame(200, $response->getStatusCode());
+        self::assertStringContainsString('Root 2', (string)$response->getBody());
+        self::assertStringContainsString('Visible content', (string)$response->getBody());
+        self::assertStringNotContainsString('Hidden content', (string)$response->getBody());
+        self::assertStringNotContainsString('Draft content', (string)$response->getBody());
+        self::assertStringNotContainsString('Backend user', (string)$response->getBody());
+        self::assertStringNotContainsString('typo3-preview-info', (string)$response->getBody());
+    }
+
+    public static function editorNoLongerAvailableDataProvider(): \Generator
+    {
+        yield 'disabled' => [['disable' => 1]];
+        yield 'deleted' => [['deleted' => 1]];
+        yield 'expired' => [['endtime' => 86400]];
+        yield 'removed' => [null];
+    }
+
+    /**
+     * The site does not load the editor of a visitor token, so the token stays valid
+     * until it expires. Only the editor who opened it renews it, with his backend login.
+     */
+    #[Test]
+    #[DataProvider('editorNoLongerAvailableDataProvider')]
+    public function visitorTokenStaysValidUntilItExpiresAlsoIfItsEditorIsNoLongerAvailable(?array $userChanges): void
+    {
+        $jwt = $this->signForVisitor(editorId: 2);
+        $backendUsers = $this->get(ConnectionPool::class)->getConnectionForTable('be_users');
+        if ($userChanges === null) {
+            $backendUsers->delete('be_users', ['uid' => 2]);
+        } else {
+            $backendUsers->update('be_users', $userChanges, ['uid' => 2]);
+        }
+
+        $response = $this->preview('https://first.example/', $jwt);
+
+        self::assertSame(200, $response->getStatusCode());
+        self::assertStringContainsString('Visible content', (string)$response->getBody());
+        self::assertStringNotContainsString('Backend user', (string)$response->getBody());
+    }
+
+    public static function editorWithoutAccessToTheLiveWorkspaceDataProvider(): \Generator
+    {
+        yield 'stored workspace of the editor' => [1];
+        yield 'stored live workspace the editor may not enter' => [0];
+    }
+
+    /**
+     * Guards that an editor without the right to edit the live workspace gets the live
+     * page with a visitor token, whichever workspace is stored for him. The drafts of
+     * his workspace stay out, he does not become the backend user, and his stored
+     * workspace is kept.
+     */
+    #[Test]
+    #[DataProvider('editorWithoutAccessToTheLiveWorkspaceDataProvider')]
+    public function visitorTokenShowsTheLivePageAlsoIfTheEditorMayNotEnterTheLiveWorkspace(int $storedWorkspace): void
+    {
+        $connectionPool = $this->get(ConnectionPool::class);
+        $connectionPool->getConnectionForTable('be_users')->update('be_users', ['workspace_perms' => 0, 'workspace_id' => $storedWorkspace], ['uid' => 2]);
+        $connectionPool->getConnectionForTable('be_groups')->update('be_groups', ['workspace_perms' => 0], ['uid' => 1]);
+        $connectionPool->getConnectionForTable('sys_workspace')->update('sys_workspace', ['members' => 'be_users_2'], ['uid' => 1]);
+        $connectionPool->getConnectionForTable('tt_content')
+            ->insert('tt_content', ['uid' => 3, 'pid' => 1, 'header' => 'Draft content', 't3ver_oid' => 1, 't3ver_wsid' => 1]);
+
+        $response = $this->preview('https://first.example/', $this->signForVisitor(editorId: 2));
+
+        self::assertSame(200, $response->getStatusCode());
+        self::assertStringContainsString('Visible content', (string)$response->getBody());
+        self::assertStringNotContainsString('Draft content', (string)$response->getBody());
+        self::assertStringNotContainsString('Backend user', (string)$response->getBody());
+        self::assertSame($storedWorkspace, (int)$connectionPool->getConnectionForTable('be_users')->select(['workspace_id'], 'be_users', ['uid' => 2])->fetchOne());
+    }
+
+    #[Test]
+    public function pageOutsideTheMountsOfTheEditorIsRefused(): void
+    {
+        $this->get(ConnectionPool::class)->getConnectionForTable('be_groups')->update('be_groups', ['db_mountpoints' => '5'], ['uid' => 1]);
+
+        $this->assertRejected('outOfScope', $this->preview('https://first.example/hidden', $this->signForEditor()));
+        self::assertSame(200, $this->preview('https://first.example/hidden', $this->sign())->getStatusCode());
+        $external = $this->preview('https://first.example/external', $this->signForEditor());
+        self::assertSame(303, $external->getStatusCode());
+        self::assertSame('https://outside.example/', $external->getHeaderLine('Location'));
+    }
+
+    #[Test]
+    public function pageTheEditorMayNotShowIsRefused(): void
+    {
+        $this->get(ConnectionPool::class)->getConnectionForTable('pages')->update('pages', ['perms_everybody' => 0], ['uid' => 6]);
+
+        $this->assertRejected('outOfScope', $this->preview('https://first.example/scheduled', $this->signForEditor()));
+        self::assertSame(200, $this->preview('https://first.example/scheduled', $this->sign())->getStatusCode());
+    }
+
+    /**
+     * The page check applies to the page the editor requested. An address without a page
+     * shows the error page of the site, as it does to a visitor. The frame names no page
+     * to the backend, which checks that page again for every fresh token.
+     */
+    #[Test]
+    public function missingPageShowsTheErrorPageOfTheSiteAlsoIfTheEditorMayNotShowIt(): void
+    {
+        $this->get(ConnectionPool::class)->getConnectionForTable('pages')
+            ->insert('pages', ['uid' => 30, 'pid' => 1, 'title' => 'Nothing here', 'slug' => '/nothing-here', 'perms_everybody' => 0]);
+        $this->writeSiteConfiguration(
+            'first',
+            $this->buildSiteConfiguration(1, 'https://first.example/'),
+            [$this->buildDefaultLanguageConfiguration('EN', '/')],
+            [['errorCode' => 404, 'errorHandler' => 'Page', 'errorContentSource' => 't3://page?uid=30']]
+        );
+
+        $response = $this->preview('https://first.example/missing', $this->signForEditor());
+
+        self::assertSame(404, $response->getStatusCode());
+        self::assertStringContainsString('Nothing here', (string)$response->getBody());
+        self::assertStringContainsString('data-preview-page="0"', (string)$response->getBody());
+        self::assertSame('private, no-store', $response->getHeaderLine('Cache-Control'));
+        self::assertSame(self::FRAME_ANCESTORS, $response->getHeaderLine('Content-Security-Policy'));
+        $this->assertRejected('outOfScope', $this->preview('https://first.example/nothing-here', $this->signForEditor()));
+        $live = $this->executeFrontendSubRequest(new InternalRequest('https://first.example/missing'));
+        self::assertSame(404, $live->getStatusCode());
+        self::assertStringContainsString('Nothing here', (string)$live->getBody());
+    }
+
+    #[Test]
+    public function disabledLanguageIsShownOnlyIfTheEditorHasAccessToIt(): void
+    {
+        $response = $this->preview('https://first.example/de/', $this->sign());
+        self::assertSame(200, $response->getStatusCode());
+        self::assertStringContainsString('Root German', (string)$response->getBody());
+
+        $this->assertRejected('outOfScope', $this->preview('https://first.example/de/', $this->signForEditor()));
+        self::assertSame(404, $this->executeFrontendSubRequest(new InternalRequest('https://first.example/de/'))->getStatusCode());
+    }
+
+    #[Test]
+    public function backendUserSectionIsShownToTheEditorOfTheToken(): void
+    {
+        $this->get(ConnectionPool::class)->getConnectionForTable('pages')
+            ->insert('pages', ['uid' => 21, 'pid' => 1, 'title' => 'Backend user section', 'slug' => '/backend-user-section', 'doktype' => 6, 'perms_everybody' => 15]);
+
+        $response = $this->preview('https://first.example/backend-user-section', $this->signForEditor());
+
+        self::assertSame(200, $response->getStatusCode());
+        self::assertStringContainsString('Backend user section', (string)$response->getBody());
+        self::assertSame(403, $this->executeFrontendSubRequest(new InternalRequest('https://first.example/backend-user-section'))->getStatusCode());
+    }
+
+    #[Test]
+    public function backendUserSectionIsRefusedToAnEditorWhoMayNotShowIt(): void
+    {
+        $this->get(ConnectionPool::class)->getConnectionForTable('pages')
+            ->insert('pages', ['uid' => 21, 'pid' => 1, 'title' => 'Backend user section', 'slug' => '/backend-user-section', 'doktype' => 6, 'perms_everybody' => 0]);
+
+        $response = $this->preview('https://first.example/backend-user-section', $this->signForEditor());
+
+        $this->assertRejected('outOfScope', $response);
+        self::assertStringNotContainsString('Backend user section', (string)$response->getBody());
+    }
+
+    #[Test]
+    public function tokenMakesTheEditorTheBackendUserWithoutSession(): void
+    {
+        $response = $this->preview('https://first.example/', $this->signForEditor());
+
+        self::assertSame(200, $response->getStatusCode());
+        self::assertStringContainsString('Backend user 2', (string)$response->getBody());
+        self::assertFalse($response->hasHeader('Set-Cookie'));
+        self::assertSame(0, (int)$this->get(ConnectionPool::class)->getConnectionForTable('be_sessions')->count('*', 'be_sessions', []));
+        self::assertStringContainsString('Backend user 1', (string)$this->preview('https://first.example/', $this->sign())->getBody());
+    }
+
+    public static function unavailableEditorDataProvider(): \Generator
+    {
+        yield 'disabled' => [['disable' => 1]];
+        yield 'deleted' => [['deleted' => 1]];
+        yield 'expired' => [['endtime' => 86400]];
+        yield 'workspace without access' => [[], 1];
+    }
+
+    #[Test]
+    #[DataProvider('unavailableEditorDataProvider')]
+    public function unavailableEditorIsRefused(array $userChanges, int $workspace = 0): void
+    {
+        if ($userChanges !== []) {
+            $this->get(ConnectionPool::class)->getConnectionForTable('be_users')->update('be_users', $userChanges, ['uid' => 2]);
+        }
+        $jwt = $this->sign(new PreviewProfile(workspace: $workspace, hiddenPages: true, hiddenContent: true, date: 0, groups: []), userId: 2);
+
+        $response = $this->preview('https://first.example/', $jwt);
+
+        $this->assertRejected('userNotAvailable', $response);
+        self::assertStringNotContainsString('Backend user', (string)$response->getBody());
+    }
+
+    #[Test]
+    public function rightsOfTheEditorApplyAsTheyAreNow(): void
+    {
+        $jwt = $this->sign();
+        self::assertSame(200, $this->preview('https://first.example/hidden', $jwt)->getStatusCode());
+
+        $this->get(ConnectionPool::class)->getConnectionForTable('be_users')->update('be_users', ['admin' => 0, 'workspace_perms' => 1], ['uid' => 1]);
+
+        // Without web mounts, no host is part of the preview any more
+        $this->assertRejected('invalid', $this->preview('https://first.example/hidden', $jwt));
+    }
+
+    #[Test]
+    public function requestedHiddenPageIsShownAsWithABackendLogin(): void
+    {
+        $onlyRequested = PreviewProfile::visitor();
+
+        self::assertSame(200, $this->preview('https://first.example/hidden', $this->signForEditor($onlyRequested))->getStatusCode());
+        self::assertStringNotContainsString('href="/hidden', (string)$this->preview('https://first.example/', $this->signForEditor($onlyRequested))->getBody());
+        self::assertStringContainsString('href="/hidden', (string)$this->preview('https://first.example/', $this->signForEditor())->getBody());
+    }
+
+    #[Test]
+    public function adminPanelIsShownInThePreviewFrame(): void
+    {
+        $this->openAdminPanelForEditor();
+
+        self::assertStringContainsString('typo3-adminPanel', (string)$this->preview('https://first.example/', $this->signForEditor())->getBody());
+        self::assertStringNotContainsString('typo3-adminPanel', (string)$this->preview('https://first.example/', $this->signForVisitor())->getBody());
+    }
+
+    #[Test]
+    public function adminPanelSimulatesItsGroupForATokenWithoutLogin(): void
+    {
+        $this->get(ConnectionPool::class)->getConnectionForTable('tt_content')
+            ->insert('tt_content', ['uid' => 5, 'pid' => 1, 'header' => 'Members only', 'fe_group' => '5']);
+        $this->openAdminPanelForEditor('admPanel.override.preview.simulateUserGroup = 5');
+
+        self::assertStringContainsString('Members only', (string)$this->preview('https://first.example/', $this->signForEditor())->getBody());
+    }
+
+    #[Test]
+    public function adminPanelSimulatesItsDateForATokenWithoutDate(): void
+    {
+        $future = time() + 86400;
+        $this->get(ConnectionPool::class)->getConnectionForTable('pages')->update('pages', ['starttime' => $future], ['uid' => 6]);
+        self::assertSame(404, $this->preview('https://first.example/scheduled', $this->signForEditor($this->createProfileWithoutSimulation()))->getStatusCode());
+
+        $this->openAdminPanelForEditor('admPanel.override.preview.simulateDate = ' . ($future + 60));
+
+        self::assertSame(200, $this->preview('https://first.example/scheduled', $this->signForEditor($this->createProfileWithoutSimulation()))->getStatusCode());
+    }
+
+    /**
+     * As for ADMCMD_ parameters on main, the open admin panel sets the visibility completely
+     */
+    #[Test]
+    public function openAdminPanelDecidesTheVisibilityOverTheToken(): void
+    {
+        $withHiddenContent = new PreviewProfile(workspace: 0, hiddenPages: false, hiddenContent: true, date: 0, groups: []);
+        self::assertStringContainsString('Hidden content', (string)$this->preview('https://first.example/', $this->signForEditor($withHiddenContent))->getBody());
+
+        $this->openAdminPanelForEditor('admPanel.override.preview.showHiddenRecords = 0');
+        self::assertStringNotContainsString('Hidden content', (string)$this->preview('https://first.example/', $this->signForEditor($withHiddenContent))->getBody());
+
+        $this->openAdminPanelForEditor('admPanel.override.preview.showHiddenRecords = 1');
+        self::assertStringContainsString('Hidden content', (string)$this->preview('https://first.example/', $this->signForEditor($this->createProfileWithoutSimulation()))->getBody());
+    }
+
+    #[Test]
+    public function groupAndDateOfTheTokenTakePrecedenceOverTheAdminPanel(): void
+    {
+        $this->get(ConnectionPool::class)->getConnectionForTable('fe_groups')
+            ->insert('fe_groups', ['uid' => 6, 'pid' => 1, 'title' => 'Other group']);
+        $future = time() + 86400;
+        $this->get(ConnectionPool::class)->getConnectionForTable('pages')->update('pages', ['starttime' => $future], ['uid' => 6]);
+        $this->openAdminPanelForEditor('admPanel.override.preview.simulateUserGroup = 6' . LF . 'admPanel.override.preview.simulateDate = ' . (time() - 3600));
+
+        $withGroup = new PreviewProfile(workspace: 0, hiddenPages: true, hiddenContent: true, date: 0, groups: [5]);
+        self::assertSame(200, $this->preview('https://first.example/hidden/protected', $this->signForEditor($withGroup))->getStatusCode());
+        $withDate = new PreviewProfile(workspace: 0, hiddenPages: true, hiddenContent: true, date: $future + 60, groups: []);
+        self::assertSame(200, $this->preview('https://first.example/scheduled', $this->signForEditor($withDate))->getStatusCode());
+    }
+
+    /**
+     * Called directly, as a frontend request bootstraps the configuration again.
+     */
+    #[Test]
+    public function backendIpMaskAppliesToTheEditor(): void
+    {
+        $GLOBALS['TYPO3_CONF_VARS']['BE']['IPmaskList'] = '10.1.2.3';
+        $site = $this->get(SiteFinder::class)->getSiteByIdentifier('first');
+        $handler = new class implements RequestHandlerInterface {
+            public function handle(ServerRequestInterface $request): ResponseInterface
+            {
+                return new HtmlResponse('Rendered page');
+            }
+        };
+        $request = static function (string $jwt) use ($site): ServerRequestInterface {
+            $request = new ServerRequest('https://first.example/?__t3ct=' . $jwt, 'GET', null, ['Sec-Fetch-Dest' => 'iframe', 'User-Agent' => self::USER_AGENT], ['REMOTE_ADDR' => '127.0.0.1', 'HTTPS' => 'on', 'HTTP_HOST' => 'first.example'])
+                ->withQueryParams([PreviewTokenService::PARAMETER => $jwt])
+                ->withAttribute('applicationType', SystemEnvironmentBuilder::REQUESTTYPE_FE)
+                ->withAttribute('site', $site)
+                ->withAttribute('language', $site->getDefaultLanguage());
+            return $request->withAttribute('normalizedParams', NormalizedParams::createFromRequest($request));
+        };
+        $authenticator = $this->get(PreviewTokenAuthenticator::class);
+
+        $this->assertRejected('userNotAvailable', $authenticator->process($request($this->signForEditor()), $handler));
+        self::assertSame('Rendered page', (string)$authenticator->process($request($this->signForVisitor()), $handler)->getBody());
+    }
+
+    /**
+     * With lockSSL the backend is reachable via HTTPS only, and so is the preview of an
+     * editor: a site on plain HTTP refuses the token, a site on HTTPS shows the page.
+     */
+    #[Test]
+    public function backendLockedToHttpsShowsThePreviewOfAnEditorOnHttpsOnly(): void
+    {
+        $GLOBALS['TYPO3_CONF_VARS']['BE']['lockSSL'] = true;
+        $jwt = $this->sign();
+
+        $plainHttp = $this->processTokenAuthenticatorOfSite('second', 'http://second.example/?__t3ct=' . $jwt, false);
+        $https = $this->processTokenAuthenticatorOfSite('first', 'https://first.example/?__t3ct=' . $jwt, true);
+
+        $this->assertRejected('userNotAvailable', $plainHttp);
+        self::assertSame('Rendered page', (string)$https->getBody());
+    }
+
+    public static function lockedBackendDataProvider(): \Generator
+    {
+        yield 'locked for everybody' => [-1, false, false];
+        yield 'open to administrators only' => [1, true, false];
+        yield 'open to everybody' => [0, true, true];
+    }
+
+    /**
+     * A backend locked with adminOnly locks the preview of the editors it locks out: a
+     * locked backend shows no preview at all, one open to administrators only shows it to
+     * them alone.
+     */
+    #[Test]
+    #[DataProvider('lockedBackendDataProvider')]
+    public function lockedBackendShowsThePreviewOnlyToTheEditorsItLetsIn(int $adminOnly, bool $administratorSeesIt, bool $editorSeesIt): void
+    {
+        $GLOBALS['TYPO3_CONF_VARS']['BE']['adminOnly'] = $adminOnly;
+
+        $administrator = $this->processTokenAuthenticatorOfSite('first', 'https://first.example/?__t3ct=' . $this->sign(), true);
+        $editor = $this->processTokenAuthenticatorOfSite('first', 'https://first.example/?__t3ct=' . $this->signForEditor(), true);
+
+        $this->assertShownOrRefused($administratorSeesIt, $administrator);
+        $this->assertShownOrRefused($editorSeesIt, $editor);
+    }
+
+    /**
+     * The site loads no editor for a visitor token, so a locked backend does not lock it:
+     * the frame shows the page, while a token of the same editor is refused.
+     */
+    #[Test]
+    public function visitorTokenShowsThePageAlsoWhileTheBackendIsLocked(): void
+    {
+        $GLOBALS['TYPO3_CONF_VARS']['BE']['adminOnly'] = -1;
+
+        $visitor = $this->processTokenAuthenticatorOfSite('first', 'https://first.example/?__t3ct=' . $this->signForVisitor(editorId: 2), true);
+        $editor = $this->processTokenAuthenticatorOfSite('first', 'https://first.example/?__t3ct=' . $this->signForEditor(), true);
+
+        self::assertSame('Rendered page', (string)$visitor->getBody());
+        $this->assertRejected('userNotAvailable', $editor);
+    }
+
+    private function assertShownOrRefused(bool $shown, ResponseInterface $response): void
+    {
+        if (!$shown) {
+            $this->assertRejected('userNotAvailable', $response);
+            return;
+        }
+        self::assertSame('Rendered page', (string)$response->getBody());
+    }
+
+    #[Test]
+    public function visitorTokenShowsThePageAsAVisitorSeesIt(): void
+    {
+        $response = $this->preview('https://first.example/', $this->signForVisitor());
+
+        self::assertSame(200, $response->getStatusCode());
+        self::assertStringContainsString('Visible content', (string)$response->getBody());
+        self::assertStringNotContainsString('Hidden content', (string)$response->getBody());
+        self::assertStringNotContainsString('Backend user', (string)$response->getBody());
+        self::assertStringContainsString('preview-navigation.js', (string)$response->getBody());
+        self::assertSame(404, $this->preview('https://first.example/hidden', $this->signForVisitor())->getStatusCode());
+    }
+
+    public static function visitorProfileAskingForMoreDataProvider(): \Generator
+    {
+        yield 'workspace' => [new PreviewProfile(workspace: 1, hiddenPages: false, hiddenContent: false, date: 0, groups: [])];
+        yield 'hidden pages' => [new PreviewProfile(workspace: 0, hiddenPages: true, hiddenContent: false, date: 0, groups: [])];
+        yield 'hidden content' => [new PreviewProfile(workspace: 0, hiddenPages: false, hiddenContent: true, date: 0, groups: [])];
+        yield 'date' => [new PreviewProfile(workspace: 0, hiddenPages: false, hiddenContent: false, date: 1796083200, groups: [])];
+        yield 'login' => [new PreviewProfile(workspace: 0, hiddenPages: false, hiddenContent: false, date: 0, groups: [], loggedIn: true)];
+        yield 'groups' => [new PreviewProfile(workspace: 0, hiddenPages: false, hiddenContent: false, date: 0, groups: [5])];
+    }
+
+    #[Test]
+    #[DataProvider('visitorProfileAskingForMoreDataProvider')]
+    public function tokenWithoutEditorAskingForMoreThanTheVisitorViewIsRefused(PreviewProfile $profile): void
+    {
+        $this->assertRejected('invalid', $this->preview('https://first.example/', $this->signForVisitor($profile)));
+    }
+
+    #[Test]
+    public function groupsTheEditorMayNotReadAreSimulatedOnlyWhereThePageNamesThem(): void
+    {
+        $this->get(ConnectionPool::class)->getConnectionForTable('tt_content')
+            ->insert('tt_content', ['uid' => 5, 'pid' => 1, 'header' => 'Members only', 'fe_group' => '5']);
+        $withGroup = new PreviewProfile(workspace: 0, hiddenPages: true, hiddenContent: true, date: 0, groups: [5]);
+
+        $editorRoot = (string)$this->preview('https://first.example/', $this->signForEditor($withGroup))->getBody();
+        self::assertStringNotContainsString('Members only', $editorRoot);
+
+        $editorProtected = $this->preview('https://first.example/hidden/protected', $this->signForEditor($withGroup));
+        self::assertSame(200, $editorProtected->getStatusCode());
+
+        $adminRoot = (string)$this->preview('https://first.example/', $this->sign($withGroup))->getBody();
+        self::assertStringContainsString('Members only', $adminRoot);
+    }
+
+    #[Test]
+    public function tokenGroupsReplaceLegacySimulation(): void
+    {
+        $withGroup = new PreviewProfile(workspace: 0, hiddenPages: true, hiddenContent: true, date: 0, groups: [5]);
+        $response = $this->preview('https://first.example/hidden/protected', $this->sign($withGroup));
+        self::assertSame(200, $response->getStatusCode());
+        self::assertStringContainsString('Dummy 1-2-3', (string)$response->getBody());
+
+        $response = $this->preview('https://first.example/hidden/protected?ADMCMD_simUser=5', $this->sign());
+        self::assertNotSame(200, $response->getStatusCode());
+    }
+
+    #[Test]
+    public function frontendLoginInTheFrameIsKeptIfTheTokenSimulatesNone(): void
+    {
+        $content = $this->get(ConnectionPool::class)->getConnectionForTable('tt_content');
+        $content->insert('tt_content', ['uid' => 5, 'pid' => 1, 'header' => 'Members only', 'fe_group' => '5']);
+        $content->insert('tt_content', ['uid' => 6, 'pid' => 1, 'header' => 'Content hidden at login', 'fe_group' => '-1']);
+        $loggedIn = $this->logInFrontendUser();
+
+        $root = (string)$this->preview('https://first.example/', $this->sign(), 'iframe', $loggedIn)->getBody();
+        $protected = $this->preview('https://first.example/hidden/protected', $this->sign(), 'iframe', $loggedIn);
+
+        self::assertStringContainsString('Members only', $root);
+        self::assertStringNotContainsString('Content hidden at login', $root);
+        self::assertSame(200, $protected->getStatusCode());
+        self::assertStringContainsString('Dummy 1-2-3', (string)$protected->getBody());
+    }
+
+    #[Test]
+    public function frontendLoginInTheFrameIsKeptForAnEditor(): void
+    {
+        $this->get(ConnectionPool::class)->getConnectionForTable('tt_content')
+            ->insert('tt_content', ['uid' => 5, 'pid' => 1, 'header' => 'Members only', 'fe_group' => '5']);
+
+        $body = (string)$this->preview('https://first.example/', $this->signForEditor(), 'iframe', $this->logInFrontendUser())->getBody();
+
+        self::assertStringContainsString('Members only', $body);
+    }
+
+    #[Test]
+    public function visitorTokenShowsThePageWithoutTheFrontendLoginOfTheRequest(): void
+    {
+        $content = $this->get(ConnectionPool::class)->getConnectionForTable('tt_content');
+        $content->insert('tt_content', ['uid' => 5, 'pid' => 1, 'header' => 'Members only', 'fe_group' => '5']);
+        $content->insert('tt_content', ['uid' => 6, 'pid' => 1, 'header' => 'Content hidden at login', 'fe_group' => '-1']);
+
+        $body = (string)$this->preview('https://first.example/', $this->signForVisitor(), 'iframe', $this->logInFrontendUser())->getBody();
+
+        self::assertStringNotContainsString('Members only', $body);
+        self::assertStringContainsString('Content hidden at login', $body);
+    }
+
+    #[Test]
+    public function simulatedGroupsReplaceTheGroupsOfALoggedInFrontendUser(): void
+    {
+        $this->get(ConnectionPool::class)->getConnectionForTable('fe_groups')
+            ->insert('fe_groups', ['uid' => 6, 'pid' => 1, 'title' => 'Other group']);
+        $content = $this->get(ConnectionPool::class)->getConnectionForTable('tt_content');
+        $content->insert('tt_content', ['uid' => 5, 'pid' => 1, 'header' => 'Members only', 'fe_group' => '5']);
+        $content->insert('tt_content', ['uid' => 6, 'pid' => 1, 'header' => 'Other group only', 'fe_group' => '6']);
+        $loggedIn = $this->logInFrontendUser();
+        $withOtherGroup = new PreviewProfile(workspace: 0, hiddenPages: true, hiddenContent: true, date: 0, groups: [6]);
+
+        $body = (string)$this->preview('https://first.example/', $this->sign($withOtherGroup), 'iframe', $loggedIn)->getBody();
+        $protected = $this->preview('https://first.example/hidden/protected', $this->sign($withOtherGroup), 'iframe', $loggedIn);
+
+        self::assertStringContainsString('Other group only', $body);
+        self::assertStringNotContainsString('Members only', $body);
+        self::assertNotSame(200, $protected->getStatusCode());
+    }
+
+    #[Test]
+    public function tokenLoggedInWithoutGroupsShowsContentForAnyLogin(): void
+    {
+        $content = $this->get(ConnectionPool::class)->getConnectionForTable('tt_content');
+        $content->insert('tt_content', ['uid' => 3, 'pid' => 1, 'header' => 'Content at any login', 'fe_group' => '-2']);
+        $content->insert('tt_content', ['uid' => 4, 'pid' => 1, 'header' => 'Content hidden at login', 'fe_group' => '-1']);
+
+        $loggedIn = new PreviewProfile(workspace: 0, hiddenPages: true, hiddenContent: true, date: 0, groups: [], loggedIn: true);
+        $body = (string)$this->preview('https://first.example/', $this->sign($loggedIn))->getBody();
+        self::assertStringContainsString('Content at any login', $body);
+        self::assertStringNotContainsString('Content hidden at login', $body);
+
+        $body = (string)$this->preview('https://first.example/', $this->sign())->getBody();
+        self::assertStringNotContainsString('Content at any login', $body);
+        self::assertStringContainsString('Content hidden at login', $body);
+    }
+
+    #[Test]
+    public function tokenDateIsSimulatedAndLegacyDateIsIgnored(): void
+    {
+        $future = time() + 86400;
+        $this->get(ConnectionPool::class)->getConnectionForTable('pages')
+            ->update('pages', ['starttime' => $future], ['uid' => 6]);
+        $withDate = new PreviewProfile(workspace: 0, hiddenPages: true, hiddenContent: true, date: $future + 60, groups: []);
+
+        self::assertSame(200, $this->preview('https://first.example/scheduled', $this->sign($withDate))->getStatusCode());
+        self::assertSame(404, $this->preview('https://first.example/scheduled?ADMCMD_simTime=' . ($future + 60), $this->sign())->getStatusCode());
+    }
+
+    #[Test]
+    public function linksKeepTheTokenOnlyForHostsTheEditorMayPreview(): void
+    {
+        $jwt = $this->sign();
+        $body = (string)$this->preview('https://first.example/', $jwt)->getBody();
+
+        self::assertStringContainsString('href="/hidden?__t3ct=' . $jwt . '"', $body);
+        self::assertStringContainsString('href="http://second.example/?__t3ct=' . $jwt . '"', $body);
+        self::assertStringContainsString('href="https://outside.example/"', $body);
+
+        $body = (string)$this->preview('https://first.example/', $this->signForEditor())->getBody();
+        self::assertStringContainsString('href="http://second.example/"', $body);
+    }
+
+    /**
+     * The navigation script decides only for addresses on the origin of its own page, and
+     * that origin is a host of the preview. It needs no list of hosts, so scripts of the
+     * site do not learn every host the editor may preview.
+     */
+    #[Test]
+    public function navigationScriptNamesNoHosts(): void
+    {
+        $body = (string)$this->preview('https://first.example/', $this->sign())->getBody();
+
+        self::assertSame(1, preg_match('/<script\b[^>]*\bdata-preview-backend="[^"]*"[^>]*>/', $body, $tag));
+        self::assertStringNotContainsString('data-preview-hosts', $tag[0]);
+    }
+
+    /**
+     * The hosts of the preview are resolved on every request from the rights the editor
+     * has now: once the editor gets a mount on the second site, its links there carry the
+     * token.
+     */
+    #[Test]
+    public function linksFollowTheHostsTheEditorMayPreviewNow(): void
+    {
+        $jwt = $this->signForEditor();
+        self::assertStringContainsString('href="http://second.example/"', (string)$this->preview('https://first.example/', $jwt)->getBody());
+
+        $this->get(ConnectionPool::class)->getConnectionForTable('be_groups')->update('be_groups', ['db_mountpoints' => '1,7'], ['uid' => 1]);
+
+        self::assertStringContainsString('href="http://second.example/?__t3ct=' . $jwt . '"', (string)$this->preview('https://first.example/', $jwt)->getBody());
+    }
+
+    #[Test]
+    public function tokenWithoutSimulationShowsAVisiblePageWithoutPreview(): void
+    {
+        $response = $this->preview('https://first.example/', $this->signForEditor($this->createProfileWithoutSimulation()));
+
+        self::assertSame(200, $response->getStatusCode());
+        self::assertStringNotContainsString('typo3-preview-info', (string)$response->getBody());
+        self::assertSame('private, no-store', $response->getHeaderLine('Cache-Control'));
+    }
+
+    #[Test]
+    public function tokenWithoutSimulationKeepsThePageInTheFrame(): void
+    {
+        $jwt = $this->sign($this->createProfileWithoutSimulation());
+
+        $body = (string)$this->preview('https://first.example/', $jwt)->getBody();
+
+        self::assertStringContainsString('href="http://second.example/?__t3ct=' . $jwt . '"', $body);
+        self::assertStringContainsString('preview-navigation.js', $body);
+    }
+
+    #[Test]
+    public function requestedHiddenPageIsShownAsPreview(): void
+    {
+        $response = $this->preview('https://first.example/hidden', $this->signForEditor($this->createProfileWithoutSimulation()));
+
+        self::assertSame(200, $response->getStatusCode());
+        self::assertStringContainsString('typo3-preview-info', (string)$response->getBody());
+    }
+
+    public static function simulationShownAsPreviewDataProvider(): \Generator
+    {
+        yield 'date' => [new PreviewProfile(workspace: 0, hiddenPages: false, hiddenContent: false, date: time() + 3600, groups: [])];
+        yield 'frontend login' => [new PreviewProfile(workspace: 0, hiddenPages: false, hiddenContent: false, date: 0, groups: [], loggedIn: true)];
+        yield 'frontend user group' => [new PreviewProfile(workspace: 0, hiddenPages: false, hiddenContent: false, date: 0, groups: [5])];
+        yield 'hidden content' => [new PreviewProfile(workspace: 0, hiddenPages: false, hiddenContent: true, date: 0, groups: [])];
+        yield 'all hidden pages' => [new PreviewProfile(workspace: 0, hiddenPages: true, hiddenContent: false, date: 0, groups: [])];
+    }
+
+    #[Test]
+    #[DataProvider('simulationShownAsPreviewDataProvider')]
+    public function simulationOfTheTokenIsShownAsPreview(PreviewProfile $profile): void
+    {
+        $response = $this->preview('https://first.example/', $this->sign($profile));
+
+        self::assertSame(200, $response->getStatusCode());
+        self::assertStringContainsString('typo3-preview-info', (string)$response->getBody());
+    }
+
+    #[Test]
+    public function visitorTokenShowsThePageWithoutPreviewAndKeepsItInTheFrame(): void
+    {
+        $jwt = $this->signForVisitor();
+
+        $body = (string)$this->preview('https://first.example/', $jwt)->getBody();
+
+        self::assertStringNotContainsString('typo3-preview-info', $body);
+        self::assertStringContainsString('preview-navigation.js', $body);
+        self::assertStringContainsString('href="http://second.example/?__t3ct=' . $jwt . '"', $body);
+    }
+
+    #[Test]
+    public function shortcutRedirectKeepsTheToken(): void
+    {
+        $jwt = $this->sign();
+        $response = $this->preview('https://first.example/shortcut', $jwt);
+
+        self::assertSame(307, $response->getStatusCode());
+        self::assertSame('https://first.example/hidden?__t3ct=' . $jwt, $response->getHeaderLine('Location'));
+        self::assertSame('private, no-store', $response->getHeaderLine('Cache-Control'));
+    }
+
+    #[Test]
+    public function redirectKeepsTheTokenOnlyForHostsOfTheToken(): void
+    {
+        $redirects = $this->get(ConnectionPool::class)->getConnectionForTable('sys_redirect');
+        $redirects->insert('sys_redirect', ['uid' => 1, 'source_host' => '*', 'source_path' => '/old', 'target' => 't3://page?uid=2', 'target_statuscode' => 307]);
+        $redirects->insert('sys_redirect', ['uid' => 2, 'source_host' => '*', 'source_path' => '/away', 'target' => 'https://outside.example/', 'target_statuscode' => 307]);
+        $jwt = $this->sign();
+
+        self::assertSame('https://first.example/hidden?__t3ct=' . $jwt, $this->preview('https://first.example/old', $jwt)->getHeaderLine('Location'));
+        self::assertSame('https://outside.example/', $this->preview('https://first.example/away', $jwt)->getHeaderLine('Location'));
+    }
+
+    public static function targetOfAnExternalUrlPageDataProvider(): \Generator
+    {
+        yield 'redirect to another host keeps its address as it is' => [
+            'https://sso.example.org/login?utm.source=x&id=1&id=2&flag&items[]=1&sig=ab%2bcd',
+            'https://sso.example.org/login?utm.source=x&id=1&id=2&flag&items[]=1&sig=ab%2bcd',
+        ];
+        yield 'redirect to a host of the preview keeps the query and adds only the token' => [
+            'https://second.example/?utm.source=x&id=1&id=2&flag&items[]=1&a|b=2&sig=ab%2bcd',
+            'https://second.example/?utm.source=x&id=1&id=2&flag&items[]=1&a|b=2&sig=ab%2bcd&__t3ct={jwt}',
+        ];
+        yield 'redirect to another host loses only a token' => [
+            'https://outside.example/?flag&__t3ct=leaked&q=a+b',
+            'https://outside.example/?flag&q=a+b',
+        ];
+        yield 'redirect on plain HTTP to a host whose site uses HTTPS loses the token' => [
+            'http://first.example/page',
+            'http://first.example/page',
+        ];
+    }
+
+    /**
+     * A page of the type "Link to external URL" redirects to its target and changes no
+     * more than the token. A target on plain HTTP of a host whose site uses HTTPS gets
+     * no token, as the browser would send it in the clear.
+     */
+    #[Test]
+    #[DataProvider('targetOfAnExternalUrlPageDataProvider')]
+    public function externalUrlPageRedirectsToItsTarget(string $target, string $expectedLocation): void
+    {
+        $this->get(ConnectionPool::class)->getConnectionForTable('pages')
+            ->insert('pages', ['uid' => 9, 'pid' => 1, 'title' => 'Target', 'slug' => '/to-target', 'doktype' => 3, 'link' => $target]);
+        $jwt = $this->sign();
+
+        $response = $this->preview('https://first.example/to-target', $jwt);
+
+        self::assertSame(303, $response->getStatusCode());
+        self::assertSame(str_replace('{jwt}', $jwt, $expectedLocation), $response->getHeaderLine('Location'));
+    }
+
+    /**
+     * Menus link pages of the type "Link to external URL", and such a page may link a mail
+     * address or a phone number, as a contact page does. These links name no web address:
+     * they get no token, and the page around them renders as for a backend login.
+     */
+    #[Test]
+    public function linksToMailAddressesAndPhoneNumbersAreRenderedWithoutToken(): void
+    {
+        $pages = $this->get(ConnectionPool::class)->getConnectionForTable('pages');
+        $pages->insert('pages', ['uid' => 40, 'pid' => 1, 'title' => 'Contact', 'slug' => '/contact', 'doktype' => 3, 'link' => 'mailto:info@example.org']);
+        $pages->insert('pages', ['uid' => 41, 'pid' => 1, 'title' => 'Hotline', 'slug' => '/hotline', 'doktype' => 3, 'link' => 'tel:+49123456']);
+
+        $response = $this->preview('https://first.example/hidden', $this->sign());
+
+        self::assertSame(200, $response->getStatusCode());
+        $body = (string)$response->getBody();
+        self::assertStringContainsString('Dummy 1-2', $body);
+        self::assertStringContainsString('href="mailto:info@example.org"', $body);
+        self::assertStringContainsString('href="tel:+49123456"', $body);
+    }
+
+    public static function redirectOfAnExtensionWithoutAHostOfThePreviewDataProvider(): \Generator
+    {
+        yield 'redirect to a mail address keeps its address' => ['mailto:info@example.org?subject=Preview'];
+        yield 'redirect to an address a browser reads as another host gets no token' => ['/\evil.example/x'];
+    }
+
+    /**
+     * A redirect of an extension may lead to an address of another scheme, such as a mail
+     * address, which names no web address. It may also lead to an address taken from the
+     * request. A browser reads "/\evil.example/x" as the host evil.example, where a URI
+     * parser would see a path on the host of the request. Both keep their address as it
+     * is and get no token.
+     */
+    #[Test]
+    #[DataProvider('redirectOfAnExtensionWithoutAHostOfThePreviewDataProvider')]
+    public function redirectOfAnExtensionWithoutAHostOfThePreviewKeepsItsAddress(string $location): void
+    {
+        $response = $this->processTokenAuthenticator('https://first.example/contact?__t3ct=' . $this->sign(), ['Sec-Fetch-Dest' => 'iframe'], $this->redirectTo($location));
+
+        self::assertSame(303, $response->getStatusCode());
+        self::assertSame($location, $response->getHeaderLine('Location'));
+    }
+
+    /**
+     * A redirect of an extension may name an address that cannot be parsed, such as one
+     * with an unclosed bracket. The preview neither fails on it nor changes it: the
+     * address stays as it is, without the token, and the answer is still one of the
+     * preview, never cached, never indexed and framed only by the site and the backend.
+     */
+    #[Test]
+    public function redirectToAMalformedAddressKeepsItsAddressAndTheHeadersOfThePreview(): void
+    {
+        $response = $this->processTokenAuthenticator('https://first.example/contact?__t3ct=' . $this->sign(), ['Sec-Fetch-Dest' => 'iframe'], $this->redirectTo('https://[first.example/next'));
+
+        self::assertSame(303, $response->getStatusCode());
+        self::assertSame('https://[first.example/next', $response->getHeaderLine('Location'));
+        self::assertSame('private, no-store', $response->getHeaderLine('Cache-Control'));
+        self::assertSame('noindex', $response->getHeaderLine('X-Robots-Tag'));
+        self::assertSame(self::FRAME_ANCESTORS, $response->getHeaderLine('Content-Security-Policy'));
+    }
+
+    /**
+     * An extension may answer with an ImmediateResponseException, which leaves the stack
+     * of middlewares at once. Its answer is still one of the preview: never cached, never
+     * indexed, and framed only by the backend that signed the token and by its own site.
+     */
+    #[Test]
+    public function immediateResponseOfAnExtensionGetsTheHeadersOfThePreview(): void
+    {
+        $handler = new class implements RequestHandlerInterface {
+            public function handle(ServerRequestInterface $request): ResponseInterface
+            {
+                throw new ImmediateResponseException(new HtmlResponse('Immediate answer', 200, ['Cache-Control' => 'public, max-age=3600']), 1794491402);
+            }
+        };
+        $jwt = $this->sign();
+
+        $response = $this->processTokenAuthenticator('https://first.example/?__t3ct=' . $jwt, ['Sec-Fetch-Dest' => 'iframe'], $handler);
+
+        self::assertSame('Immediate answer', (string)$response->getBody());
+        self::assertSame('private, no-store', $response->getHeaderLine('Cache-Control'));
+        self::assertSame('noindex', $response->getHeaderLine('X-Robots-Tag'));
+        self::assertSame(self::FRAME_ANCESTORS, $response->getHeaderLine('Content-Security-Policy'));
+    }
+
+    /**
+     * A redirect relative to the page stays relative and keeps its query as it is
+     * written. Only the token is added, as the target is on the host of the preview.
+     */
+    #[Test]
+    public function relativeRedirectKeepsItsAddressAndOnlyGetsTheToken(): void
+    {
+        $this->addTypoScriptToTheFirstSite(
+            'config.additionalHeaders.10.header = Location: /hidden?items[]=1&a|b=2' . LF
+            . 'config.additionalHeaders.10.httpResponseCode = 303'
+        );
+        $jwt = $this->sign();
+
+        $response = $this->preview('https://first.example/', $jwt);
+
+        self::assertSame(303, $response->getStatusCode());
+        self::assertSame('/hidden?items[]=1&a|b=2&__t3ct=' . $jwt, $response->getHeaderLine('Location'));
+    }
+
+    /**
+     * A link to a section of a page carries the token in its query, before the fragment,
+     * so the browser sends it and scrolls to the section (thread 530).
+     */
+    #[Test]
+    public function linkToASectionKeepsTheTokenBeforeTheFragment(): void
+    {
+        $this->addTypoScriptToTheFirstSite('page.110 = TEXT' . LF . 'page.110.value = Section' . LF . 'page.110.typolink.parameter = 2' . LF . 'page.110.typolink.section = top');
+        $jwt = $this->sign();
+
+        $body = (string)$this->preview('https://first.example/', $jwt)->getBody();
+
+        self::assertStringContainsString('href="/hidden?__t3ct=' . $jwt . '#top"', $body);
+    }
+
+    public static function linkToAnExternalUrlPageDataProvider(): \Generator
+    {
+        yield 'link to a host of the preview keeps its address and only gets the token' => [
+            'https://second.example/?utm.source=x&id=1&id=2&flag&items[]=1&a|b=2&sig=ab%2bcd',
+            'https://second.example/?utm.source=x&id=1&id=2&flag&items[]=1&a|b=2&sig=ab%2bcd&__t3ct={jwt}',
+        ];
+        yield 'link on plain HTTP to a host whose site uses HTTPS is rendered without token' => [
+            'http://first.example/page',
+            'http://first.example/page',
+        ];
+    }
+
+    /**
+     * A link to a host of the preview keeps its address as it is written and only gets the
+     * token: a signed address compares it byte by byte, brackets and pipes included,
+     * which an URI object would encode. An editor may write such a link with "http://"
+     * while the site of that host runs on HTTPS. The browser would send the token in the
+     * clear before the site redirects to HTTPS, so that link gets no token. A site with a
+     * base on plain HTTP keeps the token in its links, see
+     * linksKeepTheTokenOnlyForHostsTheEditorMayPreview().
+     */
+    #[Test]
+    #[DataProvider('linkToAnExternalUrlPageDataProvider')]
+    public function linkToAnExternalUrlPageKeepsItsAddressAsItIsWritten(string $target, string $expectedHref): void
+    {
+        $this->get(ConnectionPool::class)->getConnectionForTable('pages')
+            ->insert('pages', ['uid' => 42, 'pid' => 1, 'title' => 'Signed', 'slug' => '/signed', 'doktype' => 3, 'link' => $target]);
+        $jwt = $this->sign();
+
+        $body = (string)$this->preview('https://first.example/', $jwt)->getBody();
+
+        self::assertStringContainsString('href="' . htmlspecialchars(str_replace('{jwt}', $jwt, $expectedHref)) . '"', $body);
+    }
+
+    /**
+     * The base of a site may name an internationalized domain name as editors write it,
+     * while browsers request the ASCII form of the host. Such a site is previewed like
+     * any other: on the host the browser requests, with the token in its links.
+     */
+    #[Test]
+    public function siteWithAnInternationalizedDomainNameIsPreviewedOnTheHostTheBrowserRequests(): void
+    {
+        $pages = $this->get(ConnectionPool::class)->getConnectionForTable('pages');
+        $pages->insert('pages', ['uid' => 50, 'pid' => 0, 'title' => 'Books', 'slug' => '/', 'is_siteroot' => 1, 'perms_everybody' => 15]);
+        $pages->insert('pages', ['uid' => 51, 'pid' => 50, 'title' => 'Hidden books', 'slug' => '/hidden', 'hidden' => 1, 'perms_everybody' => 15]);
+        $this->setUpFrontendRootPage(50, [], ['config' => 'page = PAGE' . LF . 'page.10 = TEXT' . LF . 'page.10.data = page:title' . LF . 'page.20 = TEXT' . LF . 'page.20.value = Home' . LF . 'page.20.typolink.parameter = 50']);
+        $this->writeSiteConfiguration('books', $this->buildSiteConfiguration(50, 'https://bücher.example/'), [$this->buildDefaultLanguageConfiguration('EN', '/')]);
+        $jwt = $this->sign();
+
+        $response = $this->preview('https://xn--bcher-kva.example/hidden', $jwt);
+
+        self::assertSame(200, $response->getStatusCode());
+        $body = (string)$response->getBody();
+        self::assertStringContainsString('Hidden books', $body);
+        self::assertStringContainsString('href="/?__t3ct=' . $jwt . '"', $body);
+    }
+
+    /**
+     * A Content-Security-Policy the site sends itself, such as one of
+     * config.additionalHeaders, may lack a frame-ancestors directive. The preview adds
+     * one with the site and the backend as a second policy, which browsers enforce
+     * beside the first, so the page is not left open to be framed by any origin.
+     */
+    #[Test]
+    public function policyOfTheSiteWithoutFrameAncestorsGetsTheBackendAsASecondPolicy(): void
+    {
+        $this->addTypoScriptToTheFirstSite('config.additionalHeaders.10.header = Content-Security-Policy: img-src \'self\'');
+
+        $response = $this->preview('https://first.example/', $this->sign());
+
+        self::assertSame(200, $response->getStatusCode());
+        self::assertSame(["img-src 'self'", self::FRAME_ANCESTORS], $response->getHeader('Content-Security-Policy'));
+        self::assertFalse($response->hasHeader('X-Frame-Options'));
+    }
+
+    /**
+     * A frame-ancestors directive the site sends itself is its decision on who may frame
+     * the page. The preview adds none beside it.
+     */
+    #[Test]
+    public function frameAncestorsOfThePolicyOfTheSiteAreLeftAsTheyAre(): void
+    {
+        $this->addTypoScriptToTheFirstSite('config.additionalHeaders.10.header = Content-Security-Policy: img-src \'self\'; frame-ancestors https://editor.example');
+
+        $response = $this->preview('https://first.example/', $this->sign());
+
+        self::assertSame(["img-src 'self'; frame-ancestors https://editor.example"], $response->getHeader('Content-Security-Policy'));
+    }
+
+    #[Test]
+    public function previewNeitherReadsNorWritesThePageCache(): void
+    {
+        $cacheRows = function (): int {
+            $identifiers = $this->get(ConnectionPool::class)->getConnectionForTable('cache_pages')
+                ->select(['identifier'], 'cache_pages')->fetchFirstColumn();
+            return count(array_filter($identifiers, static fn(string $identifier): bool => !str_starts_with($identifier, 'redirects_')));
+        };
+
+        $this->preview('https://first.example/', $this->sign());
+        self::assertSame(0, $cacheRows());
+
+        $this->executeFrontendSubRequest(new InternalRequest('https://first.example/'));
+        self::assertSame(1, $cacheRows());
+
+        $this->get(ConnectionPool::class)->getConnectionForTable('pages')->update('pages', ['title' => 'Changed root'], ['uid' => 1]);
+        self::assertStringContainsString('Changed root', (string)$this->preview('https://first.example/', $this->sign())->getBody());
+        self::assertStringNotContainsString('Changed root', (string)$this->executeFrontendSubRequest(new InternalRequest('https://first.example/'))->getBody());
+    }
+
+    private function preview(string $url, string $jwt, ?string $secFetchDest = 'iframe', ?InternalRequestContext $context = null): ResponseInterface
+    {
+        $request = new InternalRequest($url . (str_contains($url, '?') ? '&' : '?') . '__t3ct=' . $jwt)
+            ->withHeader('User-Agent', self::USER_AGENT);
+        if ($secFetchDest !== null) {
+            $request = $request->withHeader('Sec-Fetch-Dest', $secFetchDest);
+        }
+        return $this->executeFrontendSubRequest($request, $context);
+    }
+
+    private function addTypoScriptToTheFirstSite(string $typoScript): void
+    {
+        $templates = $this->get(ConnectionPool::class)->getConnectionForTable('sys_template');
+        $config = (string)$templates->select(['config'], 'sys_template', ['pid' => 1])->fetchOne();
+        $templates->update('sys_template', ['config' => $config . LF . $typoScript], ['pid' => 1]);
+    }
+
+    private function assertRejected(string $reason, ResponseInterface $response): void
+    {
+        self::assertSame(403, $response->getStatusCode());
+        self::assertStringContainsString('data-preview-rejection="' . $reason . '"', (string)$response->getBody());
+        self::assertSame('private, no-store', $response->getHeaderLine('Cache-Control'));
+        self::assertSame('noindex', $response->getHeaderLine('X-Robots-Tag'));
+    }
+
+    private function previewWithHeaders(string $url, string $jwt, array $headers): ResponseInterface
+    {
+        $request = new InternalRequest($url . '?__t3ct=' . $jwt)->withHeader('User-Agent', self::USER_AGENT);
+        foreach ($headers as $name => $value) {
+            $request = $request->withHeader($name, $value);
+        }
+        return $this->executeFrontendSubRequest($request);
+    }
+
+    /**
+     * Runs the middleware for a page in the frame of a site, on HTTPS or on plain HTTP.
+     * The page renders as "Rendered page".
+     */
+    private function processTokenAuthenticatorOfSite(string $identifier, string $url, bool $https): ResponseInterface
+    {
+        // Every request starts without a backend user, as the preview builds the editor
+        unset($GLOBALS['BE_USER']);
+        parse_str((string)parse_url($url, PHP_URL_QUERY), $queryParams);
+        $site = $this->get(SiteFinder::class)->getSiteByIdentifier($identifier);
+        $request = new ServerRequest($url, 'GET', null, ['Sec-Fetch-Dest' => 'iframe', 'User-Agent' => self::USER_AGENT], array_filter(['HTTPS' => $https ? 'on' : null, 'HTTP_HOST' => (string)parse_url($url, PHP_URL_HOST)]))
+            ->withQueryParams($queryParams)
+            ->withAttribute('applicationType', SystemEnvironmentBuilder::REQUESTTYPE_FE)
+            ->withAttribute('site', $site)
+            ->withAttribute('language', $site->getDefaultLanguage());
+        $handler = new class implements RequestHandlerInterface {
+            public function handle(ServerRequestInterface $request): ResponseInterface
+            {
+                return new HtmlResponse('Rendered page');
+            }
+        };
+        return $this->get(PreviewTokenAuthenticator::class)->process($request->withAttribute('normalizedParams', NormalizedParams::createFromRequest($request)), $handler);
+    }
+
+    /**
+     * Runs the middleware on the address as a browser sends it: the query keeps its bytes,
+     * and the query parameters are the names PHP gives its pairs.
+     */
+    private function processTokenAuthenticator(string $url, array $headers, ?RequestHandlerInterface $handler = null): ResponseInterface
+    {
+        $query = parse_url($url, PHP_URL_QUERY);
+        parse_str((string)$query, $queryParams);
+        $site = $this->get(SiteFinder::class)->getSiteByIdentifier('first');
+        // The web server hands over the address as the browser sent it
+        $requestUri = parse_url($url, PHP_URL_PATH) . (is_string($query) ? '?' . $query : '');
+        $request = new ServerRequest($url, 'GET', null, $headers + ['User-Agent' => self::USER_AGENT], ['HTTPS' => 'on', 'HTTP_HOST' => 'first.example', 'REQUEST_URI' => $requestUri])
+            ->withQueryParams($queryParams)
+            ->withAttribute('applicationType', SystemEnvironmentBuilder::REQUESTTYPE_FE)
+            ->withAttribute('site', $site)
+            ->withAttribute('language', $site->getDefaultLanguage());
+        $handler ??= new class implements RequestHandlerInterface {
+            public function handle(ServerRequestInterface $request): ResponseInterface
+            {
+                throw new \LogicException('A top-level navigation with a token reaches no page', 1794328963);
+            }
+        };
+        return $this->get(PreviewTokenAuthenticator::class)->process($request->withAttribute('normalizedParams', NormalizedParams::createFromRequest($request)), $handler);
+    }
+
+    private function redirectTo(string $location): RequestHandlerInterface
+    {
+        return new readonly class ($location) implements RequestHandlerInterface {
+            public function __construct(private string $location) {}
+
+            public function handle(ServerRequestInterface $request): ResponseInterface
+            {
+                return new RedirectResponse($this->location, 303);
+            }
+        };
+    }
+
+    private function sign(?PreviewProfile $profile = null, int $userId = 1): string
+    {
+        return new PreviewTokenService(new SystemClock())
+            ->sign($profile ?? $this->createProfile(), self::BACKEND, self::USER_AGENT, $userId)
+            ->jwt;
+    }
+
+    private function logInFrontendUser(): InternalRequestContext
+    {
+        $this->get(ConnectionPool::class)->getConnectionForTable('fe_users')
+            ->insert('fe_users', ['uid' => 1, 'pid' => 1, 'username' => 'member', 'usergroup' => '5']);
+        return new InternalRequestContext()->withFrontendUserId(1);
+    }
+
+    private function openAdminPanelForEditor(string $tsConfig = ''): void
+    {
+        $this->get(ConnectionPool::class)->getConnectionForTable('be_groups')
+            ->update('be_groups', ['TSconfig' => 'admPanel.enable.preview = 1' . LF . $tsConfig], ['uid' => 1]);
+        $this->get(ConnectionPool::class)->getConnectionForTable('be_users')
+            ->update('be_users', ['uc' => serialize(['AdminPanel' => ['display_top' => true]])], ['uid' => 2]);
+    }
+
+    private function signForEditor(?PreviewProfile $profile = null): string
+    {
+        return $this->sign($profile, userId: 2);
+    }
+
+    private function signForVisitor(?PreviewProfile $profile = null, int $editorId = 1): string
+    {
+        return new PreviewTokenService(new SystemClock())
+            ->sign($profile ?? PreviewProfile::visitor(), self::BACKEND, self::USER_AGENT, $editorId, true)
+            ->jwt;
+    }
+
+    private function createProfileWithoutSimulation(): PreviewProfile
+    {
+        return PreviewProfile::visitor();
+    }
+
+    private function createProfile(): PreviewProfile
+    {
+        return new PreviewProfile(workspace: 0, hiddenPages: true, hiddenContent: true, date: 0, groups: []);
+    }
+}
