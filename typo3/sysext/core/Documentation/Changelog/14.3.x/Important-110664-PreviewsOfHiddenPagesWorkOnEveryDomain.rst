@@ -164,8 +164,8 @@ see below.
 A frontend user group of the token that the editor may not read is only
 simulated on pages whose access restrictions name it. A group that the admin
 panel simulates applies as without a token. When every check passes, the page
-is shown as for a backend login. Every renewal of the token of an editor
-checks his rights and the hosts of the preview again. A visitor token is
+is shown as for a backend login. Every renewal of the token of an editor checks
+the rights of the editor and the hosts of the preview again. A visitor token is
 renewed without a check of the rights of the editor, see below. Either kind of
 token is renewed only for the editor who opened the preview.
 
@@ -187,10 +187,10 @@ live workspace. A page that is hidden in the live workspace therefore shows as
 not found there. A visitor token that asks for more is refused. It is valid on
 every site of the installation, in the languages that are enabled, and the
 live frame may navigate to each of them. The site does not load the editor who
-opened the preview for it. It checks neither his rights nor whether he still
-exists, so a visitor token stays valid until it expires. The backend still
-needs the right of the editor to show the page he opens the preview for, but
-not for the pages the live frame navigates to.
+opened the preview for it. It checks neither the rights of the editor nor
+whether the editor still exists, so a visitor token stays valid until it
+expires. The backend still needs the right of the editor to show the page the
+preview is opened for, but not for the pages the live frame navigates to.
 
 Links, redirects and forms
 --------------------------
