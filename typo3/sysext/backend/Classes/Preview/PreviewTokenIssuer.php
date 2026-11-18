@@ -113,7 +113,7 @@ final readonly class PreviewTokenIssuer
     /**
      * Signs a fresh token for an address of the frame. The simulation stays as signed in the
      * previous token, and a token without the editor stays one. For a token of the editor
-     * all his rights are checked again, also for its groups. A token without the editor is
+     * all rights of the editor are checked again, also for its groups. A token without the editor is
      * renewed without a check of the rights of the editor, as its frame goes wherever a
      * visitor goes.
      *
