@@ -1,0 +1,284 @@
+<?php
+
+declare(strict_types=1);
+
+/*
+ * This file is part of the TYPO3 CMS project.
+ *
+ * It is free software; you can redistribute it and/or modify it under
+ * the terms of the GNU General Public License, either version 2
+ * of the License, or any later version.
+ *
+ * For the full copyright and license information, please read the
+ * LICENSE.txt file that was distributed with this source code.
+ *
+ * The TYPO3 project - inspiring people to share!
+ */
+
+namespace TYPO3\CMS\Backend\Preview;
+
+use GuzzleHttp\Psr7\UriResolver;
+use Psr\Clock\ClockInterface;
+use Psr\Http\Message\ServerRequestInterface;
+use Psr\Http\Message\UriInterface;
+use TYPO3\CMS\Backend\Routing\UriBuilder;
+use TYPO3\CMS\Backend\Utility\BackendUtility;
+use TYPO3\CMS\Core\Authentication\BackendUserAuthentication;
+use TYPO3\CMS\Core\Context\Context;
+use TYPO3\CMS\Core\Context\WorkspaceAspect;
+use TYPO3\CMS\Core\Http\NormalizedParams;
+use TYPO3\CMS\Core\Http\Uri;
+use TYPO3\CMS\Core\Preview\PreviewGroupFilter;
+use TYPO3\CMS\Core\Preview\PreviewHosts;
+use TYPO3\CMS\Core\Preview\PreviewHostsResolver;
+use TYPO3\CMS\Core\Preview\PreviewProfile;
+use TYPO3\CMS\Core\Preview\PreviewTokenRejectedException;
+use TYPO3\CMS\Core\Preview\PreviewTokenService;
+use TYPO3\CMS\Core\Type\Bitmask\Permission;
+use TYPO3\CMS\Core\Utility\GeneralUtility;
+
+/**
+ * Signs a preview token for the logged-in editor from the existing rights:
+ * web mounts, page permission, workspace and languages. No permission of its own
+ * is needed. The site checks these rights again on every request, with the editor
+ * as backend user. Frontend user groups come from the access restrictions of the
+ * page. Hidden pages are shown as for a backend login: the requested hidden page,
+ * unless the token asks for all hidden pages.
+ *
+ * @internal
+ */
+final readonly class PreviewTokenIssuer
+{
+    /**
+     * Preview parameters an address may already carry: the ADMCMD_ parameters, whose
+     * simulation moves into the token, and the token of an earlier preview
+     */
+    private const PREVIEW_PARAMETERS = ['ADMCMD_prev', 'ADMCMD_simTime', 'ADMCMD_simUser', PreviewTokenService::PARAMETER];
+
+    public function __construct(
+        private PreviewTokenService $tokenService,
+        private PreviewHostsResolver $hostsResolver,
+        private UriBuilder $uriBuilder,
+        private ClockInterface $clock,
+        private PreviewGroupFilter $groupFilter,
+        private Context $context,
+    ) {}
+
+    /**
+     * Signs a token for a frontend address as PreviewUriBuilder builds it: the simulated
+     * date and user groups of an access-restricted page move from that address into the token.
+     *
+     * @param int|null $workspace the workspace of the preview, null for the workspace of the editor
+     * @throws PreviewAccessDeniedException
+     */
+    public function issue(
+        ServerRequestInterface $request,
+        BackendUserAuthentication $user,
+        UriInterface $frontendUri,
+        int $pageId,
+        ?int $workspace = null,
+    ): IssuedPreview {
+        parse_str($frontendUri->getQuery(), $query);
+        $groups = GeneralUtility::intExplode(',', (string)($query['ADMCMD_simUser'] ?? ''), true);
+        return $this->sign($request, $user, $frontendUri, $pageId, new PreviewProfile(
+            workspace: $workspace ?? $user->workspace,
+            hiddenPages: false,
+            hiddenContent: false,
+            date: max(0, (int)($query['ADMCMD_simTime'] ?? 0)),
+            groups: $this->filterGroups($user, $pageId, $groups),
+        ));
+    }
+
+    /**
+     * Signs a token without the editor for an address as a visitor sees it now: live,
+     * without hidden records, at the current time and without a frontend login. It
+     * lets the live page into a frame next to a preview, also for an editor without
+     * access to the live workspace, and grants nothing beyond what a visitor gets.
+     * It is valid on every site of the installation. The editor still needs the right
+     * to show the page he opens it for.
+     *
+     * @throws PreviewAccessDeniedException
+     */
+    public function issueForVisitor(
+        ServerRequestInterface $request,
+        BackendUserAuthentication $user,
+        UriInterface $frontendUri,
+        int $pageId,
+    ): IssuedPreview {
+        return $this->sign($request, $user, $frontendUri, $pageId, PreviewProfile::visitor(), true);
+    }
+
+    /**
+     * Signs a fresh token for an address of the frame. The simulation stays as signed in the
+     * previous token, and a token without the editor stays one. All rights of the editor are
+     * checked again, also for its groups. A token without the editor needs no right on the
+     * page in the frame, as that frame goes wherever a visitor goes.
+     *
+     * @throws PreviewAccessDeniedException
+     */
+    public function renew(
+        ServerRequestInterface $request,
+        BackendUserAuthentication $user,
+        string $previousJwt,
+        UriInterface $frontendUri,
+        int $pageId,
+    ): IssuedPreview {
+        try {
+            $previous = $this->tokenService->readForRenewal($previousJwt, $request->getHeaderLine('User-Agent'));
+        } catch (PreviewTokenRejectedException $exception) {
+            throw new PreviewAccessDeniedException('Previous preview token is not valid', 1793276924, $exception);
+        }
+        // Only the editor who opened the preview renews its token, never another editor
+        // logged in to the same browser since
+        if ($previous->editorId !== (int)$user->user['uid']) {
+            throw new PreviewAccessDeniedException('Previous preview token belongs to another editor', 1794491403);
+        }
+        if ($previous->isVisitorWithoutBackendUser()) {
+            // Page 0 checks no page right of the editor
+            return $this->sign($request, $user, $frontendUri, 0, PreviewProfile::visitor(), true);
+        }
+        $profile = $previous->profile;
+        return $this->sign($request, $user, $frontendUri, $pageId, new PreviewProfile(
+            workspace: $profile->workspace,
+            hiddenPages: $profile->hiddenPages,
+            hiddenContent: $profile->hiddenContent,
+            date: $profile->date,
+            groups: $this->filterGroups($user, $pageId, $profile->groups),
+            loggedIn: $profile->loggedIn,
+        ));
+    }
+
+    /**
+     * Settings for the frame controller in the browser, which renews the token: the hosts
+     * the frame may navigate to with a fresh token are the hosts of the preview as they are now.
+     */
+    public function getFrameSettings(IssuedPreview $preview, int $pageId): array
+    {
+        return [
+            'url' => (string)$preview->uri,
+            'renewUrl' => (string)$this->uriBuilder->buildUriFromRoute('ajax_preview_token'),
+            'page' => $pageId,
+            'hosts' => $preview->hosts->getHosts(),
+            'httpsHosts' => $preview->hosts->getHttpsOnlyHosts(),
+            'expiresIn' => max(0, $preview->token->expires - $this->clock->now()->getTimestamp()),
+        ];
+    }
+
+    /**
+     * Settings for a frame that shows an address outside the hosts of the preview as it is,
+     * without a preview token. A relative address is resolved against the backend.
+     */
+    public function getPlainFrameSettings(ServerRequestInterface $request, UriInterface $uri, int $pageId): array
+    {
+        return [
+            'url' => (string)PreviewTokenService::withoutToken(UriResolver::resolve($this->getBackendUri($request), $uri)),
+            'renewUrl' => '',
+            'page' => $pageId,
+            'hosts' => [],
+            'httpsHosts' => [],
+            'expiresIn' => 0,
+        ];
+    }
+
+    /**
+     * @throws PreviewAccessDeniedException
+     */
+    private function sign(
+        ServerRequestInterface $request,
+        BackendUserAuthentication $user,
+        UriInterface $frontendUri,
+        int $pageId,
+        PreviewProfile $profile,
+        bool $visitor = false,
+    ): IssuedPreview {
+        if (!$visitor && $user->checkWorkspace($profile->workspace) === false) {
+            throw new PreviewAccessDeniedException('Workspace is not accessible', 1793265775);
+        }
+        if ($pageId > 0 && BackendUtility::readPageAccess($pageId, $user->getPagePermsClause(Permission::PAGE_SHOW)) === false) {
+            throw new PreviewAccessDeniedException('Page is not accessible', 1793265778);
+        }
+
+        $backendUri = $this->getBackendUri($request);
+        // Sites without a host in their base link relative to the backend host
+        $frontendUri = UriResolver::resolve(
+            $backendUri,
+            $frontendUri->withQuery(PreviewTokenService::withoutParameters($frontendUri->getQuery(), self::PREVIEW_PARAMETERS))
+        );
+        $hosts = $visitor
+            ? $this->hostsResolver->resolveForVisitor($backendUri)
+            : $this->resolveHostsInWorkspace($user, $profile->workspace, $backendUri);
+        if ($hosts->isEmpty()) {
+            throw new PreviewAccessDeniedException('No site is accessible', 1793265779);
+        }
+        if (!$hosts->allowsUri($frontendUri)) {
+            throw new AddressOutsidePreviewException('Address is not part of the preview', 1793265780);
+        }
+        $token = $this->tokenService->sign(
+            $profile,
+            (string)$backendUri->withPath('')->withQuery('')->withFragment('')->withUserInfo(''),
+            $request->getHeaderLine('User-Agent'),
+            (int)$user->user['uid'],
+            $visitor,
+        );
+        return new IssuedPreview($token, PreviewTokenService::withToken($frontendUri, $token->jwt), $hosts);
+    }
+
+    /**
+     * The site resolves the hosts of a token with the editor in the workspace of the token.
+     * Web mounts, languages and user TSconfig depend on the workspace. The editor may have
+     * switched the workspace of the backend since the token was signed, so the hosts are
+     * resolved with the editor built again in the workspace of the token. Neither the user
+     * record, the backend session nor the context of the request changes.
+     *
+     * @throws PreviewAccessDeniedException
+     */
+    private function resolveHostsInWorkspace(BackendUserAuthentication $user, int $workspace, UriInterface $backendUri): PreviewHosts
+    {
+        if ($user->workspace === $workspace) {
+            return $this->hostsResolver->resolve($user, $backendUri);
+        }
+        $userAspect = $this->context->getAspect('backend.user');
+        $workspaceAspect = $this->context->getAspect('workspace');
+        // User TSconfig conditions are evaluated in the workspace of the token, as on the site
+        $this->context->setAspect('workspace', new WorkspaceAspect($workspace));
+        try {
+            $editor = new class extends BackendUserAuthentication {
+                public function setWorkspace($workspaceId)
+                {
+                    // Entered for the hosts only, never written to the user record
+                    $this->checkWorkspaceCurrent_cache = null;
+                    if (!$this->setTemporaryWorkspace((int)$workspaceId)) {
+                        throw new PreviewAccessDeniedException('Workspace is not accessible', 1794991246);
+                    }
+                }
+            };
+            $editor->user = ['workspace_id' => $workspace] + $user->user;
+            $editor->fetchGroupData();
+            return $this->hostsResolver->resolve($editor, $backendUri);
+        } finally {
+            $this->context->setAspect('backend.user', $userAspect);
+            $this->context->setAspect('workspace', $workspaceAspect);
+        }
+    }
+
+    private function getBackendUri(ServerRequestInterface $request): UriInterface
+    {
+        $normalizedParams = $request->getAttribute('normalizedParams');
+        return $normalizedParams instanceof NormalizedParams
+            ? new Uri($normalizedParams->getSiteUrl())
+            : $request->getUri();
+    }
+
+    /**
+     * Only groups the editor may read and groups named by the access restrictions of the page
+     * are simulated. Others are left out. "-1" (hide at login) and "-2" (any login, already
+     * replaced by a group) need no group.
+     *
+     * @param list<int> $groups
+     * @return list<int>
+     */
+    private function filterGroups(BackendUserAuthentication $user, int $pageId, array $groups): array
+    {
+        return $this->groupFilter->filter($user, $groups, $pageId > 0 ? BackendUtility::BEgetRootLine($pageId) : []);
+    }
+}

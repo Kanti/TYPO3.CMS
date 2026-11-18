@@ -1,0 +1,12 @@
+pages,,,,,,,,,,,
+,uid,pid,title,slug,hidden,deleted,fe_group,,,,
+,1,0,Root,/,0,0,0,,,,
+sys_redirect,,,,,,,,,,,,
+,uid,pid,target_statuscode,disabled,deleted,source_host,source_path,target,is_regexp,respect_query_parameters,keep_query_parameters,redirect_type
+,1,0,301,0,0,acme.com,/flag?foo,https://target.example/flag,0,1,0,default
+,2,0,301,0,0,acme.com,/search?q=a+b,https://target.example/search,0,1,0,default
+,3,0,301,0,0,acme.com,/list?id=1&id=2,https://target.example/list,0,1,0,default
+,4,0,301,0,0,acme.com,/arr?a[]=1,https://target.example/arr,0,1,0,default
+,5,0,301,0,0,acme.com,/dotted?utm.source=x,https://target.example/dotted,0,1,0,default
+,6,0,301,0,0,acme.com,/signed?sig=ab%2bcd,https://target.example/signed,0,1,0,default
+,7,0,301,0,0,acme.com,#^/regex\?q=a\+b&id=1&id=2&flag$#,https://target.example/regex,1,1,0,default

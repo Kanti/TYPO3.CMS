@@ -264,7 +264,7 @@ readonly class PreviewUriBuilder
         }
 
         if ($table === 'pages') {
-            return BackendPreviewUriBuilder::create($liveRecord)->buildUri();
+            return BackendPreviewUriBuilder::create($liveRecord)->buildBackendPreviewUri();
         }
 
         if ($versionRecord === null) {
@@ -325,7 +325,7 @@ readonly class PreviewUriBuilder
             ->withAdditionalQueryParameters(
                 HttpUtility::buildQueryString($linkParameters, '&')
             )
-            ->buildUri();
+            ->buildBackendPreviewUri();
     }
 
     /**
