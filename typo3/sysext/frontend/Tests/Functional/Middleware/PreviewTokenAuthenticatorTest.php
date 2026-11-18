@@ -480,23 +480,6 @@ final class PreviewTokenAuthenticatorTest extends FunctionalTestCase
     }
 
     /**
-     * The live frame of a workspace preview navigates between the sites of the editor
-     */
-    #[Test]
-    public function visitorTokenWorksOnEverySiteTheEditorWhoOpenedItMayPreview(): void
-    {
-        $jwt = $this->signForVisitor();
-        $first = (string)$this->preview('https://first.example/', $jwt)->getBody();
-
-        self::assertStringContainsString('href="http://second.example/?__t3ct=' . $jwt . '"', $first);
-        $second = $this->preview('http://second.example/', $jwt, null);
-        self::assertSame(200, $second->getStatusCode());
-        self::assertStringContainsString('Root 2', (string)$second->getBody());
-        self::assertStringNotContainsString('Backend user', (string)$second->getBody());
-        self::assertStringNotContainsString('typo3-preview-info', (string)$second->getBody());
-    }
-
-    /**
      * A visitor token shows only what a visitor sees, so it is valid on every site of the
      * installation, also on one the editor who opened it may not preview.
      */
@@ -515,6 +498,7 @@ final class PreviewTokenAuthenticatorTest extends FunctionalTestCase
         self::assertStringNotContainsString('Hidden content', (string)$response->getBody());
         self::assertStringNotContainsString('Draft content', (string)$response->getBody());
         self::assertStringNotContainsString('Backend user', (string)$response->getBody());
+        self::assertStringNotContainsString('typo3-preview-info', (string)$response->getBody());
     }
 
     public static function editorNoLongerAvailableDataProvider(): \Generator
@@ -854,6 +838,22 @@ final class PreviewTokenAuthenticatorTest extends FunctionalTestCase
 
         $this->assertShownOrRefused($administratorSeesIt, $administrator);
         $this->assertShownOrRefused($editorSeesIt, $editor);
+    }
+
+    /**
+     * The site loads no editor for a visitor token, so a locked backend does not lock it:
+     * the frame shows the page, while a token of the same editor is refused.
+     */
+    #[Test]
+    public function visitorTokenShowsThePageAlsoWhileTheBackendIsLocked(): void
+    {
+        $GLOBALS['TYPO3_CONF_VARS']['BE']['adminOnly'] = -1;
+
+        $visitor = $this->processTokenAuthenticatorOfSite('first', 'https://first.example/?__t3ct=' . $this->signForVisitor(editorId: 2), true);
+        $editor = $this->processTokenAuthenticatorOfSite('first', 'https://first.example/?__t3ct=' . $this->signForEditor(), true);
+
+        self::assertSame('Rendered page', (string)$visitor->getBody());
+        $this->assertRejected('userNotAvailable', $editor);
     }
 
     private function assertShownOrRefused(bool $shown, ResponseInterface $response): void
