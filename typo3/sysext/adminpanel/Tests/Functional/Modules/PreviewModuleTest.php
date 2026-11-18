@@ -25,6 +25,8 @@ use TYPO3\CMS\Core\Authentication\BackendUserAuthentication;
 use TYPO3\CMS\Core\Context\Context;
 use TYPO3\CMS\Core\Context\UserAspect;
 use TYPO3\CMS\Core\Http\ServerRequest;
+use TYPO3\CMS\Core\Preview\PreviewMode;
+use TYPO3\CMS\Frontend\Aspect\PreviewAspect;
 use TYPO3\CMS\Frontend\Authentication\FrontendUserAuthentication;
 use TYPO3\TestingFramework\Core\Functional\FunctionalTestCase;
 
@@ -97,5 +99,36 @@ final class PreviewModuleTest extends FunctionalTestCase
 
         self::assertSame($expected, $request->getAttribute('admin-panel.fluid.debug', false));
         self::assertSame($expected, !($request->getAttribute('frontend.cache.instruction')?->isCachingAllowed() ?? true));
+    }
+
+    /**
+     * The mode of a preview token stays, also where the admin panel previews more
+     */
+    #[Test]
+    #[TestWith(['1', true])]
+    #[TestWith(['0', false])]
+    public function modeOfThePreviewIsKept(string $showHiddenPages, bool $expectedPreview): void
+    {
+        $GLOBALS['BE_USER'] = new BackendUserAuthentication();
+        $request = new ServerRequest()->withAttribute('frontend.user', new FrontendUserAuthentication());
+        $configurationService = self::createStub(ConfigurationService::class);
+        $configurationService->method('getMainConfiguration')->willReturn([]);
+        $configurationService->method('getConfigurationOption')->willReturnMap([
+            ['preview', 'showHiddenPages', $showHiddenPages],
+            ['preview', 'simulateDate', '0'],
+            ['preview', 'simulateUserGroup', '0'],
+            ['preview', 'showScheduledRecords', '0'],
+            ['preview', 'showHiddenRecords', '0'],
+            ['preview', 'showFluidDebug', '0'],
+        ]);
+        $context = $this->get(Context::class);
+        $context->setAspect('frontend.preview', new PreviewAspect(false, PreviewMode::Edit));
+
+        $previewModule = $this->get(PreviewModule::class);
+        $previewModule->injectConfigurationService($configurationService);
+        $previewModule->enrich($request);
+
+        self::assertSame(PreviewMode::Edit, $context->getPropertyFromAspect('frontend.preview', 'mode'));
+        self::assertSame($expectedPreview, $context->getPropertyFromAspect('frontend.preview', 'isPreview'));
     }
 }

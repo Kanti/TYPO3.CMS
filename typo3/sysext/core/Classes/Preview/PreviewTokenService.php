@@ -235,7 +235,7 @@ final readonly class PreviewTokenService
     /**
      * Both kinds of token carry the same claims but the one that names the editor: `sub`
      * for a token of the editor, `scp` for a visitor token, which shows no more than the
-     * visitor view.
+     * visitor view and only in the mode view.
      *
      * @throws PreviewTokenRejectedException whose message names the first claim that does not fit
      */
@@ -277,6 +277,9 @@ final readonly class PreviewTokenService
         $visitor = $editorClaim === 'scp';
         if ($visitor && !$profile->showsVisitorView()) {
             throw self::invalidClaims('prf asks for more than the visitor view an scp token shows');
+        }
+        if ($visitor && $profile->mode !== PreviewMode::View) {
+            throw self::invalidClaims('prf.mode is not "view", the only mode of an scp token');
         }
         return new PreviewToken($jwt, $profile, $backendOrigin, $expires, $editorId, $visitor);
     }

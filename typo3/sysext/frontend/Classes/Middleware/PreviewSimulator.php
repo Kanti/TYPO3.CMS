@@ -88,7 +88,7 @@ readonly class PreviewSimulator implements MiddlewareInterface
             }
             if ($this->editorSeesHiddenPage($previewToken, $request)) {
                 $this->context->setAspect('visibility', $this->context->getAspect('visibility')->withIncludeHiddenPages(true));
-                $this->context->setAspect('frontend.preview', new PreviewAspect(true));
+                $this->context->setAspect('frontend.preview', new PreviewAspect(true, $previewToken->profile->mode));
             }
             return $this->previewNavigationScript->addToPage($request, $handler, $previewToken, $isErrorPage ? 0 : $pageArguments->getPageId());
         }

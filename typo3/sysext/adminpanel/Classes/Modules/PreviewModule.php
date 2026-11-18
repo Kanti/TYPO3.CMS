@@ -37,6 +37,7 @@ use TYPO3\CMS\Core\Context\DateTimeAspect;
 use TYPO3\CMS\Core\Context\UserAspect;
 use TYPO3\CMS\Core\Context\VisibilityAspect;
 use TYPO3\CMS\Core\Domain\DateTimeFactory;
+use TYPO3\CMS\Core\Preview\PreviewMode;
 use TYPO3\CMS\Core\Preview\PreviewToken;
 use TYPO3\CMS\Core\Routing\PageArguments;
 use TYPO3\CMS\Core\Utility\GeneralUtility;
@@ -231,12 +232,15 @@ class PreviewModule extends AbstractModule implements RequestEnricherInterface, 
             $context->setAspect('frontend.user', new UserAspect($frontendUser, array_merge([-2], $groupUids)));
         }
         $isPreview = $simulateUserGroup || $simTime || $showHiddenPages || $showHiddenRecords || $showScheduledRecords;
+        $mode = PreviewMode::View;
         if ($context->hasAspect('frontend.preview')) {
             /** @var PreviewAspect $existingPreviewAspect */
             $existingPreviewAspect = $context->getAspect('frontend.preview');
             $isPreview = $existingPreviewAspect->isPreview() || $isPreview;
+            // The mode of a preview token stays
+            $mode = $existingPreviewAspect->getMode();
         }
-        $context->setAspect('frontend.preview', new PreviewAspect($isPreview));
+        $context->setAspect('frontend.preview', new PreviewAspect($isPreview, $mode));
     }
 
     public function getJavaScriptFiles(): array

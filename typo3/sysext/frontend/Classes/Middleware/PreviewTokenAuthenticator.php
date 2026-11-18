@@ -148,8 +148,8 @@ final readonly class PreviewTokenAuthenticator implements MiddlewareInterface
     }
 
     /**
-     * Sets the simulation of the token, keeps the page out of the page cache and hands token
-     * and hosts to the rest of the stack.
+     * Sets the simulation and the mode of the token, keeps the page out of the page cache and
+     * hands token and hosts to the rest of the stack.
      */
     private function applyProfile(ServerRequestInterface $request, PreviewToken $token, PreviewHosts $hosts): ServerRequestInterface
     {
@@ -164,8 +164,9 @@ final readonly class PreviewTokenAuthenticator implements MiddlewareInterface
             $this->context->setAspect('date', new DateTimeAspect(DateTimeFactory::createFromTimestamp($token->profile->date)));
         }
         // A token previews something only where its simulation asks for more than a visitor
-        // sees. A requested hidden page is one more case, see PreviewSimulator.
-        $this->context->setAspect('frontend.preview', new PreviewAspect(!$token->profile->showsVisitorView()));
+        // sees. A requested hidden page is one more case, see PreviewSimulator. The mode of
+        // the token is exposed in any case.
+        $this->context->setAspect('frontend.preview', new PreviewAspect(!$token->profile->showsVisitorView(), $token->profile->mode));
         $cacheInstruction = $request->getAttribute('frontend.cache.instruction', new CacheInstruction());
         $cacheInstruction->disableCache('EXT:frontend: Preview token bypasses the page cache.');
         return $request

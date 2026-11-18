@@ -19,17 +19,21 @@ namespace TYPO3\CMS\Frontend\Aspect;
 
 use TYPO3\CMS\Core\Context\AspectInterface;
 use TYPO3\CMS\Core\Context\Exception\AspectPropertyNotFoundException;
+use TYPO3\CMS\Core\Preview\PreviewMode;
 
 /**
  * The aspect contains information on whether TYPO3 is currently in preview mode
  *
  * Allowed properties:
  * - isPreview
+ * - mode: the PreviewMode a preview token of the backend asks for, PreviewMode::View
+ *   for a request without one
  */
 final readonly class PreviewAspect implements AspectInterface
 {
     public function __construct(
-        private bool $isPreview = false
+        private bool $isPreview = false,
+        private PreviewMode $mode = PreviewMode::View,
     ) {}
 
     public function isPreview(): bool
@@ -37,15 +41,23 @@ final readonly class PreviewAspect implements AspectInterface
         return $this->isPreview;
     }
 
+    public function getMode(): PreviewMode
+    {
+        return $this->mode;
+    }
+
     /**
      * Get a property from aspect
      *
      * @throws AspectPropertyNotFoundException
      */
-    public function get(string $name): bool
+    public function get(string $name): bool|PreviewMode
     {
         if ($name == 'isPreview') {
             return $this->isPreview;
+        }
+        if ($name === 'mode') {
+            return $this->mode;
         }
         throw new AspectPropertyNotFoundException('Property "' . $name . '" not found in Aspect "' . __CLASS__ . '".', 1563375558);
     }

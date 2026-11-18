@@ -30,6 +30,7 @@ use TYPO3\CMS\Core\EventDispatcher\ListenerProvider;
 use TYPO3\CMS\Core\Http\ServerRequest;
 use TYPO3\CMS\Core\Http\Uri;
 use TYPO3\CMS\Core\Preview\PreviewGroupFilter;
+use TYPO3\CMS\Core\Preview\PreviewMode;
 use TYPO3\CMS\Core\Preview\PreviewProfile;
 use TYPO3\CMS\Core\Preview\PreviewTokenService;
 use TYPO3\CMS\Core\Tests\Functional\SiteHandling\SiteBasedTestTrait;
@@ -216,6 +217,20 @@ final class PreviewTokenIssuerTest extends FunctionalTestCase
 
         self::assertTrue($renewed->token->profile->hiddenPages);
         self::assertFalse($renewed->token->profile->hiddenContent);
+    }
+
+    #[Test]
+    public function renewalKeepsTheModeOfThePreviousToken(): void
+    {
+        $user = $this->setUpBackendUser(9);
+        $issuer = $this->get(PreviewTokenIssuer::class);
+        $previous = $issuer->issue($this->createRequest(), $user, new Uri('https://first.example/'), 2, null, PreviewMode::Edit);
+
+        $renewed = $issuer->renew($this->createRequest(), $user, $previous->token->jwt, new Uri('https://first.example/de/'), 3);
+
+        self::assertSame(PreviewMode::Edit, $previous->token->profile->mode);
+        self::assertSame(PreviewMode::Edit, $renewed->token->profile->mode);
+        self::assertSame(PreviewMode::View, $issuer->issue($this->createRequest(), $user, new Uri('https://first.example/'), 2)->token->profile->mode);
     }
 
     #[Test]
