@@ -44,8 +44,12 @@ final readonly class PreviewPageAccess
 
     /**
      * A visitor token simulates no group and shows only what visitors see, so the page
-     * needs no check of the editor. Neither does the error page a site shows in place of
-     * the requested page, as every visitor sees it: only its groups are filtered.
+     * needs no check of the editor. For the error page a site shows in place of the
+     * requested page, only the check of the right to show the page is left out, as the
+     * editor did not request it. The simulated groups are filtered for it as for any
+     * other page. The error handler renders it in a sub-request that starts with a fresh
+     * context, so the workspace, the date and the hidden content of the token do not
+     * apply to it.
      *
      * @return list<int> the simulated groups the editor may simulate on the page
      * @throws PreviewTokenRejectedException if the editor may not show the page

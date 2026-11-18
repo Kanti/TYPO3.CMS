@@ -18,27 +18,28 @@ declare(strict_types=1);
 namespace TYPO3\CMS\Frontend\Authentication;
 
 use Psr\Http\Message\ServerRequestInterface;
-use TYPO3\CMS\Core\Preview\PreviewRejection;
-use TYPO3\CMS\Core\Preview\PreviewTokenRejectedException;
+use TYPO3\CMS\Core\Preview\PreviewWorkspaceTrait;
 use TYPO3\CMS\Core\Type\Bitmask\Permission;
 
 /**
  * The editor of a preview token as backend user of a frontend request. Nothing
  * of it outlives the request: there is no session and no cookie, and neither the
  * user settings nor the workspace are written back to the user record. The
- * workspace is the one of the token. A workspace the editor may not enter is
- * refused rather than replaced by another one. A preview only shows: the editor has
- * no right to change tables, pages or files, see also PreviewDataHandlerGuard. As for
- * a backend login, the admin panel is available. It stores its settings through the
- * backend around the frame.
+ * workspace is the one of the token, see PreviewWorkspaceTrait. A workspace the
+ * editor may not enter is refused rather than replaced by another one. A preview
+ * only shows: the editor has no right to change tables, pages or files, see also
+ * PreviewDataHandlerGuard. As for a backend login, the admin panel is available.
+ * It stores its settings through the backend around the frame.
  *
  * @internal only to be created by the PreviewBackendUserInitializer
  */
 final class PreviewBackendUserAuthentication extends FrontendBackendUserAuthentication
 {
-    public function __construct(
-        private readonly int $previewWorkspace,
-    ) {
+    use PreviewWorkspaceTrait;
+
+    public function __construct(int $previewWorkspace)
+    {
+        $this->previewWorkspace = $previewWorkspace;
         $this->dontSetCookie = true;
         parent::__construct();
         // Session data, such as form protection tokens, stays in memory
@@ -72,21 +73,6 @@ final class PreviewBackendUserAuthentication extends FrontendBackendUserAuthenti
     public function getOriginalUserIdWhenInSwitchUserMode(): ?int
     {
         return null;
-    }
-
-    /**
-     * @throws PreviewTokenRejectedException if the editor may not enter the workspace of the token
-     */
-    public function setWorkspace($workspaceId)
-    {
-        // fetchGroupData() calls it, PreviewBackendUserInitializer adds the token to a refusal
-        $this->checkWorkspaceCurrent_cache = null;
-        if ((int)$workspaceId !== $this->previewWorkspace) {
-            throw new PreviewTokenRejectedException(PreviewRejection::UserNotAvailable, 'Only the workspace of the preview may be set', 1794239501);
-        }
-        if (!$this->setTemporaryWorkspace($this->previewWorkspace)) {
-            throw new PreviewTokenRejectedException(PreviewRejection::UserNotAvailable, 'Workspace of the preview is not accessible', 1794411124);
-        }
     }
 
     public function writeUC(): void

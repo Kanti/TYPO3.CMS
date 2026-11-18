@@ -245,19 +245,13 @@ final readonly class PreviewTokenIssuer
         // User TSconfig conditions are evaluated in the workspace of the token, as on the site
         $this->context->setAspect('workspace', new WorkspaceAspect($workspace));
         try {
-            $editor = new class extends BackendUserAuthentication {
-                public function setWorkspace($workspaceId)
-                {
-                    // Entered for the hosts only, never written to the user record
-                    $this->checkWorkspaceCurrent_cache = null;
-                    if (!$this->setTemporaryWorkspace((int)$workspaceId)) {
-                        throw new PreviewAccessDeniedException('Workspace is not accessible', 1794991246);
-                    }
-                }
-            };
+            $editor = new PreviewWorkspaceEditor($workspace);
             $editor->user = ['workspace_id' => $workspace] + $user->user;
             $editor->fetchGroupData();
             return $this->hostsResolver->resolve($editor, $backendUri);
+        } catch (PreviewTokenRejectedException $exception) {
+            // PreviewWorkspaceTrait::setWorkspace() refuses a workspace the editor may not enter
+            throw new PreviewAccessDeniedException('Workspace is not accessible', 1794991246, $exception);
         } finally {
             $this->context->setAspect('backend.user', $userAspect);
             $this->context->setAspect('workspace', $workspaceAspect);
