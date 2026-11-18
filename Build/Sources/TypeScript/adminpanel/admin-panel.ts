@@ -175,6 +175,9 @@
     private sendAdminPanelForm(event: MouseEvent): void {
       event.preventDefault();
       const formData = new FormData(this.adminPanel);
+      if (this.relayToPreviewBackend('save', Array.from(formData.entries()).filter((entry): entry is [string, string] => typeof entry[1] === 'string'))) {
+        return;
+      }
       const request = new XMLHttpRequest();
       request.open('POST', this.adminPanel.dataset.typo3AjaxUrl);
       request.send(formData);
@@ -182,10 +185,31 @@
     }
 
     private toggleAdminPanelState(): void {
+      if (this.relayToPreviewBackend('toggle', [])) {
+        return;
+      }
       const request = new XMLHttpRequest();
       request.open('GET', this.trigger.dataset.typo3AjaxUrl);
       request.send();
       request.onload = () => location.reload();
+    }
+
+    /**
+     * A page shown in a backend preview frame with a preview token has no backend login with
+     * write access: its backend user comes from the token, without session and without the right
+     * to store settings. The backend document around the frame stores them with the backend
+     * session of the editor and reloads the frame.
+     */
+    private relayToPreviewBackend(action: 'save' | 'toggle', fields: [string, string][]): boolean {
+      const previewScript = document.querySelector<HTMLScriptElement>('script[data-preview-backend]');
+      if (previewScript === null) {
+        return false;
+      }
+      if (window.parent === window) {
+        return false;
+      }
+      window.parent.postMessage({ type: 'typo3:preview:admin-panel', url: window.location.href, action, fields }, previewScript.dataset.previewBackend);
+      return true;
     }
 
     /**

@@ -20,6 +20,9 @@ namespace TYPO3\CMS\Redirects\Tests\Functional\Service;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Test;
 use Psr\EventDispatcher\EventDispatcherInterface;
+use Psr\Http\Message\ResponseInterface;
+use Psr\Http\Message\ServerRequestInterface;
+use Psr\Http\Server\RequestHandlerInterface;
 use Psr\Log\NullLogger;
 use Symfony\Component\DependencyInjection\Container;
 use TYPO3\CMS\Core\Cache\CacheManager;
@@ -31,6 +34,7 @@ use TYPO3\CMS\Core\Crypto\HashAlgo;
 use TYPO3\CMS\Core\Database\ConnectionPool;
 use TYPO3\CMS\Core\EventDispatcher\ListenerProvider;
 use TYPO3\CMS\Core\EventDispatcher\NoopEventDispatcher;
+use TYPO3\CMS\Core\Http\Response;
 use TYPO3\CMS\Core\Http\ServerRequest;
 use TYPO3\CMS\Core\Http\Uri;
 use TYPO3\CMS\Core\LinkHandling\LinkService;
@@ -45,6 +49,7 @@ use TYPO3\CMS\Frontend\Authentication\FrontendUserAuthentication;
 use TYPO3\CMS\Frontend\Page\CacheHashCalculator;
 use TYPO3\CMS\Frontend\Page\PageInformationFactory;
 use TYPO3\CMS\Redirects\Event\BeforeRedirectMatchDomainEvent;
+use TYPO3\CMS\Redirects\Http\Middleware\RedirectHandler;
 use TYPO3\CMS\Redirects\Service\RedirectCacheService;
 use TYPO3\CMS\Redirects\Service\RedirectService;
 use TYPO3\TestingFramework\Core\Functional\Framework\Frontend\InternalRequest;
@@ -149,6 +154,69 @@ final class RedirectServiceTest extends FunctionalTestCase
         // Assert link to access restricted page is build
         $targetUrl = $redirectService->getTargetUrl($redirectMatch, $request);
         self::assertEquals(new Uri('https://acme.com/access-restricted'), $targetUrl);
+    }
+
+    public static function redirectsRespectingTheQueryDataProvider(): \Generator
+    {
+        yield 'flag without value' => ['https://acme.com/flag?foo', 'https://target.example/flag', 1];
+        yield 'plus as space' => ['https://acme.com/search?q=a+b', 'https://target.example/search', 2];
+        yield 'repeated name' => ['https://acme.com/list?id=1&id=2', 'https://target.example/list', 3];
+        yield 'brackets' => ['https://acme.com/arr?a[]=1', 'https://target.example/arr', 4];
+        yield 'dot in the name' => ['https://acme.com/dotted?utm.source=x', 'https://target.example/dotted', 5];
+        yield 'lower case encoding' => ['https://acme.com/signed?sig=ab%2bcd', 'https://target.example/signed', 6];
+        yield 'regular expression' => ['https://acme.com/regex?q=a+b&id=1&id=2&flag', 'https://target.example/regex', 7];
+    }
+
+    /**
+     * The middleware is called directly: a frontend sub-request of the testing framework
+     * builds its query anew from the parsed parameters.
+     */
+    #[DataProvider('redirectsRespectingTheQueryDataProvider')]
+    #[Test]
+    public function redirectRespectingTheQueryMatchesTheQueryAsSent(string $url, string $target, int $redirectUid): void
+    {
+        $this->setUpQueryAsSentScenario();
+
+        $response = $this->processRedirectHandler(new Uri($url));
+
+        self::assertSame(301, $response->getStatusCode());
+        self::assertSame('TYPO3 Redirect ' . $redirectUid, $response->getHeaderLine('X-Redirect-By'));
+        self::assertSame($target, $response->getHeaderLine('location'));
+    }
+
+    #[DataProvider('redirectsRespectingTheQueryDataProvider')]
+    #[Test]
+    public function redirectRespectingTheQueryIgnoresAPreviewToken(string $url, string $target, int $redirectUid): void
+    {
+        $this->setUpQueryAsSentScenario();
+
+        $response = $this->processRedirectHandler(new Uri($url . '&__t3ct=eyJ0eXAiOiJKV1QifQ.e30.c2ln'));
+
+        self::assertSame(301, $response->getStatusCode());
+        self::assertSame('TYPO3 Redirect ' . $redirectUid, $response->getHeaderLine('X-Redirect-By'));
+        self::assertSame($target, $response->getHeaderLine('location'));
+    }
+
+    private function setUpQueryAsSentScenario(): void
+    {
+        $this->importCSVDataSet(__DIR__ . '/Fixtures/RedirectService_queryAsSent.csv');
+        $this->writeSiteConfiguration('acme-com', $this->buildSiteConfiguration(1, 'https://acme.com/'));
+    }
+
+    private function processRedirectHandler(Uri $uri): ResponseInterface
+    {
+        parse_str($uri->getQuery(), $queryParameters);
+        $request = new ServerRequest($uri)
+            ->withQueryParams($queryParameters)
+            ->withAttribute('applicationType', SystemEnvironmentBuilder::REQUESTTYPE_FE)
+            ->withAttribute('site', $this->get(SiteFinder::class)->getSiteByIdentifier('acme-com'));
+        $notFound = new class implements RequestHandlerInterface {
+            public function handle(ServerRequestInterface $request): ResponseInterface
+            {
+                return new Response(null, 404);
+            }
+        };
+        return $this->get(RedirectHandler::class)->process($request, $notFound);
     }
 
     public static function redirectsDataProvider(): array
