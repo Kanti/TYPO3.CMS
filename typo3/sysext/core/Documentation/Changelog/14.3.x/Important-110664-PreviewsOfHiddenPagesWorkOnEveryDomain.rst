@@ -192,6 +192,16 @@ whether the editor still exists, so a visitor token stays valid until it
 expires. The backend still needs the right of the editor to show the page the
 preview is opened for, but not for the pages the live frame navigates to.
 
+For its live frame, the workspace preview page names every site of the
+installation, also sites the editor may not preview: the attribute
+:html:`data-preview-settings` of the frame lists their hosts, and the
+:http:`frame-src` directive of the Content-Security-Policy of the page lists
+their origins. With more than 50 origins the page allows every HTTPS address
+in :http:`frame-src` instead, and every plain HTTP address where a site uses
+plain HTTP. Where a preview may be framed does not change: the
+:http:`frame-ancestors` directive of a preview response still allows only the
+backend that signed the token and the site itself.
+
 Links, redirects and forms
 --------------------------
 
@@ -229,7 +239,10 @@ Links, redirects and forms
     preview. To send it, open the page in a tab of its own. In
     installations with very many sites, where the backend allows every
     HTTPS address in the frame, such a form shows the page there without
-    the preview.
+    the preview. The backend does so with more than 50 origins. The
+    workspace preview page counts every site of the installation for its
+    live frame, so it allows every HTTPS address in :http:`frame-src` as
+    soon as the installation has more than 50 origins.
 
 The script runs under the Content-Security-Policy of the site: it carries the
 nonce of the request, and where the site uses hash values
