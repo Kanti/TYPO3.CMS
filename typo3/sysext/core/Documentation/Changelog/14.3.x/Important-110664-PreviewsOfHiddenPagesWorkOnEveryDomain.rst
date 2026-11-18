@@ -236,7 +236,11 @@ Links, redirects and forms
     host of the preview without the token in its action shows the page
     without the preview. A form sent to a host outside the preview is
     blocked by the backend page, whose frame shows only the hosts of the
-    preview. To send it, open the page in a tab of its own. In
+    preview. To send it, open the page in a tab of its own. Where the
+    workspace preview page shows a live frame, its workspace frame may
+    load every site of the installation as well. There such a form to
+    another site of the installation shows the page without the preview,
+    and only a form to a host outside the installation is blocked. In
     installations with very many sites, where the backend allows every
     HTTPS address in the frame, such a form shows the page there without
     the preview. The backend does so with more than 50 origins. The
