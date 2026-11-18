@@ -119,6 +119,8 @@ final readonly class PreviewTokenAuthenticator implements MiddlewareInterface
     /**
      * Makes the editor of the token the backend user of the request, or leaves the request
      * without one for a visitor token, and checks that the request is part of the preview.
+     * A visitor token is valid on every site of the installation, so its editor is not
+     * loaded at all.
      *
      * @throws PreviewTokenRejectedException
      */
@@ -130,7 +132,7 @@ final readonly class PreviewTokenAuthenticator implements MiddlewareInterface
             $hosts = $this->hostsResolver->resolve($user, new Uri($token->backendOrigin));
         } else {
             $user = null;
-            $hosts = $this->hostsResolver->resolve($this->backendUserInitializer->createEditorOfVisitorToken($token), new Uri($token->backendOrigin));
+            $hosts = $this->hostsResolver->resolveForVisitor(new Uri($token->backendOrigin));
             $GLOBALS['BE_USER'] = null;
             $this->context->setAspect('backend.user', new UserAspect());
         }
@@ -289,7 +291,8 @@ final readonly class PreviewTokenAuthenticator implements MiddlewareInterface
     }
 
     /**
-     * The site of the request is one the editor of the token may preview now.
+     * The site of the request is one the editor of the token may preview now, or any
+     * site of the installation for a visitor token.
      *
      * @throws PreviewTokenRejectedException
      */

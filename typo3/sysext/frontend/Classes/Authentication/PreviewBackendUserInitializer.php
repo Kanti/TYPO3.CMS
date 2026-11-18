@@ -61,20 +61,6 @@ final readonly class PreviewBackendUserInitializer
     }
 
     /**
-     * The editor who opened a visitor token, only to resolve where the token is valid:
-     * it does not become the backend user of the request.
-     *
-     * @throws PreviewTokenRejectedException if the editor is no longer available
-     */
-    public function createEditorOfVisitorToken(PreviewToken $token): BackendUserAuthentication
-    {
-        if (!$token->isVisitorWithoutBackendUser()) {
-            throw new \LogicException('Only a visitor token has an editor that is not the backend user.', 1794385524);
-        }
-        return $this->build($token);
-    }
-
-    /**
      * @throws PreviewTokenRejectedException
      */
     private function build(PreviewToken $token): PreviewBackendUserAuthentication

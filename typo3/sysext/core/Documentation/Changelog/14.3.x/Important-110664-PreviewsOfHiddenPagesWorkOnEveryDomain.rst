@@ -181,8 +181,12 @@ the page as a visitor sees it now: live, without hidden records, at the current
 time and without a frontend login, also for an editor without access to the
 live workspace. A page that is hidden in the live workspace therefore shows as
 not found there. A visitor token that asks for more is refused. It is valid on
-the sites the editor who opened the preview may preview now, but this editor
-does not become the backend user of the request.
+every site of the installation, in the languages that are enabled, and the
+live frame may navigate to each of them. The site does not load the editor who
+opened the preview for it. It checks neither his rights nor whether he still
+exists, so a visitor token stays valid until it expires. The backend still
+needs the right of the editor to show the page he opens the preview for, but
+not for the pages the live frame navigates to.
 
 Links, redirects and forms
 --------------------------
@@ -318,6 +322,8 @@ Server configuration
 ..  note::
 
     A token ends at its expiry. Logging out of the backend does not revoke
-    tokens already handed out, but a disabled editor can no longer use them.
+    tokens already handed out. The tokens of a disabled editor no longer work,
+    but a visitor token, which shows only what visitors see, works until it
+    expires.
 
 ..  index:: Backend, Frontend, ext:backend, ext:frontend, ext:workspaces

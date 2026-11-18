@@ -25,8 +25,8 @@ use TYPO3\CMS\Core\Security\ContentSecurityPolicy\UriValue;
 
 /**
  * The sites and hosts a preview token is valid on. It is not part of the token:
- * the backend and the site resolve it from the rights the editor has now, see
- * PreviewHostsResolver.
+ * the backend and the site resolve it from the rights the editor has now, or from
+ * all sites of the installation for a visitor token, see PreviewHostsResolver.
  *
  * @internal
  */

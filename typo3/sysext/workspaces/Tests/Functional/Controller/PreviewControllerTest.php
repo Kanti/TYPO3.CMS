@@ -135,8 +135,7 @@ final class PreviewControllerTest extends FunctionalTestCase
 
     /**
      * The live frame beside it shows the page as a visitor sees it: live, without hidden
-     * records, simulation or backend user, on the sites the editor who opened it may
-     * preview.
+     * records, simulation or backend user, on every site of the installation.
      */
     #[Test]
     public function liveFrameShowsThePageAsAVisitorSeesIt(): void
@@ -163,12 +162,31 @@ final class PreviewControllerTest extends FunctionalTestCase
     }
 
     /**
-     * An address the preview cannot sign a token for, here the host of a language the
-     * editor has no access to, opens in the frames as it is: without a token and without
-     * the backend asking for one later.
+     * The visitor token of the live frame is valid on every site of the installation, so
+     * the backend lets the live frame load each of them, also those the editor may not
+     * preview. The frame of the workspace stays on the sites of the editor.
      */
     #[Test]
-    public function addressOutsideThePreviewIsShownInTheFramesWithoutToken(): void
+    public function liveFrameMayShowEverySiteOfTheInstallation(): void
+    {
+        $this->setUpEditor(true);
+        $this->writeSiteConfiguration('other', $this->buildSiteConfiguration(7, 'https://other.example/'));
+
+        $response = $this->renderPreviewResponse();
+
+        self::assertEqualsCanonicalizing(['example.com', 'other.example'], $this->frameSettingsOf($response, 'livePreviewSettings')['hosts']);
+        self::assertSame(['example.com'], $this->frameSettingsOf($response, 'wsPreviewSettings')['hosts']);
+        self::assertContains('https://other.example', $this->getFrameSources());
+    }
+
+    /**
+     * An address the preview cannot sign a token of the editor for, here the host of a
+     * language the editor has no access to, opens in the frame of the workspace as it is:
+     * without a token and without the backend asking for one later. The live frame gets a
+     * visitor token there, which is valid on every site of the installation.
+     */
+    #[Test]
+    public function addressOutsideThePreviewOfTheEditorIsShownInTheWorkspaceFrameWithoutToken(): void
     {
         $this->setUpEditor(true);
         $this->writeSiteConfiguration(
@@ -185,14 +203,16 @@ final class PreviewControllerTest extends FunctionalTestCase
         $response = $this->renderPreviewResponse(['L' => 1]);
 
         self::assertSame(200, $response->getStatusCode());
-        foreach (['wsPreviewSettings', 'livePreviewSettings'] as $frame) {
-            $settings = $this->frameSettingsOf($response, $frame);
-            self::assertStringStartsWith('https://de.example/', $settings['url'], $frame);
-            self::assertStringNotContainsString('__t3ct', $settings['url'], $frame);
-            self::assertSame('', $settings['renewUrl'], $frame);
-            self::assertSame([], $settings['hosts'], $frame);
-        }
+        $workspaceSettings = $this->frameSettingsOf($response, 'wsPreviewSettings');
+        self::assertStringStartsWith('https://de.example/', $workspaceSettings['url']);
+        self::assertStringNotContainsString('__t3ct', $workspaceSettings['url']);
+        self::assertSame('', $workspaceSettings['renewUrl']);
+        self::assertSame([], $workspaceSettings['hosts']);
         self::assertContains('https://de.example/', $this->getFrameSources());
+        $liveSettings = $this->frameSettingsOf($response, 'livePreviewSettings');
+        self::assertStringStartsWith('https://de.example/', $liveSettings['url']);
+        self::assertTrue($this->tokenOf($liveSettings['url'])->isVisitorWithoutBackendUser());
+        self::assertContains('de.example', $liveSettings['hosts']);
     }
 
     /**

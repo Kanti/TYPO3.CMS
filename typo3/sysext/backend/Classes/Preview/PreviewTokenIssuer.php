@@ -90,7 +90,8 @@ final readonly class PreviewTokenIssuer
      * without hidden records, at the current time and without a frontend login. It
      * lets the live page into a frame next to a preview, also for an editor without
      * access to the live workspace, and grants nothing beyond what a visitor gets.
-     * It is valid on the sites the editor may preview, as a token of the editor.
+     * It is valid on every site of the installation. The editor still needs the right
+     * to show the page he opens it for.
      *
      * @throws PreviewAccessDeniedException
      */
@@ -106,7 +107,8 @@ final readonly class PreviewTokenIssuer
     /**
      * Signs a fresh token for an address of the frame. The simulation stays as signed in the
      * previous token, and a token without the editor stays one. All rights of the editor are
-     * checked again, also for its groups.
+     * checked again, also for its groups. A token without the editor needs no right on the
+     * page in the frame, as that frame goes wherever a visitor goes.
      *
      * @throws PreviewAccessDeniedException
      */
@@ -128,7 +130,8 @@ final readonly class PreviewTokenIssuer
             throw new PreviewAccessDeniedException('Previous preview token belongs to another editor', 1794491403);
         }
         if ($previous->isVisitorWithoutBackendUser()) {
-            return $this->issueForVisitor($request, $user, $frontendUri, $pageId);
+            // Page 0 checks no page right of the editor
+            return $this->sign($request, $user, $frontendUri, 0, PreviewProfile::visitor(), true);
         }
         $profile = $previous->profile;
         return $this->sign($request, $user, $frontendUri, $pageId, new PreviewProfile(
@@ -197,7 +200,7 @@ final readonly class PreviewTokenIssuer
             $backendUri,
             $frontendUri->withQuery(PreviewTokenService::withoutParameters($frontendUri->getQuery(), self::PREVIEW_PARAMETERS))
         );
-        $hosts = $this->hostsResolver->resolve($user, $backendUri);
+        $hosts = $visitor ? $this->hostsResolver->resolveForVisitor($backendUri) : $this->hostsResolver->resolve($user, $backendUri);
         if ($hosts->isEmpty()) {
             throw new PreviewAccessDeniedException('No site is accessible', 1793265779);
         }

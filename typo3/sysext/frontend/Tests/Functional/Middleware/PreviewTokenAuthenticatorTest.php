@@ -496,24 +496,88 @@ final class PreviewTokenAuthenticatorTest extends FunctionalTestCase
         self::assertStringNotContainsString('typo3-preview-info', (string)$second->getBody());
     }
 
+    /**
+     * A visitor token shows only what a visitor sees, so it is valid on every site of the
+     * installation, also on one the editor who opened it may not preview.
+     */
     #[Test]
-    public function visitorTokenIsRefusedOnSitesTheEditorWhoOpenedItMayNotPreview(): void
+    public function visitorTokenIsValidOnSitesTheEditorWhoOpenedItMayNotPreview(): void
     {
+        $this->get(ConnectionPool::class)->getConnectionForTable('tt_content')
+            ->insert('tt_content', ['uid' => 3, 'pid' => 1, 'header' => 'Draft content', 't3ver_oid' => 1, 't3ver_wsid' => 1]);
         $jwt = $this->signForVisitor(editorId: 2);
 
-        self::assertStringContainsString('href="http://second.example/"', (string)$this->preview('https://first.example/', $jwt)->getBody());
+        self::assertStringContainsString('href="http://second.example/?__t3ct=' . $jwt . '"', (string)$this->preview('https://first.example/', $jwt)->getBody());
         $response = $this->preview('http://second.example/', $jwt, null);
-        $this->assertRejected('invalid', $response);
-        self::assertStringNotContainsString('postMessage', (string)$response->getBody());
+        self::assertSame(200, $response->getStatusCode());
+        self::assertStringContainsString('Root 2', (string)$response->getBody());
+        self::assertStringContainsString('Visible content', (string)$response->getBody());
+        self::assertStringNotContainsString('Hidden content', (string)$response->getBody());
+        self::assertStringNotContainsString('Draft content', (string)$response->getBody());
+        self::assertStringNotContainsString('Backend user', (string)$response->getBody());
     }
 
+    public static function editorNoLongerAvailableDataProvider(): \Generator
+    {
+        yield 'disabled' => [['disable' => 1]];
+        yield 'deleted' => [['deleted' => 1]];
+        yield 'expired' => [['endtime' => 86400]];
+        yield 'removed' => [null];
+    }
+
+    /**
+     * The site does not load the editor of a visitor token, so the token stays valid
+     * until it expires. Only the editor who opened it renews it, with his backend login.
+     */
     #[Test]
-    public function visitorTokenOfAnEditorWhoIsNoLongerAvailableIsRefused(): void
+    #[DataProvider('editorNoLongerAvailableDataProvider')]
+    public function visitorTokenStaysValidUntilItExpiresAlsoIfItsEditorIsNoLongerAvailable(?array $userChanges): void
     {
         $jwt = $this->signForVisitor(editorId: 2);
-        $this->get(ConnectionPool::class)->getConnectionForTable('be_users')->update('be_users', ['disable' => 1], ['uid' => 2]);
+        $backendUsers = $this->get(ConnectionPool::class)->getConnectionForTable('be_users');
+        if ($userChanges === null) {
+            $backendUsers->delete('be_users', ['uid' => 2]);
+        } else {
+            $backendUsers->update('be_users', $userChanges, ['uid' => 2]);
+        }
 
-        $this->assertRejected('userNotAvailable', $this->preview('https://first.example/', $jwt));
+        $response = $this->preview('https://first.example/', $jwt);
+
+        self::assertSame(200, $response->getStatusCode());
+        self::assertStringContainsString('Visible content', (string)$response->getBody());
+        self::assertStringNotContainsString('Backend user', (string)$response->getBody());
+    }
+
+    public static function editorWithoutAccessToTheLiveWorkspaceDataProvider(): \Generator
+    {
+        yield 'stored workspace of the editor' => [1];
+        yield 'stored live workspace the editor may not enter' => [0];
+    }
+
+    /**
+     * Guards that an editor without the right to edit the live workspace gets the live
+     * page with a visitor token, whichever workspace is stored for him. The drafts of
+     * his workspace stay out, he does not become the backend user, and his stored
+     * workspace is kept.
+     */
+    #[Test]
+    #[DataProvider('editorWithoutAccessToTheLiveWorkspaceDataProvider')]
+    public function visitorTokenShowsTheLivePageAlsoIfTheEditorMayNotEnterTheLiveWorkspace(int $storedWorkspace): void
+    {
+        $connectionPool = $this->get(ConnectionPool::class);
+        $connectionPool->getConnectionForTable('be_users')->update('be_users', ['workspace_perms' => 0, 'workspace_id' => $storedWorkspace], ['uid' => 2]);
+        $connectionPool->getConnectionForTable('be_groups')->update('be_groups', ['workspace_perms' => 0], ['uid' => 1]);
+        $connectionPool->getConnectionForTable('sys_workspace')->update('sys_workspace', ['members' => 'be_users_2'], ['uid' => 1]);
+        $connectionPool->getConnectionForTable('tt_content')
+            ->insert('tt_content', ['uid' => 3, 'pid' => 1, 'header' => 'Draft content', 't3ver_oid' => 1, 't3ver_wsid' => 1]);
+
+        $response = $this->preview('https://first.example/', $this->signForVisitor(editorId: 2));
+
+        self::assertSame(200, $response->getStatusCode());
+        self::assertStringContainsString('Visible content', (string)$response->getBody());
+        self::assertStringNotContainsString('Draft content', (string)$response->getBody());
+        self::assertStringNotContainsString('Backend user', (string)$response->getBody());
+        self::assertSame($storedWorkspace, (int)$connectionPool->getConnectionForTable('be_users')->select(['workspace_id'], 'be_users', ['uid' => 2])->fetchOne());
     }
 
     #[Test]

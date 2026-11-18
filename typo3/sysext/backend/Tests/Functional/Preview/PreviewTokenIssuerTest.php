@@ -314,16 +314,54 @@ final class PreviewTokenIssuerTest extends FunctionalTestCase
         self::assertTrue($renewed->token->profile->showsVisitorView());
     }
 
+    /**
+     * A visitor token shows only what a visitor sees, so it is valid on every site of the
+     * installation in the languages a visitor reaches, also where the editor who opened
+     * it may not preview.
+     */
     #[Test]
-    public function visitorTokenIsValidOnTheSitesOfTheEditorWhoOpenedIt(): void
+    public function visitorTokenIsValidOnEverySiteOfTheInstallation(): void
     {
-        $user = $this->setUpBackendUser(1);
+        $this->writeSiteConfiguration('first', $this->buildSiteConfiguration(1, 'https://first.example/'), [
+            $this->buildDefaultLanguageConfiguration('EN', '/'),
+            $this->buildLanguageConfiguration('DE', 'https://first.de/'),
+        ]);
+        $this->writeSiteConfiguration('second', $this->buildSiteConfiguration(7, 'https://second.example:8443/'), [
+            $this->buildDefaultLanguageConfiguration('EN', '/'),
+            array_replace($this->buildLanguageConfiguration('DE', 'https://second.de/'), ['enabled' => false]),
+        ]);
+        $this->get(ConnectionPool::class)->getConnectionForTable('be_groups')->update('be_groups', ['allowed_languages' => '0'], ['uid' => 9]);
+        $user = $this->setUpBackendUser(9);
+        $issuer = $this->get(PreviewTokenIssuer::class);
 
-        $preview = $this->get(PreviewTokenIssuer::class)->issueForVisitor($this->createRequest(), $user, new Uri('https://first.example/de/'), 2);
+        $preview = $issuer->issueForVisitor($this->createRequest(), $user, new Uri('https://first.example/'), 2);
 
         self::assertTrue($preview->token->isVisitorWithoutBackendUser());
-        self::assertSame(1, $preview->token->editorId);
-        self::assertSame(['first.example', 'second.example:8443'], $preview->hosts->getHosts());
+        self::assertSame(9, $preview->token->editorId);
+        self::assertSame(['first.example', 'first.de', 'second.example:8443'], $preview->hosts->getHosts());
+        self::assertTrue($preview->hosts->includesSite('second'));
+        self::assertSame(['first.example', 'first.de', 'second.example:8443'], $issuer->getFrameSettings($preview, 2)['hosts']);
+        self::assertSame(['first.example'], $issuer->issue($this->createRequest(), $user, new Uri('https://first.example/'), 2)->hosts->getHosts());
+    }
+
+    /**
+     * The live frame goes where a visitor goes: a renewed visitor token needs no right of
+     * the editor on the page the frame shows now.
+     */
+    #[Test]
+    public function renewalOfAVisitorTokenNeedsNoAccessToThePageInTheFrame(): void
+    {
+        $user = $this->setUpBackendUser(9);
+        $issuer = $this->get(PreviewTokenIssuer::class);
+        $previous = $issuer->issueForVisitor($this->createRequest(), $user, new Uri('https://first.example/'), 2);
+
+        // Page 7 is the root of the second site, outside the mounts of the editor
+        $renewed = $issuer->renew($this->createRequest(), $user, $previous->token->jwt, new Uri('https://second.example:8443/'), 7);
+
+        self::assertTrue($renewed->token->isVisitorWithoutBackendUser());
+        self::assertSame(9, $renewed->token->editorId);
+        self::assertSame('https://second.example:8443/?__t3ct=' . $renewed->token->jwt, (string)$renewed->uri);
+        self::assertSame(['first.example', 'second.example:8443'], $renewed->hosts->getHosts());
     }
 
     #[Test]
