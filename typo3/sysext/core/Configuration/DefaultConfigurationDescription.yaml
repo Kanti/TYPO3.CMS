@@ -193,6 +193,9 @@ SYS:
             type: container
             description: 'New features of TYPO3 that are activated on new installations but upgrading installations can still use the old behaviour'
             items:
+              backend.previewToken:
+                type: bool
+                description: 'Previews of the backend show pages that need a backend login, such as hidden, scheduled, access-restricted or workspace pages, on every domain of the installation: where the backend login cookie does not reach the site, the page is shown in a frame of the backend with a short-lived preview token. The module <strong>Content > Preview</strong> and the workspace preview always use a preview token. When disabled, previews open the address of the page directly, and such pages are shown only where the backend login cookie reaches the site.'
               frontend.cache.autoTagging:
                 type: bool
                 description: 'Frontend caches are automatically tagged with the records they use, allowing affected caches to be evicted when those records change.'

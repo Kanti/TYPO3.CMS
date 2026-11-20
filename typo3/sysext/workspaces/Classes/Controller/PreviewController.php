@@ -30,6 +30,7 @@ use TYPO3\CMS\Backend\Utility\BackendUtility;
 use TYPO3\CMS\Backend\View\BackendViewFactory;
 use TYPO3\CMS\Core\Authentication\BackendUserAuthentication;
 use TYPO3\CMS\Core\Configuration\ExtensionConfiguration;
+use TYPO3\CMS\Core\Configuration\Features;
 use TYPO3\CMS\Core\Context\Context;
 use TYPO3\CMS\Core\Context\UserAspect;
 use TYPO3\CMS\Core\Context\WorkspaceAspect;
@@ -78,6 +79,7 @@ final readonly class PreviewController
         private PreviewSimulatorCalculator $previewSimulatorCalculator,
         private PreviewTokenIssuer $previewTokenIssuer,
         private PolicyRegistry $policyRegistry,
+        private Features $features,
     ) {}
 
     /**
@@ -122,6 +124,7 @@ final readonly class PreviewController
         $this->pageRenderer->addInlineSetting('Workspaces', 'id', $pageUid);
 
         $availableWorkspaces = $this->workspaceService->getAvailableWorkspaces();
+        $withPreviewToken = $this->features->isFeatureEnabled('backend.previewToken');
         try {
             $liveUrl = false;
             $site = $this->siteFinder->getSiteByPageId($pageUid);
@@ -142,8 +145,11 @@ final readonly class PreviewController
             );
             if (!$this->workspaceService->isNewPage($pageUid)) {
                 // The live frame shows the page as a visitor sees it. It simulates no frontend user group
-                // and no date, so the ADMCMD_ parameters of the draft stay out of its address.
-                $parameters = $queryParameters;
+                // and no date, so the ADMCMD_ parameters of the draft stay out of its address. Without a
+                // preview token, the backend login of the browser shows the live version.
+                $parameters = $withPreviewToken
+                    ? $queryParameters
+                    : array_merge($queryParameters, $queryParametersLive, ['ADMCMD_prev' => 'LIVE']);
                 // temporarily set workspace aspect to live (0) to generate the live URL
                 $liveWorkspaceContext = clone $this->context;
                 $liveWorkspaceContext->setAspect('workspace', new WorkspaceAspect(0));
@@ -168,7 +174,7 @@ final readonly class PreviewController
             if ($simulatedUserGroups !== '') {
                 $queryParametersDraft['ADMCMD_simUser'] = $simulatedUserGroups;
             }
-            $parameters = array_merge($queryParameters, $queryParametersDraft);
+            $parameters = array_merge($queryParameters, $queryParametersDraft, $withPreviewToken ? [] : ['ADMCMD_prev' => 'IGNORE']);
             // Without a frontend user, the draft version of a restricted page is not found when
             // generating the URL, so the simulated groups are applied to the context as well,
             // plus -2 ("show at any login"), which every logged-in frontend user has.
@@ -181,15 +187,20 @@ final readonly class PreviewController
             throw new UnableToLinkToPageException(sprintf('The link to the page with ID "%d" could not be generated: %s', $pageUid, $e->getMessage()), 1559794913, $e);
         }
 
-        try {
-            $livePreviewSettings = $liveUrl !== false ? $this->signFrame($request, $liveUrl, $pageUid, null) : '';
-            $workspacePreviewSettings = $this->signFrame($request, $wsUrl, $pageUid, $activeWorkspace);
-        } catch (PreviewAccessDeniedException) {
-            return new HtmlResponse(
-                htmlspecialchars($this->languageServiceFactory->createFromUserPreferences($backendUser)->sL('backend.preview:error.denied')),
-                403,
-                ['Cache-Control' => 'private, no-store']
-            );
+        if ($withPreviewToken) {
+            try {
+                $livePreviewSettings = $liveUrl !== false ? $this->signFrame($request, $liveUrl, $pageUid, null) : '';
+                $workspacePreviewSettings = $this->signFrame($request, $wsUrl, $pageUid, $activeWorkspace);
+            } catch (PreviewAccessDeniedException) {
+                return new HtmlResponse(
+                    htmlspecialchars($this->languageServiceFactory->createFromUserPreferences($backendUser)->sL('backend.preview:error.denied')),
+                    403,
+                    ['Cache-Control' => 'private, no-store']
+                );
+            }
+        } else {
+            $livePreviewSettings = $liveUrl !== false ? $this->getPlainFrameSettings($request, new Uri($liveUrl), $pageUid) : '';
+            $workspacePreviewSettings = $this->getPlainFrameSettings($request, new Uri($wsUrl), $pageUid);
         }
         $view->assignMultiple([
             'logoLink' => Typo3Information::URL_COMMUNITY,
@@ -221,15 +232,26 @@ final readonly class PreviewController
                 : $this->previewTokenIssuer->issue($request, $this->getBackendUser(), $uri, $pageUid, $workspace);
         } catch (AddressOutsidePreviewException) {
             // An address the preview signs no token for opens as it is, as in the Preview module
-            if ($uri->getScheme() !== '' && $uri->getHost() !== '') {
-                $this->allowFrameSource(UriValue::fromUri($uri));
-            }
-            return json_encode($this->previewTokenIssuer->getPlainFrameSettings($request, $uri, $pageUid), JSON_THROW_ON_ERROR);
+            return $this->getPlainFrameSettings($request, $uri, $pageUid);
         }
         foreach ($preview->hosts->getFrameSources() as $source) {
             $this->allowFrameSource($source);
         }
         return json_encode($this->previewTokenIssuer->getFrameSettings($preview, $pageUid), JSON_THROW_ON_ERROR);
+    }
+
+    /**
+     * Loads the frame without a preview token: it shows the address as it is, with the
+     * backend login of the browser where its cookie reaches the site
+     *
+     * @return string settings of the frame for the browser
+     */
+    private function getPlainFrameSettings(ServerRequestInterface $request, Uri $uri, int $pageUid): string
+    {
+        if ($uri->getScheme() !== '' && $uri->getHost() !== '') {
+            $this->allowFrameSource(UriValue::fromUri($uri));
+        }
+        return json_encode($this->previewTokenIssuer->getPlainFrameSettings($request, $uri, $pageUid), JSON_THROW_ON_ERROR);
     }
 
     private function allowFrameSource(SourceInterface $source): void

@@ -43,6 +43,14 @@ final class PreviewPageControllerTest extends FunctionalTestCase
         'EN' => ['id' => 0, 'title' => 'English', 'locale' => 'en_US.UTF8'],
     ];
 
+    protected array $configurationToUseInTestInstance = [
+        'SYS' => [
+            'features' => [
+                'backend.previewToken' => true,
+            ],
+        ],
+    ];
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -158,6 +166,39 @@ final class PreviewPageControllerTest extends FunctionalTestCase
         self::assertStringStartsWith('https://first.example/?__t3ct=', $this->getFrameSettings($response)['url']);
     }
 
+    /**
+     * Switched off, the backend issues no token. A preview page opened from a link the
+     * backend signed, for example in a tab that stayed open, opens the address as it is,
+     * as a preview link does without a preview token.
+     */
+    #[Test]
+    public function signedAddressOfTheSitesOpensAsItIsWhileThePreviewTokenIsSwitchedOff(): void
+    {
+        $GLOBALS['TYPO3_CONF_VARS']['SYS']['features']['backend.previewToken'] = false;
+        $url = 'https://first.example/?ADMCMD_simTime=1&__t3ct=leaked#top';
+
+        $response = $this->showPreviewPage($url, 1, $this->sign($url));
+
+        self::assertSame(303, $response->getStatusCode());
+        self::assertSame('https://first.example/?ADMCMD_simTime=1#top', $response->getHeaderLine('Location'));
+    }
+
+    /**
+     * The route has no CSRF token, so an address without the signature of the backend
+     * gets the message, also an address of the sites
+     */
+    #[Test]
+    public function unsignedAddressOfTheSitesGetsAMessageWhileThePreviewTokenIsSwitchedOff(): void
+    {
+        $GLOBALS['TYPO3_CONF_VARS']['SYS']['features']['backend.previewToken'] = false;
+
+        $response = $this->showPreviewPage('https://first.example/', 1, $this->sign('https://outside.example/'));
+
+        self::assertSame(403, $response->getStatusCode());
+        self::assertFalse($response->hasHeader('Location'));
+        self::assertSame('private, no-store', $response->getHeaderLine('Cache-Control'));
+    }
+
     #[Test]
     public function editorWhoMayNotPreviewThePageGetsAMessage(): void
     {
@@ -244,6 +285,29 @@ final class PreviewPageControllerTest extends FunctionalTestCase
         // Both sites run on HTTPS only, so the page around the frame never sends a token to their plain HTTP address
         self::assertSame(['first.example', 'second.example'], $result['httpsHosts']);
         self::assertSame(['first.example', 'second.example'], $settings['httpsHosts']);
+    }
+
+    /**
+     * Switched off, a frame opened before gets no fresh token
+     */
+    #[Test]
+    public function renewalIsRefusedWhileThePreviewTokenIsSwitchedOff(): void
+    {
+        $settings = $this->getFrameSettings($this->showPreviewPage('https://first.example/'));
+        parse_str((string)parse_url($settings['url'], PHP_URL_QUERY), $query);
+        $GLOBALS['TYPO3_CONF_VARS']['SYS']['features']['backend.previewToken'] = false;
+
+        $response = $this->get(PreviewPageController::class)->tokenAction(
+            $this->createBackendRequest()->withMethod('POST')->withParsedBody([
+                'previewToken' => $query[PreviewTokenService::PARAMETER],
+                'url' => 'https://first.example/',
+                'page' => 1,
+            ])
+        );
+
+        self::assertSame(403, $response->getStatusCode());
+        self::assertSame('private, no-store', $response->getHeaderLine('Cache-Control'));
+        self::assertSame(['error' => 'denied'], json_decode((string)$response->getBody(), true, flags: JSON_THROW_ON_ERROR));
     }
 
     /**
