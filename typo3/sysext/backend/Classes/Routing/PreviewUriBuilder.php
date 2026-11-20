@@ -30,6 +30,7 @@ use TYPO3\CMS\Core\Context\Context;
 use TYPO3\CMS\Core\Context\DateTimeAspect;
 use TYPO3\CMS\Core\Context\LanguageAspect;
 use TYPO3\CMS\Core\Context\VisibilityAspect;
+use TYPO3\CMS\Core\Crypto\HashService;
 use TYPO3\CMS\Core\Database\ConnectionPool;
 use TYPO3\CMS\Core\Database\Query\Restriction\DeletedRestriction;
 use TYPO3\CMS\Core\Database\Query\Restriction\HiddenRestriction;
@@ -277,6 +278,8 @@ class PreviewUriBuilder
         return GeneralUtility::makeInstance(UriBuilder::class)->buildUriFromRoute('preview', [
             'url' => (string)$uri,
             'page' => $this->pageId,
+            // The preview page opens an address outside the sites of the installation only with this signature
+            'hmac' => GeneralUtility::makeInstance(HashService::class)->hmac((string)$uri, 'backend-preview-url'),
         ]);
     }
 

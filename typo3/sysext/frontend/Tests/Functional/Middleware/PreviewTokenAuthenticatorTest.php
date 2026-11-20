@@ -23,8 +23,9 @@ use Psr\Clock\ClockInterface;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use Psr\Http\Server\RequestHandlerInterface;
-use TYPO3\CMS\Core\Clock\SystemClock;
 use TYPO3\CMS\Core\Core\SystemEnvironmentBuilder;
+use TYPO3\CMS\Core\Crypto\Cipher\CipherService;
+use TYPO3\CMS\Core\Crypto\Cipher\KeyFactory;
 use TYPO3\CMS\Core\Database\ConnectionPool;
 use TYPO3\CMS\Core\Http\HtmlResponse;
 use TYPO3\CMS\Core\Http\ImmediateResponseException;
@@ -33,6 +34,7 @@ use TYPO3\CMS\Core\Http\RedirectResponse;
 use TYPO3\CMS\Core\Http\ServerRequest;
 use TYPO3\CMS\Core\Preview\PreviewProfile;
 use TYPO3\CMS\Core\Preview\PreviewTokenService;
+use TYPO3\CMS\Core\Session\UserSessionManager;
 use TYPO3\CMS\Core\Site\SiteFinder;
 use TYPO3\CMS\Core\Tests\Functional\SiteHandling\SiteBasedTestTrait;
 use TYPO3\CMS\Frontend\Middleware\PreviewTokenAuthenticator;
@@ -215,7 +217,7 @@ final class PreviewTokenAuthenticatorTest extends FunctionalTestCase
                 return new \DateTimeImmutable('-1 hour');
             }
         };
-        $jwt = new PreviewTokenService($clock)->sign($this->createProfile(), self::BACKEND, self::USER_AGENT, 1)->jwt;
+        $jwt = new PreviewTokenService($clock, new CipherService(), new KeyFactory())->sign($this->createProfile(), self::BACKEND, self::USER_AGENT, 1, $this->createBackendSession(1))->jwt;
 
         $response = $this->preview('https://first.example/hidden', $jwt);
 
@@ -525,7 +527,8 @@ final class PreviewTokenAuthenticatorTest extends FunctionalTestCase
 
     /**
      * The site does not load the editor of a visitor token, so the token stays valid
-     * until it expires. Only the editor who opened it renews it, with his backend login.
+     * until it expires or the backend session it was signed in ends. Only the editor
+     * who opened it renews it, with his backend login.
      */
     #[Test]
     #[DataProvider('editorNoLongerAvailableDataProvider')]
@@ -668,12 +671,16 @@ final class PreviewTokenAuthenticatorTest extends FunctionalTestCase
     #[Test]
     public function tokenMakesTheEditorTheBackendUserWithoutSession(): void
     {
-        $response = $this->preview('https://first.example/', $this->signForEditor());
+        $jwt = $this->signForEditor();
+        $sessions = $this->get(ConnectionPool::class)->getConnectionForTable('be_sessions');
+        $sessionsBefore = $sessions->count('*', 'be_sessions', []);
+
+        $response = $this->preview('https://first.example/', $jwt);
 
         self::assertSame(200, $response->getStatusCode());
         self::assertStringContainsString('Backend user 2', (string)$response->getBody());
         self::assertFalse($response->hasHeader('Set-Cookie'));
-        self::assertSame(0, (int)$this->get(ConnectionPool::class)->getConnectionForTable('be_sessions')->count('*', 'be_sessions', []));
+        self::assertSame($sessionsBefore, $sessions->count('*', 'be_sessions', []));
         self::assertStringContainsString('Backend user 1', (string)$this->preview('https://first.example/', $this->sign())->getBody());
     }
 
@@ -698,6 +705,41 @@ final class PreviewTokenAuthenticatorTest extends FunctionalTestCase
 
         $this->assertRejected('userNotAvailable', $response);
         self::assertStringNotContainsString('Backend user', (string)$response->getBody());
+    }
+
+    public static function endedBackendSessionDataProvider(): \Generator
+    {
+        yield 'editor logged out' => [false, null];
+        yield 'session expired' => [false, ['ses_tstamp' => 86400]];
+        yield 'session switched to another editor' => [false, ['ses_userid' => 2]];
+        yield 'visitor token after the editor logged out' => [true, null];
+        yield 'visitor token after the session expired' => [true, ['ses_tstamp' => 86400]];
+    }
+
+    /**
+     * A token ends with the backend session it was signed in, a visitor token as well:
+     * when the editor logs out, when the session expires and when an administrator
+     * terminates it. The backend page around the frame learns of it and asks the
+     * backend for a token of the current session.
+     */
+    #[Test]
+    #[DataProvider('endedBackendSessionDataProvider')]
+    public function tokenIsRefusedOnceItsBackendSessionEnded(bool $visitor, ?array $sessionChanges): void
+    {
+        $jwt = $visitor ? $this->signForVisitor() : $this->sign();
+        self::assertSame(200, $this->preview('https://first.example/', $jwt)->getStatusCode());
+        $sessions = $this->get(ConnectionPool::class)->getConnectionForTable('be_sessions');
+        if ($sessionChanges === null) {
+            $sessions->delete('be_sessions', ['ses_userid' => 1]);
+        } else {
+            $sessions->update('be_sessions', $sessionChanges, ['ses_userid' => 1]);
+        }
+
+        $response = $this->preview('https://first.example/', $jwt);
+
+        $this->assertRejected('userNotAvailable', $response);
+        self::assertStringNotContainsString('Visible content', (string)$response->getBody());
+        self::assertStringContainsString('typo3:preview:expired', (string)$response->getBody());
     }
 
     #[Test]
@@ -1520,9 +1562,18 @@ final class PreviewTokenAuthenticatorTest extends FunctionalTestCase
 
     private function sign(?PreviewProfile $profile = null, int $userId = 1): string
     {
-        return new PreviewTokenService(new SystemClock())
-            ->sign($profile ?? $this->createProfile(), self::BACKEND, self::USER_AGENT, $userId)
+        return $this->get(PreviewTokenService::class)
+            ->sign($profile ?? $this->createProfile(), self::BACKEND, self::USER_AGENT, $userId, $this->createBackendSession($userId))
             ->jwt;
+    }
+
+    /**
+     * Stores a backend session as a login does and returns its id
+     */
+    private function createBackendSession(int $userId): string
+    {
+        $sessionManager = UserSessionManager::create('BE');
+        return $sessionManager->elevateToFixatedUserSession($sessionManager->createAnonymousSession(), $userId)->getIdentifier();
     }
 
     private function logInFrontendUser(): InternalRequestContext
@@ -1547,8 +1598,8 @@ final class PreviewTokenAuthenticatorTest extends FunctionalTestCase
 
     private function signForVisitor(?PreviewProfile $profile = null, int $editorId = 1): string
     {
-        return new PreviewTokenService(new SystemClock())
-            ->sign($profile ?? PreviewProfile::visitor(), self::BACKEND, self::USER_AGENT, $editorId, true)
+        return $this->get(PreviewTokenService::class)
+            ->sign($profile ?? PreviewProfile::visitor(), self::BACKEND, self::USER_AGENT, $editorId, $this->createBackendSession($editorId), true)
             ->jwt;
     }
 

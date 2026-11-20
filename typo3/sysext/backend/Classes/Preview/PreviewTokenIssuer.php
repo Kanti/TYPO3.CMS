@@ -117,7 +117,8 @@ final readonly class PreviewTokenIssuer
      * previous token, and a token without the editor stays one. For a token of the editor
      * all rights of the editor are checked again, also for its groups. A token without the editor is
      * renewed without a check of the rights of the editor, as its frame goes wherever a
-     * visitor goes.
+     * visitor goes. Either kind of fresh token ends with the current backend session, not
+     * with the session of the previous token.
      *
      * @throws PreviewAccessDeniedException
      */
@@ -223,9 +224,26 @@ final readonly class PreviewTokenIssuer
             (string)$backendUri->withPath('')->withQuery('')->withFragment('')->withUserInfo(''),
             $request->getHeaderLine('User-Agent'),
             (int)$user->user['uid'],
+            $this->getBackendSessionId($user),
             $visitor,
         );
         return new IssuedPreview($token, PreviewTokenService::withToken($frontendUri, $token->jwt), $hosts);
+    }
+
+    /**
+     * The site ends a token with the backend session it was signed in, so a token is
+     * only signed in a stored session of the editor. A backend user without login, as on
+     * the command line, has an anonymous session that is never stored.
+     *
+     * @throws PreviewAccessDeniedException
+     */
+    private function getBackendSessionId(BackendUserAuthentication $user): string
+    {
+        $session = $user->getSession();
+        if ($session->getUserId() !== (int)$user->user['uid']) {
+            throw new PreviewAccessDeniedException('Preview token requires a backend session of the editor', 1795168058);
+        }
+        return $session->getIdentifier();
     }
 
     /**

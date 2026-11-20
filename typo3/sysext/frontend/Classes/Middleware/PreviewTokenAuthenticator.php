@@ -45,6 +45,8 @@ use TYPO3\CMS\Core\Security\ContentSecurityPolicy\Directive;
 use TYPO3\CMS\Core\Security\ContentSecurityPolicy\Event\PolicyMutatedEvent;
 use TYPO3\CMS\Core\Security\ContentSecurityPolicy\SourceKeyword;
 use TYPO3\CMS\Core\Security\ContentSecurityPolicy\UriValue;
+use TYPO3\CMS\Core\Session\Backend\Exception\SessionNotFoundException;
+use TYPO3\CMS\Core\Session\UserSessionManager;
 use TYPO3\CMS\Core\Site\Entity\Site;
 use TYPO3\CMS\Core\Site\Entity\SiteLanguage;
 use TYPO3\CMS\Core\Utility\GeneralUtility;
@@ -101,8 +103,9 @@ final readonly class PreviewTokenAuthenticator implements MiddlewareInterface
     }
 
     /**
-     * The token is one this installation signed for this browser, and it is sent by the
-     * page in the frame or by a request of that page.
+     * The token is one this installation signed for this browser, in a backend session
+     * that has not ended, and it is sent by the page in the frame or by a request of that
+     * page.
      *
      * @throws PreviewTokenRejectedException
      */
@@ -113,7 +116,31 @@ final readonly class PreviewTokenAuthenticator implements MiddlewareInterface
         if (!$this->isFramed($request, $kind)) {
             throw new PreviewTokenRejectedException(PreviewRejection::NotInFrame, 'Preview is only available in a frame', 1793265772, token: $token);
         }
+        $this->assertBackendSessionActive($token);
         return $token;
+    }
+
+    /**
+     * Every token, a visitor token as well, ends with the backend session it was signed
+     * in: when the editor logs out, when the session expires and when an administrator
+     * terminates it. The IP lock of the session does not apply, as the token is bound to
+     * the browser instead.
+     *
+     * @throws PreviewTokenRejectedException
+     */
+    private function assertBackendSessionActive(PreviewToken $token): void
+    {
+        $sessionManager = UserSessionManager::create('BE');
+        try {
+            $session = $sessionManager->createSessionFromStorage($token->backendSessionId);
+            $active = !$sessionManager->hasExpired($session) && $session->getUserId() === $token->editorId;
+        } catch (SessionNotFoundException) {
+            // Not passed on, as its message names the session id
+            $active = false;
+        }
+        if (!$active) {
+            throw new PreviewTokenRejectedException(PreviewRejection::UserNotAvailable, 'Backend session of the preview token has ended', 1795168060, token: $token);
+        }
     }
 
     /**
