@@ -99,6 +99,81 @@ describe('@typo3/backend/preview/preview-frame and the admin panel in its frame'
     expect(backend.renewals).to.deep.equal([{ previewToken: 'token', url: 'https://site.example/news', page: '1' }]);
   });
 
+  /**
+   * The form of the core admin panel with all its settings, as new FormData() reads it:
+   * a checked box follows the hidden "0" of its name, a date that is not simulated is empty.
+   */
+  it('stores every setting the admin panel sends', async (): Promise<void> => {
+    const fields: Array<[string, string]> = [
+      ['TSFE_ADMIN_PANEL[debug_log_groupByComponent]', '0'],
+      ['TSFE_ADMIN_PANEL[debug_log_groupByLevel]', '0'],
+      ['TSFE_ADMIN_PANEL[debug_log_groupByLevel]', '1'],
+      ['TSFE_ADMIN_PANEL[debug_log_startLevel]', '7'],
+      ['TSFE_ADMIN_PANEL[tsdebug_tree]', '0'],
+      ['TSFE_ADMIN_PANEL[tsdebug_tree]', '1'],
+      ['TSFE_ADMIN_PANEL[tsdebug_displayTimes]', '0'],
+      ['TSFE_ADMIN_PANEL[tsdebug_displayMessages]', '0'],
+      ['TSFE_ADMIN_PANEL[tsdebug_LR]', '0'],
+      ['TSFE_ADMIN_PANEL[tsdebug_displayContent]', '0'],
+      ['TSFE_ADMIN_PANEL[tsdebug_forceTemplateParsing]', '0'],
+      ['TSFE_ADMIN_PANEL[cache_noCache]', '0'],
+      ['TSFE_ADMIN_PANEL[preview_showHiddenPages]', '0'],
+      ['TSFE_ADMIN_PANEL[preview_showHiddenPages]', '1'],
+      ['TSFE_ADMIN_PANEL[preview_showHiddenRecords]', '0'],
+      ['TSFE_ADMIN_PANEL[preview_showScheduledRecords]', '0'],
+      ['TSFE_ADMIN_PANEL[preview_showFluidDebug]', '0'],
+      ['TSFE_ADMIN_PANEL[preview_clearCacheId]', '42'],
+      ['TSFE_ADMIN_PANEL[preview_simulateDate]', ''],
+      ['TSFE_ADMIN_PANEL[preview_simulateUserGroup]', '3'],
+    ];
+
+    send(frame, { type: 'typo3:preview:admin-panel', url: 'https://site.example/news', action: 'save', fields });
+
+    await waitUntil((): boolean => frame.getAttribute('src') === 'https://site.example/news?__t3ct=token-1');
+    expect(backend.adminPanelRequests).to.deep.equal([{ url: '/typo3/ajax/adminpanel/form/save', fields }]);
+  });
+
+  /**
+   * A script of the page in the frame can post the message of the admin panel with any
+   * fields. Only flat settings of the admin panel with values of a usual length are stored.
+   */
+  it('stores only fields shaped like the settings of the admin panel', async (): Promise<void> => {
+    send(frame, { type: 'typo3:preview:admin-panel', url: 'https://site.example/news', action: 'save', fields: [
+      ['TSFE_ADMIN_PANEL[preview_showHiddenPages]', '1'],
+      ['data[be_users][1][admin]', '1'],
+      ['TSFE_ADMIN_PANEL', '1'],
+      ['TSFE_ADMIN_PANEL[]', '1'],
+      ['TSFE_ADMIN_PANEL[preview][showHiddenPages]', '1'],
+      ['TSFE_ADMIN_PANEL[preview_showHiddenPages][]', '1'],
+      ['TSFE_ADMIN_PANEL[preview_showHiddenPages]x', '1'],
+      ['TSFE_ADMIN_PANEL[preview-showHiddenPages]', '1'],
+      ['xTSFE_ADMIN_PANEL[preview_showHiddenPages]', '1'],
+      ['TSFE_ADMIN_PANEL[' + 'a'.repeat(101) + ']', '1'],
+      ['TSFE_ADMIN_PANEL[' + 'a'.repeat(100) + ']', '1'],
+      ['TSFE_ADMIN_PANEL[preview_simulateDate]', '1'.repeat(1025)],
+      ['TSFE_ADMIN_PANEL[preview_clearCacheId]', '1'.repeat(1024)],
+    ] });
+
+    await waitUntil((): boolean => frame.getAttribute('src') === 'https://site.example/news?__t3ct=token-1');
+    expect(backend.adminPanelRequests).to.deep.equal([{ url: '/typo3/ajax/adminpanel/form/save', fields: [
+      ['TSFE_ADMIN_PANEL[preview_showHiddenPages]', '1'],
+      ['TSFE_ADMIN_PANEL[' + 'a'.repeat(100) + ']', '1'],
+      ['TSFE_ADMIN_PANEL[preview_clearCacheId]', '1'.repeat(1024)],
+    ] }]);
+  });
+
+  it('ignores a save with more fields than an admin panel sends', async (): Promise<void> => {
+    const fields = (count: number): Array<[string, string]> => Array.from({ length: count }, (_, index: number): [string, string] => [`TSFE_ADMIN_PANEL[setting_${index}]`, '1']);
+
+    send(frame, { type: 'typo3:preview:admin-panel', url: 'https://site.example/news', action: 'save', fields: fields(201) });
+    await new Promise((resolve): number => window.setTimeout(resolve, 50));
+    expect(backend.fetch.called).to.equal(false);
+
+    send(frame, { type: 'typo3:preview:admin-panel', url: 'https://site.example/news', action: 'save', fields: fields(200) });
+    await waitUntil((): boolean => frame.getAttribute('src') === 'https://site.example/news?__t3ct=token-1');
+    expect(backend.adminPanelRequests).to.deep.equal([{ url: '/typo3/ajax/adminpanel/form/save', fields: fields(200) }]);
+  });
+
   it('toggles the admin panel with the backend session and loads the page again with a fresh token', async (): Promise<void> => {
     send(frame, { type: 'typo3:preview:admin-panel', url: 'https://site.example/news', action: 'toggle', fields: [] });
 
