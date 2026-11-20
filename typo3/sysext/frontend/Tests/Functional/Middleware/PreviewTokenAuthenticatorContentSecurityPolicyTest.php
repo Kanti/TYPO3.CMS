@@ -21,10 +21,12 @@ use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Test;
 use Psr\Clock\ClockInterface;
 use Psr\Http\Message\ResponseInterface;
-use TYPO3\CMS\Core\Clock\SystemClock;
+use TYPO3\CMS\Core\Crypto\Cipher\CipherService;
+use TYPO3\CMS\Core\Crypto\Cipher\KeyFactory;
 use TYPO3\CMS\Core\Database\ConnectionPool;
 use TYPO3\CMS\Core\Preview\PreviewProfile;
 use TYPO3\CMS\Core\Preview\PreviewTokenService;
+use TYPO3\CMS\Core\Session\UserSessionManager;
 use TYPO3\CMS\Core\Tests\Functional\SiteHandling\SiteBasedTestTrait;
 use TYPO3\CMS\Core\Utility\GeneralUtility;
 use TYPO3\TestingFramework\Core\Functional\Framework\Frontend\InternalRequest;
@@ -312,8 +314,8 @@ final class PreviewTokenAuthenticatorContentSecurityPolicyTest extends Functiona
 
     private function preview(string $url, ?string $jwt = null): ResponseInterface
     {
-        $jwt ??= new PreviewTokenService(new SystemClock())
-            ->sign($this->createProfile(), self::BACKEND, self::USER_AGENT, 1)
+        $jwt ??= $this->get(PreviewTokenService::class)
+            ->sign($this->createProfile(), self::BACKEND, self::USER_AGENT, 1, $this->createBackendSession(1))
             ->jwt;
         return $this->executeFrontendSubRequest(
             new InternalRequest($url . '?__t3ct=' . $jwt)
@@ -330,7 +332,16 @@ final class PreviewTokenAuthenticatorContentSecurityPolicyTest extends Functiona
                 return new \DateTimeImmutable('-1 hour');
             }
         };
-        return new PreviewTokenService($clock)->sign($this->createProfile(), self::BACKEND, self::USER_AGENT, 1)->jwt;
+        return new PreviewTokenService($clock, new CipherService(), new KeyFactory())->sign($this->createProfile(), self::BACKEND, self::USER_AGENT, 1, $this->createBackendSession(1))->jwt;
+    }
+
+    /**
+     * Stores a backend session as a login does and returns its id
+     */
+    private function createBackendSession(int $userId): string
+    {
+        $sessionManager = UserSessionManager::create('BE');
+        return $sessionManager->elevateToFixatedUserSession($sessionManager->createAnonymousSession(), $userId)->getIdentifier();
     }
 
     private function createProfile(): PreviewProfile

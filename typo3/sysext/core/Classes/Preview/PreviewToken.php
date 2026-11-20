@@ -18,8 +18,9 @@ declare(strict_types=1);
 namespace TYPO3\CMS\Core\Preview;
 
 /**
- * A signed preview token and the claims it carries: the editor who opened the preview
- * and the simulation to show. The editor of a token is the backend user of the request.
+ * A signed preview token and the claims it carries: the editor who opened the preview,
+ * the backend session it ends with and the simulation to show. The editor of a token is
+ * the backend user of the request.
  * A visitor token, the token of the live frame, is valid on every site of the
  * installation, and only the backend uses its editor: he alone renews it. The changelog
  * entry Important-110664-PreviewsOfHiddenPagesWorkOnEveryDomain describes the design.
@@ -34,6 +35,8 @@ final readonly class PreviewToken
         public string $backendOrigin,
         public int $expires,
         public int $editorId,
+        #[\SensitiveParameter]
+        public string $backendSessionId,
         private bool $visitor = false,
     ) {}
 

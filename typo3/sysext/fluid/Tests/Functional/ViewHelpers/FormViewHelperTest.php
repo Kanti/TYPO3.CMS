@@ -396,7 +396,7 @@ final class FormViewHelperTest extends FunctionalTestCase
             $serverRequest = $serverRequest
                 ->withAttribute(
                     PreviewTokenAuthenticator::ATTRIBUTE,
-                    new PreviewToken('preview-jwt', $profile, 'https://backend.example.com', time() + 60, 1)
+                    new PreviewToken('preview-jwt', $profile, 'https://backend.example.com', time() + 60, 1, 'backend-session-id')
                 )
                 ->withAttribute(PreviewTokenAuthenticator::HOSTS_ATTRIBUTE, new PreviewHosts([
                     ['site' => 'main', 'host' => 'site.example', 'origin' => 'https://site.example'],

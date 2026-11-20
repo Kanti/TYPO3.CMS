@@ -20,7 +20,6 @@ namespace TYPO3\CMS\Frontend\Tests\Functional\Authentication;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Test;
 use TYPO3\CMS\Core\Authentication\BackendUserAuthentication;
-use TYPO3\CMS\Core\Clock\SystemClock;
 use TYPO3\CMS\Core\Database\ConnectionPool;
 use TYPO3\CMS\Core\DataHandling\DataHandler;
 use TYPO3\CMS\Core\Http\NormalizedParams;
@@ -40,6 +39,7 @@ final class PreviewBackendUserAuthenticationTest extends FunctionalTestCase
 {
     private const ADMIN = 1;
     private const EDITOR = 2;
+    private const SESSION_ID = '9f86d081884c7d659a2feaa0c55ad015';
 
     protected function setUp(): void
     {
@@ -168,6 +168,7 @@ final class PreviewBackendUserAuthenticationTest extends FunctionalTestCase
         self::assertSame($sessionsBefore, $this->countBackendSessions());
         self::assertSame(self::EDITOR, (int)($user->user['uid'] ?? 0));
         self::assertSame('value', $user->getSessionData('key'));
+        self::assertNotSame(self::SESSION_ID, $user->getSession()->getIdentifier());
     }
 
     private function countBackendSessions(): int
@@ -177,11 +178,13 @@ final class PreviewBackendUserAuthenticationTest extends FunctionalTestCase
 
     private function initializePreviewUser(int $userId): BackendUserAuthentication
     {
-        $token = new PreviewTokenService(new SystemClock())->sign(
+        // PreviewTokenAuthenticator checks the backend session of the token before the editor is built
+        $token = $this->get(PreviewTokenService::class)->sign(
             PreviewProfile::visitor(),
             'https://backend.example',
             'Mozilla/5.0',
-            $userId
+            $userId,
+            self::SESSION_ID,
         );
         return $this->get(PreviewBackendUserInitializer::class)->initialize($token);
     }

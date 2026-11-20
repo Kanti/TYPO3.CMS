@@ -21,6 +21,11 @@ use Firebase\JWT\ExpiredException;
 use Firebase\JWT\JWT;
 use Psr\Clock\ClockInterface;
 use Psr\Http\Message\UriInterface;
+use TYPO3\CMS\Core\Crypto\Cipher\CipherException;
+use TYPO3\CMS\Core\Crypto\Cipher\CipherService;
+use TYPO3\CMS\Core\Crypto\Cipher\CipherValue;
+use TYPO3\CMS\Core\Crypto\Cipher\KeyFactory;
+use TYPO3\CMS\Core\Crypto\Cipher\SharedKey;
 use TYPO3\CMS\Core\Security\JwtTrait;
 use TYPO3\CMS\Core\Utility\StringUtility;
 
@@ -29,7 +34,8 @@ use TYPO3\CMS\Core\Utility\StringUtility;
  * signed for and the whole preview profile, so verifying it needs no session. It names
  * no hosts, so its size does not grow with the sites of an installation. The site
  * resolves them on every request: from the rights the editor has now, or from all
- * sites of the installation for a visitor token.
+ * sites of the installation for a visitor token. A token also carries the backend
+ * session it was signed in, encrypted, so the site ends it with that session.
  *
  * @internal
  */
@@ -46,15 +52,26 @@ final readonly class PreviewTokenService
      */
     private const LEEWAY = 60;
 
-    public function __construct(private ClockInterface $clock) {}
+    public function __construct(
+        private ClockInterface $clock,
+        private CipherService $cipherService,
+        private KeyFactory $keyFactory,
+    ) {}
 
     /**
      * A token of the editor makes the editor the backend user of the request (claim sub).
      * A visitor token names the editor in another claim (scp), which no part of the site
-     * takes for a login.
+     * takes for a login. Both kinds carry the backend session of the editor (claim ses).
      */
-    public function sign(PreviewProfile $profile, string $backendOrigin, string $userAgent, int $editorId, bool $visitor = false): PreviewToken
-    {
+    public function sign(
+        PreviewProfile $profile,
+        string $backendOrigin,
+        string $userAgent,
+        int $editorId,
+        #[\SensitiveParameter]
+        string $backendSessionId,
+        bool $visitor = false,
+    ): PreviewToken {
         if ($editorId <= 0) {
             throw new \InvalidArgumentException('A preview token requires a positive user id, got ' . $editorId . '.', 1794225101);
         }
@@ -66,11 +83,12 @@ final readonly class PreviewTokenService
             'exp' => $issuedAt + self::LIFETIME,
             'uah' => self::hashUserAgent($userAgent),
             'bk' => $backendOrigin,
+            'ses' => $this->encryptBackendSessionId($backendSessionId, $editorId),
             'prf' => $profile->toArray(),
         ];
         $claims[$visitor ? 'scp' : 'sub'] = $editorId;
         $jwt = self::encodeHashSignedJwt($claims, self::createSigningKeyFromEncryptionKey());
-        return new PreviewToken($jwt, $profile, $backendOrigin, $claims['exp'], $editorId, $visitor);
+        return new PreviewToken($jwt, $profile, $backendOrigin, $claims['exp'], $editorId, $backendSessionId, $visitor);
     }
 
     /**
@@ -278,7 +296,11 @@ final readonly class PreviewTokenService
         if ($visitor && !$profile->showsVisitorView()) {
             throw self::invalidClaims('prf asks for more than the visitor view an scp token shows');
         }
-        return new PreviewToken($jwt, $profile, $backendOrigin, $expires, $editorId, $visitor);
+        $backendSessionId = $this->decryptBackendSessionId($claims['ses'] ?? null, $editorId);
+        if ($backendSessionId === null) {
+            throw self::invalidClaims('ses is not a backend session encrypted for the editor');
+        }
+        return new PreviewToken($jwt, $profile, $backendOrigin, $expires, $editorId, $backendSessionId, $visitor);
     }
 
     /**
@@ -297,6 +319,46 @@ final readonly class PreviewTokenService
     private static function invalidClaims(string $reason, ?\Throwable $previous = null): PreviewTokenRejectedException
     {
         return new PreviewTokenRejectedException(PreviewRejection::Invalid, 'Preview token claims invalid: ' . $reason, 1793265767, previous: $previous);
+    }
+
+    /**
+     * The backend session id is the secret of the backend login cookie, and everybody who
+     * sees the address reads the claims of the token, so the token carries it encrypted.
+     * The editor of the token is the additional data of the cipher, so the cipher is only
+     * valid for the editor whose session the site checks. Nonce and cipher are written as
+     * one base64url string, as the token travels in every link of the page.
+     */
+    private function encryptBackendSessionId(#[\SensitiveParameter] string $backendSessionId, int $editorId): string
+    {
+        $value = $this->cipherService->encrypt($backendSessionId, $this->deriveBackendSessionKey(), (string)$editorId);
+        return StringUtility::base64urlEncode($value->nonce . $value->cipher);
+    }
+
+    /**
+     * @return string|null the backend session id, null for a claim that is no backend session encrypted for the editor
+     */
+    private function decryptBackendSessionId(mixed $claim, int $editorId): ?string
+    {
+        $bytes = is_string($claim) ? StringUtility::base64urlDecode($claim, true) : false;
+        if ($bytes === false) {
+            return null;
+        }
+        $nonceLength = SODIUM_CRYPTO_AEAD_XCHACHA20POLY1305_IETF_NPUBBYTES;
+        try {
+            $value = new CipherValue(substr($bytes, 0, $nonceLength), substr($bytes, $nonceLength));
+            return $this->cipherService->decrypt($value, $this->deriveBackendSessionKey(), (string)$editorId);
+        } catch (CipherException) {
+            return null;
+        }
+    }
+
+    /**
+     * The signing key of the token is derived with HKDF from the same seed. The key
+     * derivation of libsodium is a different function, so the two keys are independent.
+     */
+    private function deriveBackendSessionKey(): SharedKey
+    {
+        return $this->keyFactory->deriveSharedKeyFromEncryptionKey(self::class);
     }
 
     private static function hashUserAgent(string $userAgent): string

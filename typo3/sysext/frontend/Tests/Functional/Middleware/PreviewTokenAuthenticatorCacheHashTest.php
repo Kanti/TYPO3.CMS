@@ -19,11 +19,11 @@ namespace TYPO3\CMS\Frontend\Tests\Functional\Middleware;
 
 use PHPUnit\Framework\Attributes\Test;
 use Psr\Http\Message\ResponseInterface;
-use TYPO3\CMS\Core\Clock\SystemClock;
 use TYPO3\CMS\Core\Database\ConnectionPool;
 use TYPO3\CMS\Core\Http\Uri;
 use TYPO3\CMS\Core\Preview\PreviewProfile;
 use TYPO3\CMS\Core\Preview\PreviewTokenService;
+use TYPO3\CMS\Core\Session\UserSessionManager;
 use TYPO3\CMS\Core\Tests\Functional\SiteHandling\SiteBasedTestTrait;
 use TYPO3\TestingFramework\Core\Functional\Framework\Frontend\InternalRequest;
 use TYPO3\TestingFramework\Core\Functional\FunctionalTestCase;
@@ -130,8 +130,17 @@ final class PreviewTokenAuthenticatorCacheHashTest extends FunctionalTestCase
 
     private function sign(): string
     {
-        return new PreviewTokenService(new SystemClock())
-            ->sign(new PreviewProfile(workspace: 0, hiddenPages: true, hiddenContent: false, date: 0, groups: []), self::BACKEND, self::USER_AGENT, 1)
+        return $this->get(PreviewTokenService::class)
+            ->sign(new PreviewProfile(workspace: 0, hiddenPages: true, hiddenContent: false, date: 0, groups: []), self::BACKEND, self::USER_AGENT, 1, $this->createBackendSession(1))
             ->jwt;
+    }
+
+    /**
+     * Stores a backend session as a login does and returns its id
+     */
+    private function createBackendSession(int $userId): string
+    {
+        $sessionManager = UserSessionManager::create('BE');
+        return $sessionManager->elevateToFixatedUserSession($sessionManager->createAnonymousSession(), $userId)->getIdentifier();
     }
 }
