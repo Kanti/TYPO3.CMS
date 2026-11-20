@@ -39,6 +39,33 @@ final class TcaCategoryTest extends FunctionalTestCase
     }
 
     #[Test]
+    public function initialFormAvoidsPerformanceRegressionByNotCompilingCategoryItems(): void
+    {
+        $input = [
+            'command' => 'edit',
+            'tableName' => 'tt_content',
+            'effectivePid' => 89,
+            'databaseRow' => ['uid' => 298, 'categories' => '2'],
+            'processedTca' => ['columns' => ['categories' => ['config' => $this->getFieldConfiguration(['type' => 'category'])]]],
+            'rootline' => [],
+            'site' => null,
+            'selectTreeCompileItems' => false,
+        ];
+        // Compiling all labels, icons and _row data before the AJAX load caused
+        // the same memory regression for category fields as for selectTree.
+        $subject = $this->getMockBuilder(TcaCategory::class)
+            ->onlyMethods(['addItemsFromForeignTable'])
+            ->getMock();
+        $subject->expects($this->never())->method('addItemsFromForeignTable');
+        $subject->injectConnectionPool($this->get(ConnectionPool::class));
+
+        $result = $subject->addData($this->addTcaSchemata($input));
+
+        self::assertTrue($result['processedTca']['columns']['categories']['_hasSelectableItems']);
+        self::assertEmpty($result['processedTca']['columns']['categories']['config']['items'] ?? []);
+    }
+
+    #[Test]
     public function addDataOnlyWorksForTypeCategory(): void
     {
         $input = [
@@ -122,11 +149,9 @@ final class TcaCategoryTest extends FunctionalTestCase
 
         $result = $this->createSubject()->addData($input);
 
-        // Verify items are populated (flat item list from foreign table)
-        self::assertNotEmpty($result['processedTca']['columns']['categories']['config']['items']);
-
-        // Compare structural result without items (tested separately in AJAX tests)
-        unset($result['processedTca']['columns']['categories']['config']['items']);
+        self::assertTrue($result['processedTca']['columns']['categories']['_hasSelectableItems']);
+        self::assertEmpty($result['processedTca']['columns']['categories']['config']['items'] ?? []);
+        unset($result['processedTca']['columns']['categories']['_hasSelectableItems']);
         $expected = $input;
         $expected['databaseRow']['categories'] = ['2'];
         $expected['processedTca']['columns']['categories']['config']['treeConfig'] = [
@@ -182,8 +207,9 @@ final class TcaCategoryTest extends FunctionalTestCase
         $input = $this->addTcaSchemata($input);
 
         $result = $this->createSubject()->addData($input);
-        self::assertNotEmpty($result['processedTca']['columns']['categories']['config']['items']);
-        unset($result['processedTca']['columns']['categories']['config']['items']);
+        self::assertTrue($result['processedTca']['columns']['categories']['_hasSelectableItems']);
+        self::assertEmpty($result['processedTca']['columns']['categories']['config']['items'] ?? []);
+        unset($result['processedTca']['columns']['categories']['_hasSelectableItems']);
 
         $expected = $input;
         $expected['databaseRow']['categories'] = ['2'];
@@ -266,8 +292,9 @@ final class TcaCategoryTest extends FunctionalTestCase
         $input = $this->addTcaSchemata($input);
 
         $result = $this->createSubject()->addData($input);
-        self::assertNotEmpty($result['processedTca']['columns']['categories']['config']['items']);
-        unset($result['processedTca']['columns']['categories']['config']['items']);
+        self::assertTrue($result['processedTca']['columns']['categories']['_hasSelectableItems']);
+        self::assertEmpty($result['processedTca']['columns']['categories']['config']['items'] ?? []);
+        unset($result['processedTca']['columns']['categories']['_hasSelectableItems']);
 
         $expected = $input;
         $expected['databaseRow']['categories'] = ['2'];
@@ -435,8 +462,9 @@ final class TcaCategoryTest extends FunctionalTestCase
         $input = $this->addTcaSchemata($input);
 
         $result = $this->createSubject()->addData($input);
-        self::assertNotEmpty($result['processedTca']['columns']['categories']['config']['items']);
-        unset($result['processedTca']['columns']['categories']['config']['items']);
+        self::assertTrue($result['processedTca']['columns']['categories']['_hasSelectableItems']);
+        self::assertEmpty($result['processedTca']['columns']['categories']['config']['items'] ?? []);
+        unset($result['processedTca']['columns']['categories']['_hasSelectableItems']);
 
         $expected = $input;
         $expected['databaseRow']['categories'] = [
@@ -660,6 +688,180 @@ final class TcaCategoryTest extends FunctionalTestCase
         );
 
         self::assertEquals($expected, $this->createSubject()->addData($input));
+    }
+
+    #[Test]
+    public function addDataMarksCurrentRecordAndItsDescendantsAsUnselectableForParentField(): void
+    {
+        $input = [
+            'command' => 'edit',
+            'tableName' => 'sys_category',
+            'selectTreeCompileItems' => true,
+            'effectivePid' => 0,
+            'databaseRow' => [
+                'uid' => 28,
+                'parent' => '0',
+            ],
+            'processedTca' => [
+                'columns' => [
+                    'parent' => [
+                        'config' => $this->getFieldConfiguration([
+                            'type' => 'category',
+                            'relationship' => 'oneToOne',
+                        ]),
+                    ],
+                ],
+            ],
+            'rootline' => [],
+            'site' => null,
+        ];
+        $input = $this->addTcaSchemata($input);
+
+        $result = $this->createSubject()->addData($input);
+
+        $selectable = array_column($result['processedTca']['columns']['parent']['config']['items'], 'selectable', 'identifier');
+        self::assertSame(
+            [
+                0 => false,
+                28 => false,
+                31 => false,
+                29 => true,
+                30 => true,
+            ],
+            $selectable
+        );
+    }
+
+    #[Test]
+    public function addDataMarksDescendantsAsUnselectableForParentFieldIfTreeIsRootedInDescendant(): void
+    {
+        $this->importCSVDataSet(__DIR__ . '/../Fixtures/CategoryGrandchild.csv');
+        $input = [
+            'command' => 'edit',
+            'tableName' => 'sys_category',
+            'selectTreeCompileItems' => true,
+            'effectivePid' => 0,
+            'databaseRow' => [
+                'uid' => 28,
+                'parent' => '0',
+            ],
+            'processedTca' => [
+                'columns' => [
+                    'parent' => [
+                        'config' => $this->getFieldConfiguration([
+                            'type' => 'category',
+                            'relationship' => 'oneToOne',
+                            'treeConfig' => [
+                                'startingPoints' => '31',
+                            ],
+                        ]),
+                    ],
+                ],
+            ],
+            'rootline' => [],
+            'site' => null,
+        ];
+        $input = $this->addTcaSchemata($input);
+
+        $result = $this->createSubject()->addData($input);
+
+        $selectable = array_column($result['processedTca']['columns']['parent']['config']['items'], 'selectable', 'identifier');
+        self::assertSame(
+            [
+                31 => false,
+                32 => false,
+            ],
+            $selectable
+        );
+    }
+
+    #[Test]
+    public function addDataMarksLiveRecordAndItsDescendantsAsUnselectableForParentFieldOfWorkspaceVersion(): void
+    {
+        $input = [
+            'command' => 'edit',
+            'tableName' => 'sys_category',
+            'selectTreeCompileItems' => true,
+            'effectivePid' => 0,
+            'databaseRow' => [
+                'uid' => 33,
+                't3ver_oid' => 28,
+                'parent' => '0',
+            ],
+            'processedTca' => [
+                'columns' => [
+                    'parent' => [
+                        'config' => $this->getFieldConfiguration([
+                            'type' => 'category',
+                            'relationship' => 'oneToOne',
+                        ]),
+                    ],
+                ],
+            ],
+            'rootline' => [],
+            'site' => null,
+        ];
+        $input = $this->addTcaSchemata($input);
+
+        $result = $this->createSubject()->addData($input);
+
+        $selectable = array_column($result['processedTca']['columns']['parent']['config']['items'], 'selectable', 'identifier');
+        self::assertSame(
+            [
+                0 => false,
+                28 => false,
+                31 => false,
+                29 => true,
+                30 => true,
+            ],
+            $selectable
+        );
+    }
+
+    #[Test]
+    public function addDataMarksDescendantsAsUnselectableForParentFieldIfIntermediateItemIsRemoved(): void
+    {
+        $this->importCSVDataSet(__DIR__ . '/../Fixtures/CategoryGrandchild.csv');
+        $input = [
+            'command' => 'edit',
+            'tableName' => 'sys_category',
+            'selectTreeCompileItems' => true,
+            'effectivePid' => 0,
+            'databaseRow' => [
+                'uid' => 28,
+                'parent' => '0',
+            ],
+            'processedTca' => [
+                'columns' => [
+                    'parent' => [
+                        'config' => $this->getFieldConfiguration([
+                            'type' => 'category',
+                            'relationship' => 'oneToOne',
+                            'treeConfig' => [
+                                'startingPoints' => '32',
+                            ],
+                        ]),
+                    ],
+                ],
+            ],
+            'pageTsConfig' => [
+                'TCEFORM.' => [
+                    'sys_category.' => [
+                        'parent.' => [
+                            'removeItems' => '31',
+                        ],
+                    ],
+                ],
+            ],
+            'rootline' => [],
+            'site' => null,
+        ];
+        $input = $this->addTcaSchemata($input);
+
+        $result = $this->createSubject()->addData($input);
+
+        $selectable = array_column($result['processedTca']['columns']['parent']['config']['items'], 'selectable', 'identifier');
+        self::assertSame([32 => false], $selectable);
     }
 
     private function createSubject(): TcaCategory

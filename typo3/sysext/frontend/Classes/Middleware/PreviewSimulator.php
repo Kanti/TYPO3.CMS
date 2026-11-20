@@ -24,8 +24,10 @@ use Psr\Http\Server\RequestHandlerInterface;
 use TYPO3\CMS\Core\Context\Context;
 use TYPO3\CMS\Core\Context\DateTimeAspect;
 use TYPO3\CMS\Core\Context\LanguageAspectFactory;
+use TYPO3\CMS\Core\Context\UserAspect;
 use TYPO3\CMS\Core\Domain\DateTimeFactory;
 use TYPO3\CMS\Core\Domain\Repository\PageRepository;
+use TYPO3\CMS\Core\Preview\PreviewToken;
 use TYPO3\CMS\Core\Routing\PageArguments;
 use TYPO3\CMS\Core\Schema\LanguageMarker;
 use TYPO3\CMS\Core\Utility\GeneralUtility;
@@ -33,6 +35,9 @@ use TYPO3\CMS\Core\Utility\RootlineUtility;
 use TYPO3\CMS\Frontend\Aspect\PreviewAspect;
 use TYPO3\CMS\Frontend\Controller\ErrorController;
 use TYPO3\CMS\Frontend\Page\PageAccessFailureReasons;
+use TYPO3\CMS\Frontend\Preview\PreviewNavigationScript;
+use TYPO3\CMS\Frontend\Preview\PreviewPageAccess;
+use TYPO3\CMS\Frontend\Preview\PreviewSimulatorCalculator;
 
 /**
  * Middleware for handling preview settings
@@ -44,6 +49,9 @@ readonly class PreviewSimulator implements MiddlewareInterface
     public function __construct(
         protected Context $context,
         protected PageRepository $pageRepository,
+        private PreviewPageAccess $previewPageAccess,
+        private PreviewNavigationScript $previewNavigationScript,
+        protected PreviewSimulatorCalculator $previewSimulatorCalculator = new PreviewSimulatorCalculator(),
     ) {}
 
     /**
@@ -53,6 +61,39 @@ readonly class PreviewSimulator implements MiddlewareInterface
      */
     public function process(ServerRequestInterface $request, RequestHandlerInterface $handler): ResponseInterface
     {
+        // A preview token brings date, visibility and workspace along, see PreviewTokenAuthenticator
+        $previewToken = $request->getAttribute(PreviewTokenAuthenticator::ATTRIBUTE);
+        if ($previewToken instanceof PreviewToken) {
+            $pageArguments = $request->getAttribute('routing');
+            if (!$pageArguments instanceof PageArguments) {
+                return GeneralUtility::makeInstance(ErrorController::class)->pageNotFoundAction(
+                    $request,
+                    'Page Arguments could not be resolved',
+                    ['code' => PageAccessFailureReasons::INVALID_PAGE_ARGUMENTS]
+                );
+            }
+            // The sub-request of PageContentErrorHandler renders the error page of the site in place of
+            // the requested page. Its address has no page of its own to name to the backend.
+            $isErrorPage = $request->getAttribute('originalRequest') instanceof ServerRequestInterface;
+            // A refusal leaves the stack through PreviewTokenAuthenticator, which answers with its refusal page
+            $groups = $this->previewPageAccess->authorize($previewToken, $pageArguments->getPageId(), $isErrorPage);
+            // An editor without a simulated login keeps a frontend login of the frame, as with a backend login
+            if ($previewToken->profile->loggedIn) {
+                $this->replaceUserGroups($request, $groups);
+                if ($groups === []) {
+                    // A login without any group still counts as login: "-2" applies, "-1" does not
+                    $this->context->setAspect('frontend.user', new UserAspect($request->getAttribute('frontend.user'), [0, -2]));
+                }
+            } elseif ($previewToken->isVisitorWithoutBackendUser()) {
+                // A token without an editor shows the page as a visitor sees it, who is not logged in: "-1" applies
+                $this->context->setAspect('frontend.user', new UserAspect(null, [0, -1]));
+            }
+            if ($this->editorSeesHiddenPage($previewToken, $request)) {
+                $this->context->setAspect('visibility', $this->context->getAspect('visibility')->withIncludeHiddenPages(true));
+                $this->context->setAspect('frontend.preview', new PreviewAspect(true));
+            }
+            return $this->previewNavigationScript->addToPage($request, $handler, $previewToken, $isErrorPage ? 0 : $pageArguments->getPageId());
+        }
         $isLoggedIn = $this->context->getPropertyFromAspect('backend.user', 'isLoggedIn', false);
         $isOfflineWorkspace = $this->context->getPropertyFromAspect('workspace', 'isOffline', false);
         // When previewing a workspace with the preview link, the PreviewUserAuthentication is NOT marked as
@@ -123,6 +164,30 @@ readonly class PreviewSimulator implements MiddlewareInterface
     }
 
     /**
+     * The editor of a token sees a hidden page as with a backend login, unless the token
+     * shows all hidden pages anyway
+     *
+     * @internal
+     */
+    protected function editorSeesHiddenPage(PreviewToken $previewToken, ServerRequestInterface $request): bool
+    {
+        if ($previewToken->isVisitorWithoutBackendUser()) {
+            return false;
+        }
+        if ($previewToken->profile->hiddenPages) {
+            return false;
+        }
+        $pageArguments = $request->getAttribute('routing');
+        if (!$pageArguments instanceof PageArguments) {
+            return false;
+        }
+        if ($this->checkIfPageIsHidden($pageArguments->getPageId(), $request)) {
+            return true;
+        }
+        return $this->checkIfRootlineRequiresPreview($pageArguments->getPageId());
+    }
+
+    /**
      * Checks if the page is hidden in the active workspace + language setup.
      */
     protected function checkIfPageIsHidden(int $pageId, ServerRequestInterface $request): bool
@@ -165,23 +230,55 @@ readonly class PreviewSimulator implements MiddlewareInterface
     }
 
     /**
+     * The groups of a preview token replace the groups of a logged-in frontend user,
+     * so the preview shows exactly what members of these groups see.
+     *
+     * @param list<int> $groups
+     * @internal
+     */
+    protected function replaceUserGroups(ServerRequestInterface $request, array $groups): void
+    {
+        $frontendUser = $request->getAttribute('frontend.user');
+        if (!is_array($frontendUser->user)) {
+            $frontendUser->user = [$frontendUser->userid_column => PHP_INT_MAX];
+        }
+        $frontendUser->user[$frontendUser->usergroup_column] = implode(',', $groups);
+        // Set this option so the is_online timestamp is not updated in updateOnlineTimestamp()
+        $frontendUser->user['is_online'] = $this->context->getPropertyFromAspect('date', 'timestamp');
+        $frontendUser->userGroups = [];
+        foreach ($groups as $group) {
+            $frontendUser->userGroups[$group] = ['uid' => $group, 'title' => '_PREVIEW_'];
+        }
+        $this->context->setAspect('frontend.user', $frontendUser->createUserAspect());
+    }
+
+    /**
      * Simulate user group for preview functionality. When previewing a page with a user group restriction,
-     * the parameter ADMCMD_simUser = <groupId> will be added to the preview url. Simulation happens.
+     * the parameter ADMCMD_simUser = <groupId(s)> will be added to the preview url. Simulation happens.
+     * Multiple group IDs can be provided as a comma-separated list (e.g. ADMCMD_simUser=1,2) to simulate
+     * a user that simultaneously satisfies multiple group restrictions, e.g. when a page's live and workspace
+     * versions are protected by different groups.
      * This functionality needs to be loaded after BackendAuthenticator as it is only relevant for
      * logged in backend users and needs to be done before any page resolving starts.
      */
     protected function simulateUserGroup(ServerRequestInterface $request): bool
     {
-        $simulateUserGroup = (int)($request->getQueryParams()['ADMCMD_simUser'] ?? 0);
-        if (!$simulateUserGroup) {
+        $simulatedUserGroups = $request->getQueryParams()['ADMCMD_simUser'] ?? '';
+        if (!is_scalar($simulatedUserGroups)) {
+            return false;
+        }
+        $simulateUserGroups = $this->previewSimulatorCalculator->getUserGroupIds((string)$simulatedUserGroups);
+        if ($simulateUserGroups === []) {
             return false;
         }
         $frontendUser = $request->getAttribute('frontend.user');
-        $frontendUser->user[$frontendUser->usergroup_column] = (string)$simulateUserGroup;
-        $frontendUser->userGroups[$simulateUserGroup] = [
-            'uid' => $simulateUserGroup,
-            'title' => '_PREVIEW_',
-        ];
+        $frontendUser->user[$frontendUser->usergroup_column] = implode(',', $simulateUserGroups);
+        foreach ($simulateUserGroups as $simulateUserGroup) {
+            $frontendUser->userGroups[$simulateUserGroup] = [
+                'uid' => $simulateUserGroup,
+                'title' => '_PREVIEW_',
+            ];
+        }
         // let's fake having a user with that group, too
         $frontendUser->user[$frontendUser->userid_column] = PHP_INT_MAX;
         // Set this option so the is_online timestamp is not updated in updateOnlineTimestamp()

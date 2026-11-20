@@ -23,6 +23,7 @@ import RegularEvent from '@typo3/core/event/regular-event';
 import { topDocument } from '@typo3/core/utility/top-window';
 import labels from '~labels/workspaces.messages';
 import PersistentStorage from '@typo3/backend/storage/persistent';
+import PreviewFrame from '@typo3/backend/preview/preview-frame';
 
 /**
  * Stage ID for the publish execute action.
@@ -53,15 +54,26 @@ class Preview extends Workspaces {
   override ajaxRoute: string = 'workspace_preview';
   private currentSlidePosition: number = 100;
   private readonly elements: { [key: string]: HTMLElement } = {};
+  private readonly previewFrames = new Map<HTMLElement, PreviewFrame>();
 
   constructor() {
     super();
 
     DocumentService.ready().then((): void => {
       this.getElements();
+      this.initializePreviewFrames();
       this.resizeViews();
       this.registerEvents();
       this.initStageButtons();
+    });
+  }
+
+  /**
+   * Loads the live and the workspace frame with their preview tokens
+   */
+  private initializePreviewFrames(): void {
+    document.querySelectorAll<HTMLIFrameElement>('iframe[data-preview-settings]').forEach((frame: HTMLIFrameElement): void => {
+      this.previewFrames.set(frame, new PreviewFrame(frame, JSON.parse(frame.dataset.previewSettings)));
     });
   }
 
@@ -137,6 +149,15 @@ class Preview extends Workspaces {
   }
 
   /**
+   * Loads the workspace frame again at the address it shows, with a fresh token. The
+   * editor may have left the page the frame was opened with, and its first token may
+   * have expired.
+   */
+  private reloadWorkspaceView(): void {
+    this.previewFrames.get(this.elements.workspaceView)?.reload();
+  }
+
+  /**
    * Renders the discard window
    */
   private renderDiscardWindow(): void {
@@ -169,8 +190,7 @@ class Preview extends Workspaces {
         ], Identifiers.topbar).then(async (response: AjaxResponse): Promise<void> => {
           modal.hideModal();
           this.renderStageButtons((await response.resolve())[1].result);
-          // Reloading live view IFRAME
-          this.elements.workspaceView.setAttribute('src', this.elements.workspaceView.getAttribute('src'));
+          this.reloadWorkspaceView();
         });
       }
     });
@@ -206,8 +226,7 @@ class Preview extends Workspaces {
         ], Identifiers.topbar).then(async (response: AjaxResponse): Promise<void> => {
           modal.hideModal();
           this.renderStageButtons((await response.resolve())[1].result);
-          // Reloading live view IFRAME
-          this.elements.workspaceView.setAttribute('src', this.elements.workspaceView.getAttribute('src'));
+          this.reloadWorkspaceView();
         });
       }
     });
@@ -218,7 +237,7 @@ class Preview extends Workspaces {
    */
   private renderSendPageToStageWindow(e: Event, target: HTMLElement): void {
     const direction = target.dataset.direction;
-    const stageId = parseInt(target.dataset.stageId, 10);
+    const stageId = parseInt(target.dataset.stageId ?? '0', 10);
     let actionName;
 
     if (direction === 'prev') {

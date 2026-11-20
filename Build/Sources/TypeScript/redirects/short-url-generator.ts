@@ -22,20 +22,20 @@ import type { AjaxResponse } from '@typo3/core/ajax/ajax-response';
  * Handles the "Generate Short URL" field control
  */
 class ShortUrlGenerator {
-  private controlElement: HTMLAnchorElement = null;
-  private humanReadableField: HTMLInputElement = null;
-  private sourceHostField: HTMLInputElement = null;
-  private debounceTimer: ReturnType<typeof setTimeout> = null;
+  private controlElement!: HTMLAnchorElement;
+  private humanReadableField!: HTMLInputElement;
+  private sourceHostField: HTMLInputElement | null = null;
+  private debounceTimer: ReturnType<typeof setTimeout> | null = null;
   private hasDuplicateError: boolean = false;
 
   constructor(controlElementId: string) {
     DocumentService.ready().then((): void => {
       this.controlElement = <HTMLAnchorElement>document.getElementById(controlElementId);
       this.humanReadableField = document.querySelector<HTMLInputElement>(
-        'input[data-formengine-input-name="' + this.controlElement.dataset.itemName.replace('[short_url]', '[source_path]') + '"]',
+        'input[data-formengine-input-name="' + (this.controlElement.dataset.itemName ?? '').replace('[short_url]', '[source_path]') + '"]',
       );
       this.sourceHostField = document.querySelector<HTMLInputElement>(
-        'input[data-formengine-input-name="' + this.controlElement.dataset.itemName.replace('[short_url]', '[source_host]') + '"]',
+        'input[data-formengine-input-name="' + (this.controlElement.dataset.itemName ?? '').replace('[short_url]', '[source_host]') + '"]',
       );
       this.controlElement.addEventListener('click', this.generateShortUrl.bind(this));
       this.humanReadableField.addEventListener('input', this.debouncedValidate.bind(this));
@@ -84,7 +84,7 @@ class ShortUrlGenerator {
   private setFieldError(hasError: boolean): void {
     if (hasError) {
       // Apply duplicate error markers to both fields
-      const fields = [this.humanReadableField, this.sourceHostField].filter(Boolean);
+      const fields = [this.humanReadableField, this.sourceHostField].filter((field) => field !== null);
       for (const field of fields) {
         field.classList.add(FormEngineValidation.errorClass);
         field.setAttribute('aria-invalid', 'true');

@@ -15,19 +15,12 @@ declare(strict_types=1);
  * The TYPO3 project - inspiring people to share!
  */
 
-namespace TYPO3\CMS\Core\DependencyInjection;
-
-use Masterminds\HTML5;
+namespace TYPO3\CMS\Backend\Preview;
 
 /**
+ * The frontend address is on no host of the preview, for example because an event listener
+ * changed it to a decoupled frontend. The address opens as it is, without a preview token.
+ *
  * @internal
  */
-readonly class CommonFactory
-{
-    public static function createHtml5Parser(): HTML5
-    {
-        return new HTML5([
-            'disable_html_ns' => true,
-        ]);
-    }
-}
+final class AddressOutsidePreviewException extends PreviewAccessDeniedException {}

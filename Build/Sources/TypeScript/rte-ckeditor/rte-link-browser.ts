@@ -25,14 +25,15 @@ import '@typo3/backend/element/combobox-element';
  * LinkBrowser communication with parent window
  */
 class RteLinkBrowser {
-  protected editor: Core.Editor = null;
-  protected selectionStartPosition: ModelPosition = null;
-  protected selectionEndPosition: ModelPosition = null;
+  protected editor: Core.Editor | null = null;
+  protected selectionStartPosition: ModelPosition | null = null;
+  protected selectionEndPosition: ModelPosition | null = null;
 
   public initialize(): void {
-    this.editor = Modal.currentModal.userData.editor;
-    this.selectionStartPosition = Modal.currentModal.userData.selectionStartPosition;
-    this.selectionEndPosition = Modal.currentModal.userData.selectionEndPosition;
+    const currentModal = Modal.currentModal;
+    this.editor = currentModal.userData.editor;
+    this.selectionStartPosition = currentModal.userData.selectionStartPosition;
+    this.selectionEndPosition = currentModal.userData.selectionEndPosition;
 
     const removeLinkElement = document.querySelector('.t3js-removeCurrentLink');
     if (removeLinkElement !== null) {

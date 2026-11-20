@@ -30,12 +30,14 @@ use TYPO3\CMS\Core\Utility\GeneralUtility;
 
 final class TypoLinkTagSoftReferenceParserTest extends AbstractSoftReferenceParserTestCase
 {
+    private Container $container;
+
     protected function setUp(): void
     {
         parent::setUp();
-        $container = new Container();
-        $container->set(EventDispatcherInterface::class, new NoopEventDispatcher());
-        GeneralUtility::setContainer($container);
+        $this->container = new Container();
+        $this->container->set(EventDispatcherInterface::class, new NoopEventDispatcher());
+        GeneralUtility::setContainer($this->container);
     }
 
     public static function findRefReturnsParsedElementsDataProvider(): array
@@ -184,7 +186,7 @@ final class TypoLinkTagSoftReferenceParserTest extends AbstractSoftReferencePars
     public function findRefReturnsParsedElements(array $softrefConfiguration, array $expectedElement, int $amountOfMatches = 1): void
     {
         $linkService = new LinkService(new NoopEventDispatcher());
-        GeneralUtility::setSingletonInstance(LinkService::class, $linkService);
+        $this->container->set(LinkService::class, $linkService);
         $subject = $this->getParserByKey('typolink_tag');
         $subject->setParserKey('typolink_tag', $softrefConfiguration);
         $result = $subject->parse(
@@ -223,17 +225,50 @@ final class TypoLinkTagSoftReferenceParserTest extends AbstractSoftReferencePars
             '<p><a href="tel:0123456789">Click here</a></p>',
             '<p><a href="tel:{softref:###TOKEN###}">Click here</a></p>',
         ];
+        yield 'page uid of a page link' => [
+            '<p><a href="t3://page?uid=42">Click here</a></p>',
+            '<p><a href="t3://page?uid={softref:###TOKEN###}">Click here</a></p>',
+        ];
+        yield 'page uid of a page link with parameters and fragment' => [
+            '<p><a href="t3://page?uid=42&amp;L=1#top">Click here</a></p>',
+            '<p><a href="t3://page?uid={softref:###TOKEN###}&amp;L=1#top">Click here</a></p>',
+        ];
+        yield 'page uid of a page link with parameters before the uid' => [
+            '<p><a href="t3://page?my-uid=5&amp;uid=42">Click here</a></p>',
+            '<p><a href="t3://page?my-uid=5&amp;uid={softref:###TOKEN###}">Click here</a></p>',
+        ];
+        yield 'page uid of a page link with a parameter ending in uid after the uid' => [
+            '<p><a href="t3://page?uid=42&amp;my-uid=5">Click here</a></p>',
+            '<p><a href="t3://page?uid={softref:###TOKEN###}&amp;my-uid=5">Click here</a></p>',
+        ];
         yield 'external url is tokenized as a whole' => [
             '<p><a href="https://example.org/foo">Click here</a></p>',
             '<p><a href="{softref:###TOKEN###}">Click here</a></p>',
         ];
     }
 
+    #[Test]
+    public function findRefTokenizesPageUidAndContentElementOfPageLinkWithNumericFragment(): void
+    {
+        $this->container->set(LinkService::class, new LinkService(new NoopEventDispatcher()));
+        $result = $this->getParserByKey('typolink_tag')->parse('tt_content', 'bodytext', 1, '<p><a href="t3://page?uid=42&amp;L=1#953">Click here</a></p>');
+
+        $matchedElements = $result->getMatchedElements();
+        $pageToken = $matchedElements[1]['subst']['tokenID'];
+        unset($matchedElements[1]);
+        $contentElement = reset($matchedElements);
+        self::assertSame('tt_content:953', $contentElement['subst']['recordRef']);
+        self::assertSame(
+            '<p><a href="t3://page?uid={softref:' . $pageToken . '}&amp;L=1#{softref:' . $contentElement['subst']['tokenID'] . '}">Click here</a></p>',
+            $result->getContent()
+        );
+    }
+
     #[DataProvider('findRefKeepsLinkSchemeOutsideOfTokenDataProvider')]
     #[Test]
     public function findRefKeepsLinkSchemeOutsideOfToken(string $content, string $expectedContent): void
     {
-        GeneralUtility::setSingletonInstance(LinkService::class, new LinkService(new NoopEventDispatcher()));
+        $this->container->set(LinkService::class, new LinkService(new NoopEventDispatcher()));
         $result = $this->getParserByKey('typolink_tag')->parse('tt_content', 'bodytext', 1, $content);
 
         $token = $result->getMatchedElements()[1]['subst']['tokenID'];
@@ -276,9 +311,9 @@ final class TypoLinkTagSoftReferenceParserTest extends AbstractSoftReferencePars
         // For `file:42` handling
         $resourceFactory->expects($this->atMost(PHP_INT_MAX))->method('retrieveFileOrFolderObject')->with('42')->willReturn($fileObject);
 
-        GeneralUtility::setSingletonInstance(ResourceFactory::class, $resourceFactory);
+        $this->container->set(ResourceFactory::class, $resourceFactory);
         $linkService = new LinkService(new NoopEventDispatcher());
-        GeneralUtility::setSingletonInstance(LinkService::class, $linkService);
+        $this->container->set(LinkService::class, $linkService);
 
         $subject = $this->getParserByKey('typolink_tag');
         $subject->setParserKey('typolink_tag', $softrefConfiguration);
@@ -324,9 +359,9 @@ final class TypoLinkTagSoftReferenceParserTest extends AbstractSoftReferencePars
         $resourceFactory = $this->createMock(ResourceFactory::class);
         $resourceFactory->expects($this->once())->method('getFolderObjectFromCombinedIdentifier')
             ->with('1:/foo/bar/baz')->willReturn($folderObject);
-        GeneralUtility::setSingletonInstance(ResourceFactory::class, $resourceFactory);
+        $this->container->set(ResourceFactory::class, $resourceFactory);
         $linkService = new LinkService(new NoopEventDispatcher());
-        GeneralUtility::setSingletonInstance(LinkService::class, $linkService);
+        $this->container->set(LinkService::class, $linkService);
 
         $result = $this->getParserByKey('typolink_tag')->parse(
             'tt_content',

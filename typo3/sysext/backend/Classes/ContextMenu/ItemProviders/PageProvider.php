@@ -512,7 +512,7 @@ class PageProvider extends RecordProvider
      */
     protected function getViewLink(): string
     {
-        return (string)PreviewUriBuilder::create($this->record)->buildUri();
+        return (string)PreviewUriBuilder::create($this->record)->buildBackendPreviewUri();
     }
 
     /**

@@ -319,6 +319,122 @@ final class EditDocumentControllerTest extends FunctionalTestCase
         self::assertStringContainsString('display-name="Sample text &amp; media · ', $html);
     }
 
+    #[Test]
+    public function recordIdentityOfRecordWithTypeFromRelatedRecordIsRendered(): void
+    {
+        $this->getConnectionPool()->getConnectionForTable('sys_file')
+            ->insert('sys_file', ['uid' => 1, 'pid' => 0, 'storage' => 0, 'type' => 2, 'identifier' => '/image.png', 'name' => 'image.png']);
+        $this->getConnectionPool()->getConnectionForTable('sys_file_reference')
+            ->insert('sys_file_reference', ['uid' => 1, 'pid' => 1, 'uid_local' => 1, 'uid_foreign' => 1, 'tablenames' => 'tt_content', 'fieldname' => 'image']);
+
+        $request = new ServerRequest('https://www.example.com/typo3/record/edit', 'GET')
+            ->withAttribute('applicationType', SystemEnvironmentBuilder::REQUESTTYPE_BE)
+            ->withAttribute('normalizedParams', $this->normalizedParams)
+            ->withAttribute('route', new Route('path', ['packageName' => 'typo3/cms-backend']))
+            ->withQueryParams(['edit' => ['sys_file_reference' => [1 => 'edit']]]);
+        $GLOBALS['TYPO3_REQUEST'] = $request;
+
+        $html = (string)$this->subject->mainAction($request)->getBody();
+
+        self::assertMatchesRegularExpression('#<span class="recordidentity-type">.*File Reference</span>#s', $html);
+    }
+
+    public static function changingColumnOfContentElementReloadsFormDataProvider(): \Generator
+    {
+        yield 'page without content type restrictions' => [1, false];
+        yield 'page with a column restricting content types' => [10, true];
+    }
+
+    #[DataProvider('changingColumnOfContentElementReloadsFormDataProvider')]
+    #[Test]
+    public function changingColumnOfContentElementReloadsFormIfColumnsRestrictContentTypes(int $uid, bool $expectReload): void
+    {
+        $this->importCSVDataSet(__DIR__ . '/Fixtures/content_type_restrictions.csv');
+        $request = new ServerRequest('https://www.example.com/typo3/record/edit', 'GET')
+            ->withAttribute('applicationType', SystemEnvironmentBuilder::REQUESTTYPE_BE)
+            ->withAttribute('normalizedParams', $this->normalizedParams)
+            ->withAttribute('route', new Route('path', ['packageName' => 'typo3/cms-backend']))
+            ->withQueryParams(['edit' => ['tt_content' => [$uid => 'edit']]]);
+        $GLOBALS['TYPO3_REQUEST'] = $request;
+
+        $html = (string)$this->subject->mainAction($request)->getBody();
+
+        $onChangeNames = $this->getOnChangeNamesOfField($html, 'data[tt_content][' . $uid . '][colPos]');
+        self::assertContains('typo3-backend-form-update-value', $onChangeNames);
+        self::assertSame($expectReload, in_array('typo3-backend-form-reload', $onChangeNames, true));
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function getOnChangeNamesOfField(string $html, string $fieldName): array
+    {
+        $selectPattern = '/<select\b[^>]*\bname="' . preg_quote($fieldName, '/') . '"[^>]*>/';
+        self::assertMatchesRegularExpression($selectPattern, $html);
+        preg_match($selectPattern, $html, $selectTag);
+        preg_match('/\bid="([^"]+)"/', $selectTag[0], $selectId);
+        $onChangeNames = [];
+        preg_match_all('#<script\b[^>]*>/\* (.*?) \*/</script>#s', $html, $payloads);
+        foreach ($payloads[1] as $payload) {
+            foreach (json_decode($payload, true, flags: JSON_THROW_ON_ERROR) as $instruction) {
+                foreach ($instruction['payload']['items'] ?? [] as $item) {
+                    if (($item['args'][0] ?? null) === '#' . $selectId[1]) {
+                        $onChangeNames = [...$onChangeNames, ...array_column($item['args'][1]['onChange'] ?? [], 'name')];
+                    }
+                }
+            }
+        }
+        return $onChangeNames;
+    }
+
+    public static function parametersOfTheBodyDataProvider(): \Generator
+    {
+        yield 'columnsOnly' => ['columnsOnly', ['pages' => ['title']], []];
+        yield 'defVals' => ['defVals', ['pages' => ['title' => 'Default']], []];
+        yield 'overrideVals' => ['overrideVals', ['pages' => ['nav_title' => 'Override']], []];
+        yield 'returnEditConf' => ['returnEditConf', '1', []];
+        yield 'columnsOnly of the body before the query' => ['columnsOnly', ['pages' => ['title']], ['columnsOnly' => ['pages' => ['nav_title']]]];
+        yield 'defVals of the body before the query' => ['defVals', ['pages' => ['title' => 'Default']], ['defVals' => ['pages' => ['title' => 'Query']]]];
+        yield 'overrideVals of the body before the query' => ['overrideVals', ['pages' => ['nav_title' => 'Override']], ['overrideVals' => ['pages' => ['nav_title' => 'Query']]]];
+        yield 'returnEditConf of the body before the query' => ['returnEditConf', '1', ['returnEditConf' => '0']];
+    }
+
+    #[DataProvider('parametersOfTheBodyDataProvider')]
+    #[Test]
+    public function redirectAfterAPostKeepsAParameterOfTheBody(string $parameter, array|string $value, array $queryParams): void
+    {
+        $query = $this->getQueryOfTheRedirectAfterAPost($queryParams, ['edit' => ['pages' => [1 => 'edit']], $parameter => $value]);
+
+        self::assertSame($value, $query[$parameter] ?? null);
+    }
+
+    #[Test]
+    public function redirectAfterAPostKeepsNoOtherParameterOfTheBody(): void
+    {
+        $query = $this->getQueryOfTheRedirectAfterAPost([], ['edit' => ['pages' => [1 => 'edit']], 'noView' => '1', 'unknown' => 'value']);
+
+        self::assertSame(['pages' => [1 => 'edit']], $query['edit'] ?? null);
+        self::assertArrayNotHasKey('noView', $query);
+        self::assertArrayNotHasKey('unknown', $query);
+    }
+
+    private function getQueryOfTheRedirectAfterAPost(array $queryParams, array $parsedBody): array
+    {
+        $request = new ServerRequest('https://www.example.com/typo3/record/edit', 'POST')
+            ->withAttribute('applicationType', SystemEnvironmentBuilder::REQUESTTYPE_BE)
+            ->withAttribute('normalizedParams', $this->normalizedParams)
+            ->withAttribute('route', new Route('path', ['packageName' => 'typo3/cms-backend']))
+            ->withQueryParams($queryParams)
+            ->withParsedBody($parsedBody);
+        $GLOBALS['TYPO3_REQUEST'] = $request;
+
+        $response = $this->subject->mainAction($request);
+
+        self::assertSame(302, $response->getStatusCode());
+        parse_str((string)parse_url($response->getHeaderLine('Location'), PHP_URL_QUERY), $query);
+        return $query;
+    }
+
     private function getParsedBody(array $additionalData = []): array
     {
         return [

@@ -442,7 +442,7 @@ return [
                 'type' => 'select',
                 'renderType' => 'selectCheckBox',
                 'items' => [
-                    ['label' => 'foo 1', 'value' => 1, 'description' => ['title' => 'optional title', 'description' => 'optional description']],
+                    ['label' => 'foo 1', 'value' => 1, 'description' => ['title' => 'styleguide.messages:translatedHelpTitleForSelectCheckBox3', 'description' => 'styleguide.messages:translatedHelpDescriptionForSelectCheckBox3']],
                     ['label' => 'foo 2', 'value' => 2, 'icon' => 'EXT:styleguide/Resources/Public/Icons/tx_styleguide.svg', 'description' => 'LLL:EXT:styleguide/Resources/Private/Language/locallang.xlf:translatedHelpTextForSelectCheckBox3'],
                     ['label' => 'foo 3', 'value' => 3, 'icon' => 'EXT:styleguide/Resources/Public/Icons/tx_styleguide.svg'],
                     ['label' => 'foo 4', 'value' => 4],
@@ -813,6 +813,22 @@ return [
                     'appearance' => [
                         'showHeader' => false,
                         'expandAll' => false,
+                    ],
+                ],
+            ],
+        ],
+
+        'select_tree_8' => [
+            'label' => 'select_tree_8 treeConfig.dataProvider without foreign_table',
+            'description' => 'Tree data provider that does not read records from the database',
+            'config' => [
+                'type' => 'select',
+                'renderType' => 'selectTree',
+                'size' => 10,
+                'treeConfig' => [
+                    'dataProvider' => \TYPO3\CMS\Styleguide\UserFunctions\FormEngine\TypeSelectTree8DataProvider::class,
+                    'appearance' => [
+                        'expandAll' => true,
                     ],
                 ],
             ],
@@ -1460,6 +1476,7 @@ return [
                     shared_mm_primary, shared_mm_secondary,
                 --div--;renderType=selectTree,
                     select_tree_1, select_tree_2, select_tree_3, select_tree_4, select_tree_5, select_tree_6, select_tree_7,
+                    select_tree_8,
                 --div--;Tree starting points,
                     select_tree_static, select_tree_pid, select_tree_siteroot,
                     select_tree_tsconfig, select_tree_tsconfig_list,

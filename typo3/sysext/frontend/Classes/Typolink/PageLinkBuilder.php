@@ -47,6 +47,9 @@ use TYPO3\CMS\Core\Http\Uri;
 use TYPO3\CMS\Core\LinkHandling\LinkService;
 use TYPO3\CMS\Core\LinkHandling\PageTypeLinkResolver;
 use TYPO3\CMS\Core\LinkHandling\TypoLinkCodecService;
+use TYPO3\CMS\Core\Preview\PreviewHosts;
+use TYPO3\CMS\Core\Preview\PreviewToken;
+use TYPO3\CMS\Core\Preview\PreviewTokenService;
 use TYPO3\CMS\Core\Routing\InvalidRouteArgumentsException;
 use TYPO3\CMS\Core\Routing\PageArguments;
 use TYPO3\CMS\Core\Routing\RouterInterface;
@@ -66,6 +69,7 @@ use TYPO3\CMS\Core\Utility\RootlineUtility;
 use TYPO3\CMS\Frontend\Cache\CacheLifetimeCalculator;
 use TYPO3\CMS\Frontend\ContentObject\ContentObjectRenderer;
 use TYPO3\CMS\Frontend\Event\ModifyPageLinkConfigurationEvent;
+use TYPO3\CMS\Frontend\Middleware\PreviewTokenAuthenticator;
 use TYPO3\CMS\Frontend\Page\PageInformation;
 
 /**
@@ -294,9 +298,7 @@ class PageLinkBuilder extends AbstractTypolinkBuilder implements TypolinkBuilder
                 // is on the same site pagetree. If this is the case, we'll treat it as internal
                 // @todo: currently this does not check if the target page is a mounted page in a different site,
                 // so it is treating this as an absolute URL, which is wrong
-                if ($currentSite && $currentSite->getRootPageId() === $siteOfTargetPage->getRootPageId()) {
-                    $treatAsExternalLink = false;
-                }
+                $treatAsExternalLink = !$currentSite || $currentSite->getRootPageId() !== $siteOfTargetPage->getRootPageId();
             }
             $url = (string)$url;
         }
@@ -313,6 +315,15 @@ class PageLinkBuilder extends AbstractTypolinkBuilder implements TypolinkBuilder
                 $additionalAttributes = GeneralUtility::get_tag_attributes($additionalAttributes);
                 $result = $result->withAttributes($additionalAttributes);
             }
+        }
+
+        $previewToken = $request->getAttribute(PreviewTokenAuthenticator::ATTRIBUTE);
+        $previewHosts = $request->getAttribute(PreviewTokenAuthenticator::HOSTS_ATTRIBUTE);
+        if ($previewToken instanceof PreviewToken && $previewHosts instanceof PreviewHosts) {
+            $url = $previewHosts->allowsUrl($result->getUrl(), $request->getUri())
+                ? PreviewTokenService::addToUrl($result->getUrl(), $previewToken->jwt)
+                : PreviewTokenService::removeFromUrl($result->getUrl());
+            $result = $result->withAttribute('href', $url);
         }
 
         $this->addPageCacheTag($request, $resolvedPage);

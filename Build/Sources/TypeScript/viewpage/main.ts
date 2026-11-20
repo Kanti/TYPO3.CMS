@@ -17,6 +17,7 @@ import PersistentStorage, { type UC } from '@typo3/backend/storage/persistent';
 import RegularEvent from '@typo3/core/event/regular-event';
 import DebounceEvent from '@typo3/core/event/debounce-event';
 import type { ResizeEvent } from '@interactjs/actions/resize/plugin';
+import PreviewFrame from '@typo3/backend/preview/preview-frame';
 
 enum Selectors {
   resizableContainerIdentifier = '.t3js-viewpage-resizeable',
@@ -46,6 +47,7 @@ class ViewPage {
 
   private readonly storagePrefix: string = 'moduleData.page_preview.States.';
   private iframe: HTMLIFrameElement;
+  private previewFrame: PreviewFrame;
   private inputCustomWidth: HTMLInputElement;
   private inputCustomHeight: HTMLInputElement;
   private customPresetItem: HTMLElement;
@@ -61,14 +63,15 @@ class ViewPage {
       const presetCustomLabel = document.querySelector('.t3js-preset-custom-label');
 
       this.defaultLabel = presetCustomLabel?.textContent.trim() ?? '';
-      this.iframe = document.getElementById('tx_this_iframe') as HTMLIFrameElement;
+      this.iframe = document.getElementById('tx_viewpage_iframe') as HTMLIFrameElement;
+      this.previewFrame = new PreviewFrame(this.iframe, JSON.parse(this.iframe.dataset.previewSettings));
       this.inputCustomWidth = document.querySelector<HTMLInputElement>(Selectors.inputWidthSelector);
       this.inputCustomHeight = document.querySelector<HTMLInputElement>(Selectors.inputHeightSelector);
       this.customPresetItem = document.querySelector<HTMLElement>(Selectors.customSelector);
       this.customPresetItemWidth = document.querySelector<HTMLElement>(Selectors.customWidthSelector);
       this.customPresetItemHeight = document.querySelector<HTMLElement>(Selectors.customHeightSelector);
       this.currentLabelElement = document.querySelector<HTMLElement>(Selectors.currentLabelSelector);
-      this.resizableContainer = document.querySelector(Selectors.resizableContainerIdentifier);
+      this.resizableContainer = document.querySelector<HTMLElement>(Selectors.resizableContainerIdentifier);
 
       this.initialize();
     });
@@ -173,14 +176,14 @@ class ViewPage {
 
     // Add event to width selector so the container is resized
     new RegularEvent('click', (e: Event, selectedElement: HTMLElement): void => {
-      this.setSize(parseInt(selectedElement.dataset.width, 10), parseInt(selectedElement.dataset.height, 10));
-      this.setLabel(selectedElement.dataset.label);
+      this.setSize(parseInt(selectedElement.dataset.width ?? '0', 10), parseInt(selectedElement.dataset.height ?? '0', 10));
+      this.setLabel(selectedElement.dataset.label ?? '');
       this.persistCurrentPreset();
     }).delegateTo(document, Selectors.changePresetSelector);
 
     // Add event for refresh button click
     new RegularEvent('click', (): void => {
-      this.iframe.contentWindow.location.reload();
+      this.previewFrame.reload();
     }).bindTo(document.querySelector(Selectors.refreshSelector));
 
     let resizeStartWidth = 0;
@@ -194,7 +197,7 @@ class ViewPage {
       iframeCover.setAttribute('style', 'z-index:99;position:absolute;width:100%;top:0;left:0;height:100%;');
       e.target.appendChild(iframeCover);
     }).on('resizeend', (): void => {
-      document.getElementById('viewpage-iframe-cover').remove();
+      document.getElementById('viewpage-iframe-cover')?.remove();
       this.persistCustomPreset();
     }).resizable({
       origin: 'self',

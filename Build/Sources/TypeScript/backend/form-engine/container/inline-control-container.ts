@@ -96,8 +96,8 @@ interface InlineEndpoints {
 }
 
 class InlineControlContainer extends HTMLElement {
-  private ajaxDispatcher: AjaxDispatcher = null;
-  private recordsContainer: HTMLDivElement = null;
+  private ajaxDispatcher: AjaxDispatcher | null = null;
+  private recordsContainer: HTMLDivElement | null = null;
   private requestQueue: RequestQueue = {};
   private progressQueue: ProgressQueue = {};
   private readonly noTitleString: string = (coreCoreLabels.get('labels.no_title'));
@@ -342,7 +342,10 @@ class InlineControlContainer extends HTMLElement {
           objectId += Separators.structureSeparator + targetElement.dataset.recordUid;
         }
 
-        this.importRecord([objectId, (this.querySelector<HTMLInputElement>(Selectors.createNewRecordBySelectorSelector))?.value], targetElement.dataset.recordUid ?? null);
+        const selectedRecordUid = targetElement.dataset.useSelectedRecord === 'true'
+          ? this.querySelector<HTMLSelectElement>(Selectors.createNewRecordBySelectorSelector)?.value
+          : undefined;
+        this.importRecord([objectId, selectedRecordUid], targetElement.dataset.recordUid ?? null);
       }
     }).delegateTo(this, Selectors.createNewRecordButtonSelector);
   }

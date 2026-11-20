@@ -48,7 +48,7 @@ declare global {
  * ElementBrowser communication with parent windows
  */
 class ElementBrowser {
-  private opener: Window = null;
+  private opener: Window | null = null;
   private fieldReference: string = '';
   private readonly irre: InlineSettings = {
     objectId: '',
@@ -128,7 +128,7 @@ class ElementBrowser {
     uid: string,
     title: string,
     value: string,
-    close: boolean,
+    close: boolean = false,
   ): boolean {
     // Call a check function in the opener window (e.g. for uniqueness handling):
     if (this.irre.objectId) {

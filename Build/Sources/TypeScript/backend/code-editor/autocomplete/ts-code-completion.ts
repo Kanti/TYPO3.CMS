@@ -32,9 +32,9 @@ export type TsObjTree = {
 export class TsCodeCompletion {
   public extTsObjTree: TsObjTree = {};
   private readonly tsRef: TsRef;
-  private readonly parser: TsParser = null;
-  private proposals: Array<Proposal> = null;
-  private compResult: CompletionResult = null;
+  private readonly parser: TsParser | null = null;
+  private proposals: Array<Proposal> | null = null;
+  private compResult: CompletionResult | null = null;
 
   constructor(id: number) {
     this.tsRef = new TsRef();
@@ -83,6 +83,9 @@ export class TsCodeCompletion {
       .then(async (response) => {
         this.extTsObjTree.c = await response.resolve();
         this.resolveExtReferencesRec(this.extTsObjTree.c);
+      })
+      .catch(() => {
+        // Only administrators may read the templates; the completion goes on with the TypoScript reference alone
       });
   }
 

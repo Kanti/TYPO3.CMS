@@ -37,12 +37,15 @@ use TYPO3\CMS\Core\Context\DateTimeAspect;
 use TYPO3\CMS\Core\Context\UserAspect;
 use TYPO3\CMS\Core\Context\VisibilityAspect;
 use TYPO3\CMS\Core\Domain\DateTimeFactory;
+use TYPO3\CMS\Core\Preview\PreviewToken;
 use TYPO3\CMS\Core\Routing\PageArguments;
 use TYPO3\CMS\Core\Utility\GeneralUtility;
 use TYPO3\CMS\Core\View\ViewFactoryData;
 use TYPO3\CMS\Core\View\ViewFactoryInterface;
 use TYPO3\CMS\Frontend\Aspect\PreviewAspect;
 use TYPO3\CMS\Frontend\Cache\CacheInstruction;
+use TYPO3\CMS\Frontend\Middleware\PreviewTokenAuthenticator;
+use TYPO3\CMS\Frontend\Preview\PreviewSimulatorCalculator;
 
 /**
  * Admin Panel Preview Module
@@ -70,6 +73,7 @@ class PreviewModule extends AbstractModule implements RequestEnricherInterface, 
         private readonly LoggerInterface $logger,
         private readonly GroupResolver $groupResolver,
         private readonly CacheFlusher $cacheFlusher,
+        private readonly PreviewSimulatorCalculator $previewSimulatorCalculator = new PreviewSimulatorCalculator(),
     ) {}
 
     public function getIconIdentifier(): string
@@ -92,14 +96,26 @@ class PreviewModule extends AbstractModule implements RequestEnricherInterface, 
     public function enrich(ServerRequestInterface $request): ServerRequestInterface
     {
         // Backend preview params (ADMCMD_) take precedence over configured admin panel values
-        $simulateGroupByRequest = (int)($request->getQueryParams()['ADMCMD_simUser'] ?? 0);
+        $simulateGroupsParameter = $request->getQueryParams()['ADMCMD_simUser'] ?? '';
+        $simulateGroupsByRequest = $this->previewSimulatorCalculator->getUserGroupIds(is_scalar($simulateGroupsParameter) ? (string)$simulateGroupsParameter : '');
         $simulateTimeByRequest = (int)($request->getQueryParams()['ADMCMD_simTime'] ?? 0);
+        $simulateGroups = $simulateGroupsByRequest ?: array_filter([(int)$this->getConfigOptionForModule('simulateUserGroup')]);
+        $simulateDate = $simulateTimeByRequest;
+        // So does the simulation a preview token of the backend carries: its frontend login
+        // is applied after the admin panel, its date is applied here again
+        $previewToken = $request->getAttribute(PreviewTokenAuthenticator::ATTRIBUTE);
+        if ($previewToken instanceof PreviewToken) {
+            $simulateDate = $previewToken->profile->date;
+            if ($previewToken->profile->loggedIn) {
+                $simulateGroups = [];
+            }
+        }
         $this->config = [
             'showHiddenPages' => (bool)$this->getConfigOptionForModule('showHiddenPages'),
-            'simulateDate' => $simulateTimeByRequest ?: (int)$this->getConfigOptionForModule('simulateDate'),
+            'simulateDate' => $simulateDate ?: (int)$this->getConfigOptionForModule('simulateDate'),
             'showHiddenRecords' => (bool)$this->getConfigOptionForModule('showHiddenRecords'),
             'showScheduledRecords' => (bool)$this->getConfigOptionForModule('showScheduledRecords'),
-            'simulateUserGroup' => $simulateGroupByRequest ?: (int)$this->getConfigOptionForModule('simulateUserGroup'),
+            'simulateUserGroup' => $simulateGroups[0] ?? 0,
             'showFluidDebug' => (bool)$this->getConfigOptionForModule('showFluidDebug'),
         ];
         if ($this->config['showFluidDebug']) {
@@ -117,7 +133,7 @@ class PreviewModule extends AbstractModule implements RequestEnricherInterface, 
             $this->config['showHiddenRecords'],
             $this->config['showScheduledRecords'],
             $this->config['simulateDate'],
-            $this->config['simulateUserGroup'],
+            $simulateGroups,
             $request
         );
 
@@ -173,6 +189,8 @@ class PreviewModule extends AbstractModule implements RequestEnricherInterface, 
      * Initialize frontend preview functionality incl.
      * simulation of users or time
      *
+     * @param list<int> $simulateUserGroups
+     *
      * @throws \Exception
      */
     protected function initializeFrontendPreview(
@@ -180,7 +198,7 @@ class PreviewModule extends AbstractModule implements RequestEnricherInterface, 
         bool $showHiddenRecords,
         bool $showScheduledRecords,
         int $simulateDate,
-        int $simulateUserGroup,
+        array $simulateUserGroups,
         ServerRequestInterface $request
     ): void {
         $context = GeneralUtility::makeInstance(Context::class);
@@ -203,9 +221,9 @@ class PreviewModule extends AbstractModule implements RequestEnricherInterface, 
             $context->setAspect('date', new DateTimeAspect(DateTimeFactory::createFromTimestamp($simTime)));
         }
         // simulate usergroup
-        if ($simulateUserGroup) {
+        if ($simulateUserGroups !== []) {
             $frontendUser = $request->getAttribute('frontend.user');
-            $frontendUser->user[$frontendUser->usergroup_column] = (string)$simulateUserGroup;
+            $frontendUser->user[$frontendUser->usergroup_column] = implode(',', $simulateUserGroups);
             $frontendUser->userGroups = array_column(
                 $this->groupResolver->resolveGroupsForUser($frontendUser->user, 'fe_groups'),
                 null,
@@ -217,7 +235,7 @@ class PreviewModule extends AbstractModule implements RequestEnricherInterface, 
             $groupUids = array_column($frontendUser->userGroups, 'uid');
             $context->setAspect('frontend.user', new UserAspect($frontendUser, array_merge([-2], $groupUids)));
         }
-        $isPreview = $simulateUserGroup || $simTime || $showHiddenPages || $showHiddenRecords || $showScheduledRecords;
+        $isPreview = $simulateUserGroups !== [] || $simTime || $showHiddenPages || $showHiddenRecords || $showScheduledRecords;
         if ($context->hasAspect('frontend.preview')) {
             /** @var PreviewAspect $existingPreviewAspect */
             $existingPreviewAspect = $context->getAspect('frontend.preview');
