@@ -23,6 +23,8 @@ use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Test;
 use Psr\Clock\ClockInterface;
 use TYPO3\CMS\Core\Clock\SystemClock;
+use TYPO3\CMS\Core\Crypto\Cipher\CipherService;
+use TYPO3\CMS\Core\Crypto\Cipher\KeyFactory;
 use TYPO3\CMS\Core\Http\Uri;
 use TYPO3\CMS\Core\Preview\PreviewProfile;
 use TYPO3\CMS\Core\Preview\PreviewRejection;
@@ -34,6 +36,7 @@ use TYPO3\TestingFramework\Core\Unit\UnitTestCase;
 final class PreviewTokenServiceTest extends UnitTestCase
 {
     private const USER_AGENT = 'Mozilla/5.0 (X11; Linux x86_64) Firefox/140.0';
+    private const SESSION_ID = '9f86d081884c7d659a2feaa0c55ad015';
 
     public function setUp(): void
     {
@@ -44,9 +47,9 @@ final class PreviewTokenServiceTest extends UnitTestCase
     #[Test]
     public function signedTokenIsVerified(): void
     {
-        $subject = new PreviewTokenService(new SystemClock());
+        $subject = $this->createSubject();
         $profile = $this->createProfile();
-        $signed = $subject->sign($profile, 'https://site-a.com', self::USER_AGENT, $this->createUser());
+        $signed = $subject->sign($profile, 'https://site-a.com', self::USER_AGENT, $this->createUser(), self::SESSION_ID);
 
         $verified = $subject->verify($signed->jwt, self::USER_AGENT);
 
@@ -55,6 +58,7 @@ final class PreviewTokenServiceTest extends UnitTestCase
         self::assertSame(5, $verified->editorId);
         self::assertSame('https://site-a.com', $verified->backendOrigin);
         self::assertSame($signed->expires, $verified->expires);
+        self::assertSame(self::SESSION_ID, $verified->backendSessionId);
         self::assertEqualsWithDelta(time() + PreviewTokenService::LIFETIME, $verified->expires, 2);
         self::assertFalse($verified->isVisitorWithoutBackendUser());
         self::assertSame(5, $verified->editorId);
@@ -63,21 +67,53 @@ final class PreviewTokenServiceTest extends UnitTestCase
     #[Test]
     public function tokenWithoutUserIsAVisitorToken(): void
     {
-        $subject = new PreviewTokenService(new SystemClock());
+        $subject = $this->createSubject();
         $visitor = PreviewProfile::visitor();
-        $jwt = $subject->sign($visitor, 'https://site-a.com', self::USER_AGENT, $this->createUser(), true)->jwt;
+        $jwt = $subject->sign($visitor, 'https://site-a.com', self::USER_AGENT, $this->createUser(), self::SESSION_ID, true)->jwt;
 
         $verified = $subject->verify($jwt, self::USER_AGENT);
 
         self::assertTrue($verified->isVisitorWithoutBackendUser());
         self::assertTrue($verified->profile->showsVisitorView());
         self::assertSame(5, $verified->editorId);
+        self::assertSame(self::SESSION_ID, $verified->backendSessionId);
+    }
+
+    /**
+     * The backend session id is the secret of the backend login cookie, and everybody
+     * who sees the address reads the claims of the token. So the token carries the id
+     * encrypted only, every token with a cipher of its own.
+     */
+    #[Test]
+    public function tokenCarriesTheBackendSessionEncryptedOnly(): void
+    {
+        $subject = $this->createSubject();
+        $jwt = $subject->sign($this->createProfile(), 'https://site-a.com', self::USER_AGENT, $this->createUser(), self::SESSION_ID)->jwt;
+        $otherJwt = $subject->sign($this->createProfile(), 'https://site-a.com', self::USER_AGENT, $this->createUser(), self::SESSION_ID)->jwt;
+
+        $claims = $this->decodeClaims($jwt);
+
+        self::assertIsString($claims['ses']);
+        self::assertStringNotContainsString(self::SESSION_ID, json_encode($claims, JSON_THROW_ON_ERROR));
+        self::assertNotSame($claims['ses'], $this->decodeClaims($otherJwt)['ses']);
+    }
+
+    #[Test]
+    public function tokenWithAChangedByteInItsBackendSessionIsRefused(): void
+    {
+        $subject = $this->createSubject();
+        $claims = $this->decodeClaims($subject->sign($this->createProfile(), 'https://site-a.com', self::USER_AGENT, $this->createUser(), self::SESSION_ID)->jwt);
+        $claims['ses'][40] = $claims['ses'][40] === 'A' ? 'B' : 'A';
+        $forged = JWT::encode($claims, hash_hkdf('sha256', $GLOBALS['TYPO3_CONF_VARS']['SYS']['encryptionKey'], 32, PreviewTokenService::class), 'HS256');
+
+        $this->assertRejected(PreviewRejection::Invalid, fn() => $subject->verify($forged, self::USER_AGENT));
+        $this->assertRejected(PreviewRejection::Invalid, fn() => $subject->readForRenewal($forged, self::USER_AGENT));
     }
 
     #[Test]
     public function tokenOfAnEditorNamesNeitherHostsNorSites(): void
     {
-        $jwt = new PreviewTokenService(new SystemClock())->sign($this->createProfile(), 'https://site-a.com', self::USER_AGENT, $this->createUser())->jwt;
+        $jwt = $this->createSubject()->sign($this->createProfile(), 'https://site-a.com', self::USER_AGENT, $this->createUser(), self::SESSION_ID)->jwt;
 
         $claims = $this->decodeClaims($jwt);
 
@@ -95,7 +131,7 @@ final class PreviewTokenServiceTest extends UnitTestCase
     #[Test]
     public function tokenWithoutUserNamesTheEditorWhoseRightsDecideWhereItIsValid(): void
     {
-        $jwt = new PreviewTokenService(new SystemClock())->sign(PreviewProfile::visitor(), 'https://site-a.com', self::USER_AGENT, $this->createUser(), true)->jwt;
+        $jwt = $this->createSubject()->sign(PreviewProfile::visitor(), 'https://site-a.com', self::USER_AGENT, $this->createUser(), self::SESSION_ID, true)->jwt;
 
         $claims = $this->decodeClaims($jwt);
 
@@ -117,8 +153,8 @@ final class PreviewTokenServiceTest extends UnitTestCase
     #[DataProvider('forgedEditorClaimsDataProvider')]
     public function tokenWhoseEditorClaimsDoNotFitItsKindIsRefused(array $changes): void
     {
-        $subject = new PreviewTokenService(new SystemClock());
-        $claims = $this->decodeClaims($subject->sign(PreviewProfile::visitor(), 'https://site-a.com', self::USER_AGENT, $this->createUser())->jwt);
+        $subject = $this->createSubject();
+        $claims = $this->decodeClaims($subject->sign(PreviewProfile::visitor(), 'https://site-a.com', self::USER_AGENT, $this->createUser(), self::SESSION_ID)->jwt);
         foreach ($changes as $name => $value) {
             if ($value === null) {
                 unset($claims[$name]);
@@ -146,6 +182,11 @@ final class PreviewTokenServiceTest extends UnitTestCase
         yield 'token naming no editor' => [true, ['scp' => null], 'sub or scp is missing'];
         yield 'visitor editor as text' => [true, ['scp' => '5'], 'scp is not a positive user id'];
         yield 'visitor token asking for more than the visitor view' => [true, ['prf' => ['hiddenPages' => true]], 'prf asks for more than the visitor view an scp token shows'];
+        yield 'token without backend session' => [false, ['ses' => null], 'ses is not a backend session encrypted for the editor'];
+        yield 'visitor token without backend session' => [true, ['ses' => null], 'ses is not a backend session encrypted for the editor'];
+        yield 'backend session in plain text' => [false, ['ses' => self::SESSION_ID], 'ses is not a backend session encrypted for the editor'];
+        yield 'backend session as number' => [false, ['ses' => 5], 'ses is not a backend session encrypted for the editor'];
+        yield 'backend session encrypted for another editor' => [false, ['sub' => 7], 'ses is not a backend session encrypted for the editor'];
     }
 
     /**
@@ -157,9 +198,9 @@ final class PreviewTokenServiceTest extends UnitTestCase
     #[DataProvider('invalidClaimsDataProvider')]
     public function rejectionOfATokenWithInvalidClaimsNamesTheClaim(bool $visitor, array $changes, string $reason): void
     {
-        $subject = new PreviewTokenService(new SystemClock());
+        $subject = $this->createSubject();
         $profile = $visitor ? PreviewProfile::visitor() : $this->createProfile();
-        $claims = $this->decodeClaims($subject->sign($profile, 'https://site-a.com', self::USER_AGENT, $this->createUser(), $visitor)->jwt);
+        $claims = $this->decodeClaims($subject->sign($profile, 'https://site-a.com', self::USER_AGENT, $this->createUser(), self::SESSION_ID, $visitor)->jwt);
         foreach ($changes as $name => $value) {
             if ($value === null) {
                 unset($claims[$name]);
@@ -189,8 +230,8 @@ final class PreviewTokenServiceTest extends UnitTestCase
     #[Test]
     public function tokenWithoutUserAskingForMoreThanTheVisitorViewIsRefused(): void
     {
-        $subject = new PreviewTokenService(new SystemClock());
-        $jwt = $subject->sign($this->createProfile(), 'https://site-a.com', self::USER_AGENT, $this->createUser(), true)->jwt;
+        $subject = $this->createSubject();
+        $jwt = $subject->sign($this->createProfile(), 'https://site-a.com', self::USER_AGENT, $this->createUser(), self::SESSION_ID, true)->jwt;
 
         $this->assertRejected(PreviewRejection::Invalid, fn() => $subject->verify($jwt, self::USER_AGENT));
     }
@@ -198,8 +239,8 @@ final class PreviewTokenServiceTest extends UnitTestCase
     #[Test]
     public function tokenWithChangedUserIsRefused(): void
     {
-        $subject = new PreviewTokenService(new SystemClock());
-        $jwt = $subject->sign($this->createProfile(), 'https://site-a.com', self::USER_AGENT, $this->createUser())->jwt;
+        $subject = $this->createSubject();
+        $jwt = $subject->sign($this->createProfile(), 'https://site-a.com', self::USER_AGENT, $this->createUser(), self::SESSION_ID)->jwt;
         [$header, $payload, $signature] = explode('.', $jwt);
         $claims = json_decode(JWT::urlsafeB64Decode($payload), true);
         $claims['sub'] = 1;
@@ -211,8 +252,8 @@ final class PreviewTokenServiceTest extends UnitTestCase
     #[Test]
     public function tokenWithChangedByteIsRefused(): void
     {
-        $subject = new PreviewTokenService(new SystemClock());
-        $jwt = $subject->sign($this->createProfile(), 'https://site-a.com', self::USER_AGENT, $this->createUser())->jwt;
+        $subject = $this->createSubject();
+        $jwt = $subject->sign($this->createProfile(), 'https://site-a.com', self::USER_AGENT, $this->createUser(), self::SESSION_ID)->jwt;
         [$header, $payload, $signature] = explode('.', $jwt);
         $claims = json_decode(JWT::urlsafeB64Decode($payload), true);
         $claims['prf']['ws'] = 4;
@@ -224,8 +265,8 @@ final class PreviewTokenServiceTest extends UnitTestCase
     #[Test]
     public function tokenOfAnotherTypeIsRefused(): void
     {
-        $subject = new PreviewTokenService(new SystemClock());
-        $jwt = $subject->sign($this->createProfile(), 'https://site-a.com', self::USER_AGENT, $this->createUser())->jwt;
+        $subject = $this->createSubject();
+        $jwt = $subject->sign($this->createProfile(), 'https://site-a.com', self::USER_AGENT, $this->createUser(), self::SESSION_ID)->jwt;
         $claims = json_decode(JWT::urlsafeB64Decode(explode('.', $jwt)[1]), true);
         $claims['typ'] = 'session';
         $signingKey = hash_hkdf('sha256', $GLOBALS['TYPO3_CONF_VARS']['SYS']['encryptionKey'], 32, PreviewTokenService::class);
@@ -237,8 +278,8 @@ final class PreviewTokenServiceTest extends UnitTestCase
     #[Test]
     public function tokenSignedWithAnotherKeyIsRefused(): void
     {
-        $subject = new PreviewTokenService(new SystemClock());
-        $jwt = $subject->sign($this->createProfile(), 'https://site-a.com', self::USER_AGENT, $this->createUser())->jwt;
+        $subject = $this->createSubject();
+        $jwt = $subject->sign($this->createProfile(), 'https://site-a.com', self::USER_AGENT, $this->createUser(), self::SESSION_ID)->jwt;
         $claims = json_decode(JWT::urlsafeB64Decode(explode('.', $jwt)[1]), true);
         $signingKey = hash_hkdf('sha256', $GLOBALS['TYPO3_CONF_VARS']['SYS']['encryptionKey'], 32, 'TYPO3\\CMS\\Core\\Session\\UserSession');
         $foreign = JWT::encode($claims, $signingKey, 'HS256');
@@ -249,9 +290,9 @@ final class PreviewTokenServiceTest extends UnitTestCase
     #[Test]
     public function expiredTokenIsRefused(): void
     {
-        $past = new PreviewTokenService($this->createClock(time() - PreviewTokenService::LIFETIME - 120));
-        $jwt = $past->sign($this->createProfile(), 'https://site-a.com', self::USER_AGENT, $this->createUser())->jwt;
-        $subject = new PreviewTokenService(new SystemClock());
+        $past = $this->createSubject($this->createClock(time() - PreviewTokenService::LIFETIME - 120));
+        $jwt = $past->sign($this->createProfile(), 'https://site-a.com', self::USER_AGENT, $this->createUser(), self::SESSION_ID)->jwt;
+        $subject = $this->createSubject();
 
         $this->assertRejected(PreviewRejection::Expired, fn() => $subject->verify($jwt, self::USER_AGENT));
     }
@@ -263,10 +304,10 @@ final class PreviewTokenServiceTest extends UnitTestCase
     #[Test]
     public function tokenIsValidWithinTheGraceAfterItsExpiry(): void
     {
-        $past = new PreviewTokenService($this->createClock(time() - PreviewTokenService::LIFETIME - 50));
-        $jwt = $past->sign($this->createProfile(), 'https://site-a.com', self::USER_AGENT, $this->createUser())->jwt;
+        $past = $this->createSubject($this->createClock(time() - PreviewTokenService::LIFETIME - 50));
+        $jwt = $past->sign($this->createProfile(), 'https://site-a.com', self::USER_AGENT, $this->createUser(), self::SESSION_ID)->jwt;
 
-        $verified = new PreviewTokenService(new SystemClock())->verify($jwt, self::USER_AGENT);
+        $verified = $this->createSubject()->verify($jwt, self::USER_AGENT);
 
         self::assertFalse($verified->isVisitorWithoutBackendUser());
         self::assertSame(5, $verified->editorId);
@@ -275,8 +316,8 @@ final class PreviewTokenServiceTest extends UnitTestCase
     #[Test]
     public function tokenIsRefusedOnceTheClockPassedTheGraceAfterItsExpiry(): void
     {
-        $jwt = new PreviewTokenService(new SystemClock())->sign($this->createProfile(), 'https://site-a.com', self::USER_AGENT, $this->createUser())->jwt;
-        $subject = new PreviewTokenService($this->createClock(time() + PreviewTokenService::LIFETIME + 60));
+        $jwt = $this->createSubject()->sign($this->createProfile(), 'https://site-a.com', self::USER_AGENT, $this->createUser(), self::SESSION_ID)->jwt;
+        $subject = $this->createSubject($this->createClock(time() + PreviewTokenService::LIFETIME + 60));
 
         $this->assertRejected(PreviewRejection::Expired, fn() => $subject->verify($jwt, self::USER_AGENT));
     }
@@ -289,15 +330,15 @@ final class PreviewTokenServiceTest extends UnitTestCase
     #[Test]
     public function leewayAndClockOfTheJwtLibraryDoNotExtendTheLifetime(): void
     {
-        $past = new PreviewTokenService($this->createClock(time() - PreviewTokenService::LIFETIME - 120));
-        $jwt = $past->sign($this->createProfile(), 'https://site-a.com', self::USER_AGENT, $this->createUser())->jwt;
+        $past = $this->createSubject($this->createClock(time() - PreviewTokenService::LIFETIME - 120));
+        $jwt = $past->sign($this->createProfile(), 'https://site-a.com', self::USER_AGENT, $this->createUser(), self::SESSION_ID)->jwt;
         $leeway = JWT::$leeway;
         $timestamp = JWT::$timestamp;
         $anHourAgo = time() - 3600;
         JWT::$leeway = 300;
         JWT::$timestamp = $anHourAgo;
         try {
-            $this->assertRejected(PreviewRejection::Expired, fn() => new PreviewTokenService(new SystemClock())->verify($jwt, self::USER_AGENT));
+            $this->assertRejected(PreviewRejection::Expired, fn() => $this->createSubject()->verify($jwt, self::USER_AGENT));
             self::assertSame(300, JWT::$leeway);
             self::assertSame($anHourAgo, JWT::$timestamp);
         } finally {
@@ -309,8 +350,8 @@ final class PreviewTokenServiceTest extends UnitTestCase
     #[Test]
     public function leewayAndClockOfTheJwtLibraryAreRestoredAfterAnAcceptedToken(): void
     {
-        $subject = new PreviewTokenService(new SystemClock());
-        $jwt = $subject->sign($this->createProfile(), 'https://site-a.com', self::USER_AGENT, $this->createUser())->jwt;
+        $subject = $this->createSubject();
+        $jwt = $subject->sign($this->createProfile(), 'https://site-a.com', self::USER_AGENT, $this->createUser(), self::SESSION_ID)->jwt;
         $leeway = JWT::$leeway;
         $timestamp = JWT::$timestamp;
         JWT::$leeway = 7;
@@ -335,9 +376,9 @@ final class PreviewTokenServiceTest extends UnitTestCase
     #[DataProvider('backendClockUpToAMinuteAheadDataProvider')]
     public function tokenOfABackendWhoseClockIsUpToAMinuteAheadIsAccepted(int $seconds): void
     {
-        $jwt = new PreviewTokenService($this->createClock(time() + $seconds))->sign($this->createProfile(), 'https://site-a.com', self::USER_AGENT, $this->createUser())->jwt;
+        $jwt = $this->createSubject($this->createClock(time() + $seconds))->sign($this->createProfile(), 'https://site-a.com', self::USER_AGENT, $this->createUser(), self::SESSION_ID)->jwt;
 
-        $verified = new PreviewTokenService(new SystemClock())->verify($jwt, self::USER_AGENT);
+        $verified = $this->createSubject()->verify($jwt, self::USER_AGENT);
 
         self::assertFalse($verified->isVisitorWithoutBackendUser());
         self::assertSame(5, $verified->editorId);
@@ -353,8 +394,8 @@ final class PreviewTokenServiceTest extends UnitTestCase
     #[DataProvider('backendClockMoreThanAMinuteAheadDataProvider')]
     public function tokenOfABackendWhoseClockIsMoreThanAMinuteAheadIsRefused(int $seconds): void
     {
-        $jwt = new PreviewTokenService($this->createClock(time() + $seconds))->sign($this->createProfile(), 'https://site-a.com', self::USER_AGENT, $this->createUser())->jwt;
-        $subject = new PreviewTokenService(new SystemClock());
+        $jwt = $this->createSubject($this->createClock(time() + $seconds))->sign($this->createProfile(), 'https://site-a.com', self::USER_AGENT, $this->createUser(), self::SESSION_ID)->jwt;
+        $subject = $this->createSubject();
 
         $this->assertRejected(PreviewRejection::Invalid, fn() => $subject->verify($jwt, self::USER_AGENT));
     }
@@ -362,8 +403,8 @@ final class PreviewTokenServiceTest extends UnitTestCase
     #[Test]
     public function tokenIsRefusedInAnotherBrowser(): void
     {
-        $subject = new PreviewTokenService(new SystemClock());
-        $jwt = $subject->sign($this->createProfile(), 'https://site-a.com', self::USER_AGENT, $this->createUser())->jwt;
+        $subject = $this->createSubject();
+        $jwt = $subject->sign($this->createProfile(), 'https://site-a.com', self::USER_AGENT, $this->createUser(), self::SESSION_ID)->jwt;
 
         $this->assertRejected(PreviewRejection::OtherBrowser, fn() => $subject->verify($jwt, 'curl/8.0'));
     }
@@ -371,7 +412,7 @@ final class PreviewTokenServiceTest extends UnitTestCase
     #[Test]
     public function malformedTokenIsRefused(): void
     {
-        $subject = new PreviewTokenService(new SystemClock());
+        $subject = $this->createSubject();
 
         $this->assertRejected(PreviewRejection::Invalid, fn() => $subject->verify('no-jwt-at-all', self::USER_AGENT));
     }
@@ -379,11 +420,11 @@ final class PreviewTokenServiceTest extends UnitTestCase
     #[Test]
     public function expiredTokenIsReadForRenewal(): void
     {
-        $past = new PreviewTokenService($this->createClock(time() - PreviewTokenService::LIFETIME - 10));
+        $past = $this->createSubject($this->createClock(time() - PreviewTokenService::LIFETIME - 10));
         $profile = $this->createProfile();
-        $jwt = $past->sign($profile, 'https://site-a.com', self::USER_AGENT, $this->createUser())->jwt;
+        $jwt = $past->sign($profile, 'https://site-a.com', self::USER_AGENT, $this->createUser(), self::SESSION_ID)->jwt;
 
-        $token = new PreviewTokenService(new SystemClock())->readForRenewal($jwt, self::USER_AGENT);
+        $token = $this->createSubject()->readForRenewal($jwt, self::USER_AGENT);
         self::assertEquals($profile, $token->profile);
         self::assertFalse($token->isVisitorWithoutBackendUser());
         self::assertSame(5, $token->editorId);
@@ -392,10 +433,10 @@ final class PreviewTokenServiceTest extends UnitTestCase
     #[Test]
     public function tokenExpiredAnHourAgoIsReadForRenewal(): void
     {
-        $past = new PreviewTokenService($this->createClock(time() - PreviewTokenService::LIFETIME - 3600));
-        $jwt = $past->sign($this->createProfile(), 'https://site-a.com', self::USER_AGENT, $this->createUser())->jwt;
+        $past = $this->createSubject($this->createClock(time() - PreviewTokenService::LIFETIME - 3600));
+        $jwt = $past->sign($this->createProfile(), 'https://site-a.com', self::USER_AGENT, $this->createUser(), self::SESSION_ID)->jwt;
 
-        $token = new PreviewTokenService(new SystemClock())->readForRenewal($jwt, self::USER_AGENT);
+        $token = $this->createSubject()->readForRenewal($jwt, self::USER_AGENT);
 
         self::assertFalse($token->isVisitorWithoutBackendUser());
         self::assertSame(5, $token->editorId);
@@ -404,8 +445,8 @@ final class PreviewTokenServiceTest extends UnitTestCase
     #[Test]
     public function tokenIsNotReadForRenewalWhenTamperedOrInAnotherBrowser(): void
     {
-        $subject = new PreviewTokenService(new SystemClock());
-        $jwt = $subject->sign($this->createProfile(), 'https://site-a.com', self::USER_AGENT, $this->createUser())->jwt;
+        $subject = $this->createSubject();
+        $jwt = $subject->sign($this->createProfile(), 'https://site-a.com', self::USER_AGENT, $this->createUser(), self::SESSION_ID)->jwt;
         [$header, $payload, $signature] = explode('.', $jwt);
         $claims = json_decode(JWT::urlsafeB64Decode($payload), true);
         $claims['prf']['groups'] = [1];
@@ -581,6 +622,11 @@ final class PreviewTokenServiceTest extends UnitTestCase
             date: 1796083200,
             groups: [3, 7],
         );
+    }
+
+    private function createSubject(ClockInterface $clock = new SystemClock()): PreviewTokenService
+    {
+        return new PreviewTokenService($clock, new CipherService(), new KeyFactory());
     }
 
     private function decodeClaims(string $jwt): array

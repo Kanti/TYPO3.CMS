@@ -121,6 +121,10 @@ The token
 *   names no hosts, so its size does not grow with the number of sites,
 *   is bound to the backend that signed it and to the browser it was signed
     for,
+*   ends with the backend session it was signed in: when the editor logs out,
+    when the session expires and when an administrator terminates it in the
+    module :guilabel:`Administration > Users`. The token carries the id of
+    this session encrypted,
 *   is valid for 15 minutes. The backend page around the frame renews it
     before it expires. Clocks of backend and site servers may differ by up to
     60 seconds.
@@ -149,6 +153,9 @@ see below.
             (:http:`Sec-Fetch-Dest: iframe`) or one this page sends to its own
             origin
         -   *This preview is only available in the backend.*
+    *   -   The backend session the token was signed in has not ended and
+            still belongs to the editor, also for a visitor token
+        -   *Your backend account may not see this preview.*
     *   -   The host belongs to a site the editor may preview now: web mounts
             and languages. A visitor token is valid on every site, see below.
             A base without a host counts on the host of the backend
@@ -189,8 +196,9 @@ every site of the installation, in the languages that are enabled, and the
 live frame may navigate to each of them. The site does not load the editor who
 opened the preview for it. It checks neither the rights of the editor nor
 whether the editor still exists, so a visitor token stays valid until it
-expires. The backend still needs the right of the editor to show the page the
-preview is opened for, but not for the pages the live frame navigates to.
+expires or its backend session ends. The backend still needs the right of the
+editor to show the page the preview is opened for, but not for the pages the
+live frame navigates to.
 
 For its live frame, the workspace preview page names every site of the
 installation, also sites the editor may not preview: the attribute
@@ -342,9 +350,9 @@ Server configuration
 
 ..  note::
 
-    A token ends at its expiry. Logging out of the backend does not revoke
-    tokens already handed out. The tokens of a disabled editor no longer work,
-    but a visitor token, which shows only what visitors see, works until it
-    expires.
+    A token ends at its expiry or with the backend session it was signed in,
+    whichever comes first. The tokens of a disabled editor no longer work, but
+    a visitor token, which shows only what visitors see, works until it
+    expires or its backend session ends.
 
 ..  index:: Backend, Frontend, ext:backend, ext:frontend, ext:workspaces

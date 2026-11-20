@@ -89,6 +89,39 @@ final class PreviewTokenIssuerTest extends FunctionalTestCase
         self::assertFalse($verified->isVisitorWithoutBackendUser());
     }
 
+    /**
+     * The site ends a token with the backend session it was signed in, see
+     * PreviewTokenAuthenticator. A visitor token is bound to it as well.
+     */
+    #[Test]
+    public function tokenIsBoundToTheBackendSessionOfTheRequest(): void
+    {
+        $user = $this->setUpBackendUser(9);
+        $issuer = $this->get(PreviewTokenIssuer::class);
+        $tokenService = $this->get(PreviewTokenService::class);
+
+        $preview = $issuer->issue($this->createRequest(), $user, new Uri('https://first.example/'), 2);
+        $visitor = $issuer->issueForVisitor($this->createRequest(), $user, new Uri('https://first.example/'), 2);
+
+        self::assertSame($user->getSession()->getIdentifier(), $tokenService->verify($preview->token->jwt, self::USER_AGENT)->backendSessionId);
+        self::assertSame($user->getSession()->getIdentifier(), $tokenService->verify($visitor->token->jwt, self::USER_AGENT)->backendSessionId);
+    }
+
+    /**
+     * A backend user without a stored session of his own, as on the command line, gets
+     * no token. A token without a session would never end with a logout.
+     */
+    #[Test]
+    public function noTokenIsSignedWithoutABackendSessionOfTheEditor(): void
+    {
+        $user = $this->setUpBackendUser(9);
+        $user->createAnonymousSession();
+
+        $this->expectException(PreviewAccessDeniedException::class);
+        $this->expectExceptionCode(1795168058);
+        $this->get(PreviewTokenIssuer::class)->issue($this->createRequest(), $user, new Uri('https://first.example/'), 2);
+    }
+
     #[Test]
     public function editorGetsTokenForSitesOfWebMountsOnly(): void
     {
@@ -210,7 +243,7 @@ final class PreviewTokenIssuerTest extends FunctionalTestCase
     {
         $user = $this->setUpBackendUser(9);
         $issuer = $this->get(PreviewTokenIssuer::class);
-        $previous = $this->get(PreviewTokenService::class)->sign(new PreviewProfile(workspace: 0, hiddenPages: true, hiddenContent: false, date: 0, groups: []), 'https://backend.example', self::USER_AGENT, 9);
+        $previous = $this->get(PreviewTokenService::class)->sign(new PreviewProfile(workspace: 0, hiddenPages: true, hiddenContent: false, date: 0, groups: []), 'https://backend.example', self::USER_AGENT, 9, $user->getSession()->getIdentifier());
 
         $renewed = $issuer->renew($this->createRequest(), $user, $previous->jwt, new Uri('https://first.example/de/'), 3);
 
@@ -450,7 +483,7 @@ final class PreviewTokenIssuerTest extends FunctionalTestCase
         $editorInLive = $this->setUpBackendUser(9);
         $issuer = $this->get(PreviewTokenIssuer::class);
         self::assertSame(['first.example', 'first.de'], $issuer->issue($this->createRequest(), $editorInLive, new Uri('https://first.example/'), 2)->hosts->getHosts());
-        $previous = $this->get(PreviewTokenService::class)->sign(new PreviewProfile(workspace: 1, hiddenPages: false, hiddenContent: false, date: 0, groups: []), 'https://backend.example', self::USER_AGENT, 9);
+        $previous = $this->get(PreviewTokenService::class)->sign(new PreviewProfile(workspace: 1, hiddenPages: false, hiddenContent: false, date: 0, groups: []), 'https://backend.example', self::USER_AGENT, 9, $editorInLive->getSession()->getIdentifier());
 
         $renewed = $issuer->renew($this->createRequest(), $editorInLive, $previous->jwt, new Uri('https://first.example/'), 2);
 
@@ -476,7 +509,7 @@ final class PreviewTokenIssuerTest extends FunctionalTestCase
         $connectionPool->getConnectionForTable('be_users')->update('be_users', ['usergroup' => '9,10', 'workspace_perms' => 0], ['uid' => 9]);
         $connectionPool->getConnectionForTable('sys_workspace')->update('sys_workspace', ['members' => 'be_groups_10'], ['uid' => 1]);
         $editorInLive = $this->setUpBackendUser(9);
-        $previous = $this->get(PreviewTokenService::class)->sign(new PreviewProfile(workspace: 1, hiddenPages: false, hiddenContent: false, date: 0, groups: []), 'https://backend.example', self::USER_AGENT, 9);
+        $previous = $this->get(PreviewTokenService::class)->sign(new PreviewProfile(workspace: 1, hiddenPages: false, hiddenContent: false, date: 0, groups: []), 'https://backend.example', self::USER_AGENT, 9, $editorInLive->getSession()->getIdentifier());
         $context = $this->get(Context::class);
         /** @var Container $container */
         $container = $this->getContainer();
@@ -602,6 +635,23 @@ final class PreviewTokenIssuerTest extends FunctionalTestCase
         $this->expectException(PreviewAccessDeniedException::class);
         $this->expectExceptionCode(1793265778);
         $issuer->renew($this->createRequest(), $editorWithOtherRights, $previous->token->jwt, new Uri('https://first.example/'), 2);
+    }
+
+    /**
+     * The renewed token ends with the backend session the page around the frame runs in
+     * now, also after the editor logged in again since the previous token.
+     */
+    #[Test]
+    public function renewalBindsTheTokenToTheCurrentBackendSession(): void
+    {
+        $issuer = $this->get(PreviewTokenIssuer::class);
+        $previous = $issuer->issue($this->createRequest(), $this->setUpBackendUser(9), new Uri('https://first.example/'), 2);
+        $loggedInAgain = $this->setUpBackendUser(9);
+
+        $renewed = $issuer->renew($this->createRequest(), $loggedInAgain, $previous->token->jwt, new Uri('https://first.example/'), 2);
+
+        self::assertNotSame($previous->token->backendSessionId, $renewed->token->backendSessionId);
+        self::assertSame($loggedInAgain->getSession()->getIdentifier(), $this->get(PreviewTokenService::class)->verify($renewed->token->jwt, self::USER_AGENT)->backendSessionId);
     }
 
     /**
