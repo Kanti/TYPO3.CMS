@@ -17,11 +17,13 @@ declare(strict_types=1);
 
 namespace TYPO3\CMS\Backend\Tests\Functional\Controller;
 
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Test;
 use Psr\Http\Message\ResponseInterface;
 use TYPO3\CMS\Backend\Controller\PreviewPageController;
 use TYPO3\CMS\Backend\Routing\Route;
 use TYPO3\CMS\Core\Core\SystemEnvironmentBuilder;
+use TYPO3\CMS\Core\Crypto\HashService;
 use TYPO3\CMS\Core\Database\ConnectionPool;
 use TYPO3\CMS\Core\Http\NormalizedParams;
 use TYPO3\CMS\Core\Http\ServerRequest;
@@ -80,22 +82,80 @@ final class PreviewPageControllerTest extends FunctionalTestCase
         self::assertDoesNotMatchRegularExpression('/<iframe[^>]*credentialless/', $content);
     }
 
+    /**
+     * An event listener may change the address of a preview to a host outside the preview,
+     * such as a decoupled frontend. The backend signs the link it builds, and the preview
+     * page opens such an address as it is.
+     */
     #[Test]
-    public function addressOutsideTheSitesOfTheInstallationOpensAsItIs(): void
+    public function signedAddressOutsideTheSitesOfTheInstallationOpensAsItIs(): void
     {
-        $response = $this->showPreviewPage('https://outside.example/page?ADMCMD_simTime=1&ADMCMD_simUser=5#top');
+        $url = 'https://outside.example/page?ADMCMD_simTime=1&ADMCMD_simUser=5#top';
+
+        $response = $this->showPreviewPage($url, 1, $this->sign($url));
 
         self::assertSame(303, $response->getStatusCode());
         self::assertSame('https://outside.example/page?ADMCMD_simTime=1&ADMCMD_simUser=5#top', $response->getHeaderLine('Location'));
     }
 
     #[Test]
-    public function addressOutsideTheSitesOfTheInstallationLosesAPreviewToken(): void
+    public function signedAddressOutsideTheSitesOfTheInstallationLosesAPreviewToken(): void
     {
-        $response = $this->showPreviewPage('https://outside.example/page?a=1&__t3ct=leaked');
+        $url = 'https://outside.example/page?a=1&__t3ct=leaked';
+
+        $response = $this->showPreviewPage($url, 1, $this->sign($url));
 
         self::assertSame(303, $response->getStatusCode());
         self::assertSame('https://outside.example/page?a=1', $response->getHeaderLine('Location'));
+    }
+
+    public static function unsignedAddressesOutsideTheSitesOfTheInstallationDataProvider(): \Generator
+    {
+        yield 'without a signature' => [null];
+        yield 'with a wrong signature' => [str_repeat('0', 40)];
+        yield 'with a signature that is no string' => [['0']];
+        yield 'with the signature of another address outside' => [
+            static fn(HashService $hashService): string => $hashService->hmac('https://outside.example/other', 'backend-preview-url'),
+        ];
+        yield 'with the signature of an address of the site' => [
+            static fn(HashService $hashService): string => $hashService->hmac('https://first.example/', 'backend-preview-url'),
+        ];
+        yield 'with a signature for another purpose' => [
+            static fn(HashService $hashService): string => $hashService->hmac('https://outside.example/', 'InlineContext'),
+        ];
+    }
+
+    /**
+     * The preview page is a GET route without a CSRF token. A link somebody else made
+     * must not send the editor from the backend to any other host.
+     */
+    #[Test]
+    #[DataProvider('unsignedAddressesOutsideTheSitesOfTheInstallationDataProvider')]
+    public function unsignedAddressOutsideTheSitesOfTheInstallationGetsAMessage(mixed $hmac): void
+    {
+        if ($hmac instanceof \Closure) {
+            $hmac = $hmac($this->get(HashService::class));
+        }
+
+        $response = $this->showPreviewPage('https://outside.example/', 1, $hmac);
+
+        self::assertSame(403, $response->getStatusCode());
+        self::assertFalse($response->hasHeader('Location'));
+        self::assertSame('private, no-store', $response->getHeaderLine('Cache-Control'));
+    }
+
+    /**
+     * The preview page keeps the address of the frame in its own address for a reload,
+     * next to the signature of the address it was opened with. An address of the sites
+     * needs no signature.
+     */
+    #[Test]
+    public function addressOfTheSitesOpensWithTheSignatureOfAnotherAddress(): void
+    {
+        $response = $this->showPreviewPage('https://first.example/', 1, $this->sign('https://outside.example/'));
+
+        self::assertSame(200, $response->getStatusCode());
+        self::assertStringStartsWith('https://first.example/?__t3ct=', $this->getFrameSettings($response)['url']);
     }
 
     #[Test]
@@ -224,12 +284,21 @@ final class PreviewPageControllerTest extends FunctionalTestCase
         return $request;
     }
 
-    private function showPreviewPage(string $url, int $page = 1): ResponseInterface
+    private function sign(string $url): string
     {
+        return $this->get(HashService::class)->hmac($url, 'backend-preview-url');
+    }
+
+    private function showPreviewPage(string $url, int $page = 1, mixed $hmac = null): ResponseInterface
+    {
+        $query = ['url' => $url, 'page' => $page];
+        if ($hmac !== null) {
+            $query['hmac'] = $hmac;
+        }
         $request = new ServerRequest('https://backend.example/typo3/preview', 'GET', null, [], ['HTTP_HOST' => 'backend.example', 'HTTPS' => 'on', 'SCRIPT_NAME' => '/typo3/index.php'])
             ->withAttribute('applicationType', SystemEnvironmentBuilder::REQUESTTYPE_BE)
             ->withAttribute('route', new Route('/preview', []))
-            ->withQueryParams(['url' => $url, 'page' => $page]);
+            ->withQueryParams($query);
         $request = $request->withAttribute('normalizedParams', NormalizedParams::createFromRequest($request));
         $GLOBALS['TYPO3_REQUEST'] = $request;
         return $this->get(PreviewPageController::class)->showAction($request);

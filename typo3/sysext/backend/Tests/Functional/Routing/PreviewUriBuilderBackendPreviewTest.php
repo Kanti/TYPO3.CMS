@@ -22,9 +22,11 @@ use PHPUnit\Framework\Attributes\Test;
 use TYPO3\CMS\Backend\Routing\PreviewUriBuilder;
 use TYPO3\CMS\Core\Cache\CacheManager;
 use TYPO3\CMS\Core\Core\SystemEnvironmentBuilder;
+use TYPO3\CMS\Core\Crypto\HashService;
 use TYPO3\CMS\Core\Database\ConnectionPool;
 use TYPO3\CMS\Core\Http\NormalizedParams;
 use TYPO3\CMS\Core\Http\ServerRequest;
+use TYPO3\CMS\Core\Http\Uri;
 use TYPO3\CMS\Core\Tests\Functional\SiteHandling\SiteBasedTestTrait;
 use TYPO3\TestingFramework\Core\Functional\FunctionalTestCase;
 
@@ -233,6 +235,20 @@ final class PreviewUriBuilderBackendPreviewTest extends FunctionalTestCase
         self::assertSame('https://other.example.org/visible', json_decode($visible['dispatch-args'], true)[0]);
     }
 
+    /**
+     * An event listener may change the address of a preview to a host outside the preview,
+     * such as a decoupled frontend. The preview page opens it only from a signed link.
+     */
+    #[Test]
+    public function addressOutsideTheSitesOfTheInstallationOpensASignedPreviewPage(): void
+    {
+        $uri = (string)PreviewUriBuilder::create(12)->buildBackendPreviewUriFor(new Uri('https://headless.example/hidden?a=1&b%5B%5D=2'));
+
+        $this->assertPreviewPage('https://headless.example/hidden?a=1&b%5B%5D=2', $uri);
+        parse_str((string)parse_url($uri, PHP_URL_QUERY), $query);
+        self::assertSame('https://headless.example/hidden?a=1&b%5B%5D=2', $query['url']);
+    }
+
     #[Test]
     public function frontendRequestGetsTheAddressOfThePage(): void
     {
@@ -249,6 +265,8 @@ final class PreviewUriBuilderBackendPreviewTest extends FunctionalTestCase
         self::assertSame('/typo3/preview', parse_url($uri, PHP_URL_PATH), $uri);
         parse_str((string)parse_url($uri, PHP_URL_QUERY), $query);
         self::assertStringStartsWith($frontendUrl, $query['url'] ?? '');
+        self::assertIsString($query['hmac'] ?? null, $uri);
+        self::assertTrue($this->get(HashService::class)->validateHmac($query['url'], 'backend-preview-url', $query['hmac']), $uri);
     }
 
     private function setBackendRequest(): void
