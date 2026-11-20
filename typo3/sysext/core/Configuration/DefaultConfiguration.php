@@ -101,6 +101,7 @@ return [
         'folderCreateMask' => '2775',
         'isInstalling' => false,
         'features' => [
+            'backend.previewToken' => true,
             'extbase.enableHistoryTracking' => false,
             'frontend.cache.autoTagging' => false,
             'redirects.hitCount' => false,

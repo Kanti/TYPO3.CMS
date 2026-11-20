@@ -55,6 +55,14 @@ final class ViewModuleControllerTest extends FunctionalTestCase
 
     protected array $coreExtensionsToLoad = ['viewpage'];
 
+    protected array $configurationToUseInTestInstance = [
+        'SYS' => [
+            'features' => [
+                'backend.previewToken' => true,
+            ],
+        ],
+    ];
+
     private BackendUserAuthentication $backendUser;
 
     protected function setUp(): void
@@ -243,6 +251,26 @@ final class ViewModuleControllerTest extends FunctionalTestCase
         $content = (string)$this->get(ViewModuleController::class)->handleRequest($this->createRequest(1))->getBody();
 
         self::assertStringContainsString('/typo3/preview?', html_entity_decode($content));
+    }
+
+    /**
+     * Switched off, the frame and the View button open the address of the page as they
+     * did before the preview token, and the frame may show its origin
+     */
+    #[Test]
+    public function hiddenPageIsShownWithoutAPreviewTokenWhileThePreviewTokenIsSwitchedOff(): void
+    {
+        $GLOBALS['TYPO3_CONF_VARS']['SYS']['features']['backend.previewToken'] = false;
+        $this->get(ConnectionPool::class)->getConnectionForTable('pages')->update('pages', ['hidden' => 1], ['uid' => 1]);
+
+        $response = $this->get(ViewModuleController::class)->handleRequest($this->createRequest(1));
+        $settings = $this->previewSettingsOf($response);
+
+        self::assertSame('https://example.com/', $settings['url']);
+        self::assertSame('', $settings['renewUrl']);
+        self::assertSame([], $settings['hosts']);
+        self::assertStringNotContainsString('/typo3/preview?', html_entity_decode((string)$response->getBody()));
+        self::assertSame(['https://example.com/'], $this->getFrameSources());
     }
 
     #[Test]

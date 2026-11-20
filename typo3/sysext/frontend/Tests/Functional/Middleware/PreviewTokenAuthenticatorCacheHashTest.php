@@ -50,6 +50,11 @@ final class PreviewTokenAuthenticatorCacheHashTest extends FunctionalTestCase
                 'enforceValidation' => true,
             ],
         ],
+        'SYS' => [
+            'features' => [
+                'backend.previewToken' => true,
+            ],
+        ],
     ];
 
     protected function setUp(): void

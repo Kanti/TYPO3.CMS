@@ -23,6 +23,7 @@ use Psr\Clock\ClockInterface;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use Psr\Http\Server\RequestHandlerInterface;
+use TYPO3\CMS\Core\Configuration\ConfigurationManager;
 use TYPO3\CMS\Core\Core\SystemEnvironmentBuilder;
 use TYPO3\CMS\Core\Crypto\Cipher\CipherService;
 use TYPO3\CMS\Core\Crypto\Cipher\KeyFactory;
@@ -60,6 +61,9 @@ final class PreviewTokenAuthenticatorTest extends FunctionalTestCase
     protected array $configurationToUseInTestInstance = [
         'SYS' => [
             'encryptionKey' => '4408d27a916d51e624b69af3554f516dbab61037a9f7b9fd6f81b4d3bedeccb6',
+            'features' => [
+                'backend.previewToken' => true,
+            ],
             'caching' => [
                 'cacheConfigurations' => [
                     'pages' => [
@@ -69,6 +73,8 @@ final class PreviewTokenAuthenticatorTest extends FunctionalTestCase
             ],
         ],
     ];
+
+    private bool $previewTokenSwitchedOff = false;
 
     protected function setUp(): void
     {
@@ -122,6 +128,14 @@ final class PreviewTokenAuthenticatorTest extends FunctionalTestCase
         );
     }
 
+    protected function tearDown(): void
+    {
+        if ($this->previewTokenSwitchedOff) {
+            $this->get(ConfigurationManager::class)->enableFeature('backend.previewToken');
+        }
+        parent::tearDown();
+    }
+
     #[Test]
     public function validTokenShowsHiddenPageWithoutCookieOrCache(): void
     {
@@ -155,6 +169,38 @@ final class PreviewTokenAuthenticatorTest extends FunctionalTestCase
         self::assertSame(200, $response->getStatusCode());
         self::assertStringContainsString('Visible content', (string)$response->getBody());
         self::assertStringNotContainsString('Hidden content', (string)$response->getBody());
+    }
+
+    public static function requestsWithATokenWhileThePreviewTokenIsSwitchedOffDataProvider(): \Generator
+    {
+        yield 'valid token for a hidden page' => ['https://first.example/hidden', true, 'iframe', 404];
+        yield 'valid token for a visible page' => ['https://first.example/', true, 'iframe', 200];
+        yield 'invalid token' => ['https://first.example/', false, 'iframe', 200];
+        yield 'valid token in a window' => ['https://first.example/', true, 'document', 200];
+    }
+
+    /**
+     * Switched off, the site does not read the parameter at all: a valid token grants
+     * nothing, an invalid one is not refused, a window is not redirected, and the answer
+     * is the one of a request without the parameter.
+     */
+    #[Test]
+    #[DataProvider('requestsWithATokenWhileThePreviewTokenIsSwitchedOffDataProvider')]
+    public function tokenGrantsNothingWhileThePreviewTokenIsSwitchedOff(string $url, bool $valid, string $secFetchDest, int $expectedStatus): void
+    {
+        $jwt = $valid ? $this->sign() : 'invalid';
+        $this->switchPreviewTokenOff();
+
+        $response = $this->preview($url, $jwt, $secFetchDest);
+
+        self::assertSame($expectedStatus, $response->getStatusCode());
+        self::assertFalse($response->hasHeader('Location'));
+        self::assertFalse($response->hasHeader('X-Robots-Tag'));
+        self::assertFalse($response->hasHeader('Content-Security-Policy'));
+        self::assertStringNotContainsString('Hidden content', (string)$response->getBody());
+        self::assertStringNotContainsString('data-preview-rejection', (string)$response->getBody());
+        self::assertStringNotContainsString('preview-navigation.js', (string)$response->getBody());
+        self::assertStringNotContainsString('__t3ct', (string)$response->getBody());
     }
 
     /**
@@ -1463,6 +1509,16 @@ final class PreviewTokenAuthenticatorTest extends FunctionalTestCase
         $this->get(ConnectionPool::class)->getConnectionForTable('pages')->update('pages', ['title' => 'Changed root'], ['uid' => 1]);
         self::assertStringContainsString('Changed root', (string)$this->preview('https://first.example/', $this->sign())->getBody());
         self::assertStringNotContainsString('Changed root', (string)$this->executeFrontendSubRequest(new InternalRequest('https://first.example/'))->getBody());
+    }
+
+    /**
+     * A frontend request bootstraps the configuration again from the settings file, so
+     * the feature is switched off there, as the install tool does
+     */
+    private function switchPreviewTokenOff(): void
+    {
+        $this->previewTokenSwitchedOff = true;
+        $this->get(ConfigurationManager::class)->disableFeature('backend.previewToken');
     }
 
     private function preview(string $url, string $jwt, ?string $secFetchDest = 'iframe', ?InternalRequestContext $context = null): ResponseInterface

@@ -23,6 +23,7 @@ use Psr\Http\Server\MiddlewareInterface;
 use Psr\Http\Server\RequestHandlerInterface;
 use TYPO3\CMS\Core\Attribute\AsEventListener;
 use TYPO3\CMS\Core\Authentication\BackendUserAuthentication;
+use TYPO3\CMS\Core\Configuration\Features;
 use TYPO3\CMS\Core\Context\Context;
 use TYPO3\CMS\Core\Context\DateTimeAspect;
 use TYPO3\CMS\Core\Context\UserAspect;
@@ -59,7 +60,8 @@ use TYPO3\CMS\Frontend\Preview\PreviewRequestKind;
  * Turns a preview token in the address (`__t3ct`) into a preview context for the
  * request. An invalid token never falls back to the live page. The changelog entry
  * Important-110664-PreviewsOfHiddenPagesWorkOnEveryDomain lists the checks and what
- * the token replaces.
+ * the token replaces. While the feature "backend.previewToken" is disabled, the
+ * parameter is not read at all.
  *
  * @internal
  */
@@ -77,10 +79,14 @@ final readonly class PreviewTokenAuthenticator implements MiddlewareInterface
         private LanguageServiceFactory $languageServiceFactory,
         private PreviewBackendUserInitializer $backendUserInitializer,
         private PreviewHostsResolver $hostsResolver,
+        private Features $features,
     ) {}
 
     public function process(ServerRequestInterface $request, RequestHandlerInterface $handler): ResponseInterface
     {
+        if (!$this->features->isFeatureEnabled('backend.previewToken')) {
+            return $handler->handle($request);
+        }
         if (!array_key_exists(PreviewTokenService::PARAMETER, $request->getQueryParams())) {
             return $handler->handle($request);
         }

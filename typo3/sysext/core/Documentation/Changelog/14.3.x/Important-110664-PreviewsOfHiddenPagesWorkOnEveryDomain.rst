@@ -16,7 +16,48 @@ every site of an installation, whatever domain they logged in to the backend
 on. Where the backend login cookie does not reach the site, the preview uses a
 **preview token** instead of a backend login, so a shared
 :php:`$GLOBALS['TYPO3_CONF_VARS']['BE']['cookieDomain']` is no longer needed
-for the previews.
+for the previews. The feature toggle :code:`backend.previewToken` switches the
+preview token, see the next section. All other sections describe the previews
+while it is enabled.
+
+Feature toggle
+--------------
+
+..  list-table::
+    :header-rows: 1
+
+    *   -   Version
+        -   Default of :code:`backend.previewToken`
+    *   -   TYPO3 v14.3
+        -   Disabled. Enable it to get the previews with a preview token.
+    *   -   TYPO3 v15.0
+        -   Enabled. Disable it to restore the previous previews.
+
+Switch it in :guilabel:`System > Settings > Feature toggles`, which writes
+:file:`config/system/settings.php`, or in
+:file:`config/system/additional.php`:
+
+..  code-block:: php
+    :caption: config/system/additional.php
+
+    $GLOBALS['TYPO3_CONF_VARS']['SYS']['features']['backend.previewToken'] = true;
+
+While the feature toggle is disabled, previews work as before:
+
+*   Preview links open the address of the page directly. Pages that need the
+    backend login are shown only where the backend login cookie reaches the
+    site.
+*   The module :guilabel:`Content > Preview` and the workspace preview show
+    the address in their frames without a token. The workspace preview adds
+    :code:`ADMCMD_prev=LIVE` to the address of the live frame and
+    :code:`ADMCMD_prev=IGNORE` to the address of the workspace frame again.
+*   The backend signs no token. A preview page of the backend opened from a
+    link built before, for example in a browser tab that stayed open, opens
+    the address of the page directly.
+*   The site does not read :code:`__t3ct`. A token neither shows a preview nor
+    is refused. The cHash calculation and the redirects of
+    :composer:`typo3/cms-redirects` that respect query parameters still ignore
+    the parameter.
 
 What to check
 -------------

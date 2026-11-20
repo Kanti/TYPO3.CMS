@@ -19,6 +19,7 @@ namespace TYPO3\CMS\Backend\Controller;
 
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
+use Psr\Http\Message\UriInterface;
 use TYPO3\CMS\Backend\Attribute\AsController;
 use TYPO3\CMS\Backend\Preview\AddressOutsidePreviewException;
 use TYPO3\CMS\Backend\Preview\PreviewAccessDeniedException;
@@ -27,6 +28,7 @@ use TYPO3\CMS\Backend\Template\PageRendererBackendSetupTrait;
 use TYPO3\CMS\Backend\View\BackendViewFactory;
 use TYPO3\CMS\Core\Authentication\BackendUserAuthentication;
 use TYPO3\CMS\Core\Configuration\ExtensionConfiguration;
+use TYPO3\CMS\Core\Configuration\Features;
 use TYPO3\CMS\Core\Crypto\HashService;
 use TYPO3\CMS\Core\Http\HtmlResponse;
 use TYPO3\CMS\Core\Http\JsonResponse;
@@ -43,7 +45,8 @@ use TYPO3\CMS\Core\Security\ContentSecurityPolicy\PolicyRegistry;
 
 /**
  * The preview page of the backend: the site in a frame, loaded with a
- * short-lived preview token. Also signs fresh tokens for the frame.
+ * short-lived preview token. Also signs fresh tokens for the frame. While the
+ * feature "backend.previewToken" is disabled, it issues no token.
  *
  * @internal This is a specific Backend Controller implementation and is not considered part of the Public TYPO3 API.
  */
@@ -59,6 +62,7 @@ final readonly class PreviewPageController
         private ExtensionConfiguration $extensionConfiguration,
         private PolicyRegistry $policyRegistry,
         private HashService $hashService,
+        private Features $features,
     ) {}
 
     public function showAction(ServerRequestInterface $request): ResponseInterface
@@ -72,16 +76,17 @@ final readonly class PreviewPageController
             // A malformed address, as a hand-edited or truncated link may carry
             return $this->createDeniedResponse();
         }
+        if (!$this->features->isFeatureEnabled('backend.previewToken')) {
+            // A link the backend signed, for example before the feature was disabled, opens as
+            // a preview link does without a preview token
+            return $this->openSignedAddress($frontendUri, $url, $query['hmac'] ?? null);
+        }
         try {
             $preview = $this->issuer->issue($request, $this->getBackendUser(), $frontendUri, $pageId);
         } catch (AddressOutsidePreviewException) {
             // A frontend address an event listener changed to a host outside the preview, such as a
-            // decoupled frontend, opens as it is, without a token. The route has no CSRF token, so
-            // only a link the backend signed, see PreviewUriBuilder, may leave the backend.
-            if (!is_string($query['hmac'] ?? null) || !$this->hashService->validateHmac($url, 'backend-preview-url', $query['hmac'])) {
-                return $this->createDeniedResponse();
-            }
-            return new RedirectResponse(PreviewTokenService::withoutToken($frontendUri), 303);
+            // decoupled frontend
+            return $this->openSignedAddress($frontendUri, $url, $query['hmac'] ?? null);
         } catch (PreviewAccessDeniedException) {
             return $this->createDeniedResponse();
         }
@@ -106,10 +111,13 @@ final readonly class PreviewPageController
      * Signs a fresh token for an address of the frame. The simulation is taken from the
      * previous token, and the hosts of the preview are resolved again. The rights of the
      * editor are checked again on every call, except for a visitor token, see
-     * PreviewTokenIssuer::renew().
+     * PreviewTokenIssuer::renew(). While the feature is disabled, no token is signed.
      */
     public function tokenAction(ServerRequestInterface $request): ResponseInterface
     {
+        if (!$this->features->isFeatureEnabled('backend.previewToken')) {
+            return $this->createDeniedJsonResponse();
+        }
         $body = $request->getParsedBody();
         $pageId = (int)($body['page'] ?? 0);
         try {
@@ -135,6 +143,18 @@ final readonly class PreviewPageController
             200,
             ['Cache-Control' => 'private, no-store']
         );
+    }
+
+    /**
+     * Opens the address as it is, without a token. The route has no CSRF token, so only a
+     * link the backend signed, see PreviewUriBuilder, may leave the backend.
+     */
+    private function openSignedAddress(UriInterface $frontendUri, string $url, mixed $hmac): ResponseInterface
+    {
+        if (!is_string($hmac) || !$this->hashService->validateHmac($url, 'backend-preview-url', $hmac)) {
+            return $this->createDeniedResponse();
+        }
+        return new RedirectResponse(PreviewTokenService::withoutToken($frontendUri), 303);
     }
 
     private function createDeniedJsonResponse(): ResponseInterface

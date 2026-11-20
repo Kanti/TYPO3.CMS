@@ -32,6 +32,7 @@ use TYPO3\CMS\Backend\Template\Components\ComponentFactory;
 use TYPO3\CMS\Backend\Template\ModuleTemplate;
 use TYPO3\CMS\Backend\Template\ModuleTemplateFactory;
 use TYPO3\CMS\Core\Authentication\BackendUserAuthentication;
+use TYPO3\CMS\Core\Configuration\Features;
 use TYPO3\CMS\Core\Context\LanguageAspectFactory;
 use TYPO3\CMS\Core\DataHandling\PageDoktypeRegistry;
 use TYPO3\CMS\Core\Domain\Repository\PageRepository;
@@ -68,6 +69,7 @@ final class ViewModuleController
         private readonly PreviewTokenIssuer $previewTokenIssuer,
         private readonly PageContextFactory $pageContextFactory,
         private readonly PageDoktypeRegistry $pageDoktypeRegistry,
+        private readonly Features $features,
     ) {}
 
     public function handleRequest(ServerRequestInterface $request): ResponseInterface
@@ -128,19 +130,26 @@ final class ViewModuleController
         $custom['width'] = MathUtility::forceIntegerInRange($custom['width'] ?? 320, 300);
         $custom['height'] = MathUtility::forceIntegerInRange($custom['height'] ?? 480, 300);
 
-        try {
-            // Always with a preview token, so the page stays in the frame. The site shows it as
-            // a preview only where something is previewed.
-            $preview = $this->previewTokenIssuer->issue($request, $this->getBackendUser(), $targetUri, $this->pageContext->pageId);
-            $previewSettings = $this->previewTokenIssuer->getFrameSettings($preview, $this->pageContext->pageId);
-            $frameSources = $preview->hosts->getFrameSources();
-        } catch (AddressOutsidePreviewException) {
-            // A frontend address an event listener changed to a host outside the preview, such as a
-            // decoupled frontend, opens as it is, without a token
+        $previewSettings = null;
+        $frameSources = [];
+        if ($this->features->isFeatureEnabled('backend.previewToken')) {
+            try {
+                // Always with a preview token, so the page stays in the frame. The site shows it as
+                // a preview only where something is previewed.
+                $preview = $this->previewTokenIssuer->issue($request, $this->getBackendUser(), $targetUri, $this->pageContext->pageId);
+                $previewSettings = $this->previewTokenIssuer->getFrameSettings($preview, $this->pageContext->pageId);
+                $frameSources = $preview->hosts->getFrameSources();
+            } catch (AddressOutsidePreviewException) {
+                // A frontend address an event listener changed to a host outside the preview, such as a
+                // decoupled frontend, opens without a token as well
+            } catch (PreviewAccessDeniedException) {
+                return $view->assign('info', $languageService->sL('backend.preview:error.denied'))->renderResponse('Empty');
+            }
+        }
+        if ($previewSettings === null) {
+            // Without a preview token the frame opens the address as it is, with the backend login of the browser
             $previewSettings = $this->previewTokenIssuer->getPlainFrameSettings($request, $targetUri, $this->pageContext->pageId);
             $frameSources = $targetUri->getScheme() !== '' && $targetUri->getHost() !== '' ? [UriValue::fromUri($targetUri)] : [];
-        } catch (PreviewAccessDeniedException) {
-            return $view->assign('info', $languageService->sL('backend.preview:error.denied'))->renderResponse('Empty');
         }
 
         $view->assignMultiple([

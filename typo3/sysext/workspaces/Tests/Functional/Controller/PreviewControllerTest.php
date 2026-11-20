@@ -50,6 +50,14 @@ final class PreviewControllerTest extends FunctionalTestCase
 
     protected array $coreExtensionsToLoad = ['workspaces'];
 
+    protected array $configurationToUseInTestInstance = [
+        'SYS' => [
+            'features' => [
+                'backend.previewToken' => true,
+            ],
+        ],
+    ];
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -125,6 +133,49 @@ final class PreviewControllerTest extends FunctionalTestCase
 
         self::assertSame($expectedLiveUrl, $this->extractPreviewUrl($content, 'live'));
         self::assertSame($expectedDraftUrl, $this->extractPreviewUrl($content, 'workspace'));
+    }
+
+    /**
+     * Switched off, the frames open their addresses as before the preview token: the
+     * live frame with ADMCMD_prev=LIVE and the groups of the live version, the frame of
+     * the workspace with ADMCMD_prev=IGNORE and the groups of both versions. The backend
+     * login of the browser shows them.
+     */
+    public static function previewUrlsWithoutPreviewTokenDataProvider(): array
+    {
+        return [
+            'page without access restriction' => [
+                2,
+                ['path' => '/public', 'ADMCMD_prev' => 'LIVE', 'ADMCMD_simUser' => null],
+                ['path' => '/public', 'ADMCMD_prev' => 'IGNORE', 'ADMCMD_simUser' => null],
+            ],
+            'live and draft version restricted to different groups' => [
+                6,
+                ['path' => '/different-groups', 'ADMCMD_prev' => 'LIVE', 'ADMCMD_simUser' => '1'],
+                ['path' => '/different-groups', 'ADMCMD_prev' => 'IGNORE', 'ADMCMD_simUser' => '1,2'],
+            ],
+            'restricted page created in workspace' => [
+                7,
+                null,
+                ['path' => '/new-restricted', 'ADMCMD_prev' => 'IGNORE', 'ADMCMD_simUser' => '3'],
+            ],
+        ];
+    }
+
+    #[DataProvider('previewUrlsWithoutPreviewTokenDataProvider')]
+    #[Test]
+    public function framesOpenTheirAddressesWithoutPreviewTokenWhileThePreviewTokenIsSwitchedOff(int $pageId, ?array $expectedLiveUrl, array $expectedDraftUrl): void
+    {
+        $GLOBALS['TYPO3_CONF_VARS']['SYS']['features']['backend.previewToken'] = false;
+
+        $content = $this->renderPreview($pageId);
+
+        self::assertSame($expectedLiveUrl, $this->extractPlainFrameUrl($content, 'live'));
+        self::assertSame($expectedDraftUrl, $this->extractPlainFrameUrl($content, 'workspace'));
+        self::assertContains('https://example.com', array_map(
+            static fn(string $source): string => (string)parse_url($source, PHP_URL_SCHEME) . '://' . parse_url($source, PHP_URL_HOST),
+            $this->getFrameSources()
+        ));
     }
 
     public static function draftUrlOfTranslationCreatedInWorkspaceDataProvider(): array
@@ -420,6 +471,29 @@ final class PreviewControllerTest extends FunctionalTestCase
         return [
             'path' => (string)parse_url($url, PHP_URL_PATH),
             'groups' => $groups === [] ? null : implode(',', $groups),
+        ];
+    }
+
+    /**
+     * The address of a frame without a preview token, which the frame opens as it is
+     *
+     * @return array{path: string, ADMCMD_prev: ?string, ADMCMD_simUser: ?string}|null
+     */
+    private function extractPlainFrameUrl(string $content, string $frame): ?array
+    {
+        $class = $frame === 'workspace' ? 't3js-workspace-view-workspace' : 't3js-workspace-view-live';
+        if (!preg_match('/<iframe class="[^"]*' . $class . '"[^>]*data-preview-settings="([^"]+)"/', $content, $matches)) {
+            return null;
+        }
+        $settings = json_decode(html_entity_decode($matches[1]), true, flags: JSON_THROW_ON_ERROR);
+        self::assertSame('', $settings['renewUrl']);
+        self::assertSame([], $settings['hosts']);
+        parse_str((string)parse_url($settings['url'], PHP_URL_QUERY), $query);
+        self::assertArrayNotHasKey(PreviewTokenService::PARAMETER, $query);
+        return [
+            'path' => (string)parse_url($settings['url'], PHP_URL_PATH),
+            'ADMCMD_prev' => $query['ADMCMD_prev'] ?? null,
+            'ADMCMD_simUser' => $query['ADMCMD_simUser'] ?? null,
         ];
     }
 

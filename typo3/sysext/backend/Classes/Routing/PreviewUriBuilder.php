@@ -26,6 +26,7 @@ use TYPO3\CMS\Backend\Routing\Event\BeforePagePreviewUriGeneratedEvent;
 use TYPO3\CMS\Backend\Utility\BackendUtility;
 use TYPO3\CMS\Core\Authentication\BackendUserAuthentication;
 use TYPO3\CMS\Core\Cache\CacheManager;
+use TYPO3\CMS\Core\Configuration\Features;
 use TYPO3\CMS\Core\Context\Context;
 use TYPO3\CMS\Core\Context\DateTimeAspect;
 use TYPO3\CMS\Core\Context\LanguageAspect;
@@ -290,12 +291,16 @@ class PreviewUriBuilder
      * frontend user group, shown in a workspace, hidden or below a hidden page extending to
      * its subpages, in a backend user section or a disabled language, or if the previewed
      * record is hidden or not published at the moment. Preview links built outside of the
-     * backend, for example in the frontend, never need a token.
+     * backend, for example in the frontend, never need a token, nor does any preview while
+     * the feature "backend.previewToken" is disabled.
      *
      * @internal
      */
     protected function requiresPreviewToken(UriInterface $uri): bool
     {
+        if (!GeneralUtility::makeInstance(Features::class)->isFeatureEnabled('backend.previewToken')) {
+            return false;
+        }
         // An address of the site, absolute or relative, and not for example a mailto: link
         if (!in_array($uri->getScheme(), ['', 'http', 'https'], true)) {
             return false;

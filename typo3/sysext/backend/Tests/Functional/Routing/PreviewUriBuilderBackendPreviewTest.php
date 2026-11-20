@@ -43,6 +43,14 @@ final class PreviewUriBuilderBackendPreviewTest extends FunctionalTestCase
         'DE' => ['id' => 1, 'title' => 'Deutsch', 'locale' => 'de_DE.UTF8'],
     ];
 
+    protected array $configurationToUseInTestInstance = [
+        'SYS' => [
+            'features' => [
+                'backend.previewToken' => true,
+            ],
+        ],
+    ];
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -75,6 +83,23 @@ final class PreviewUriBuilderBackendPreviewTest extends FunctionalTestCase
     public function pageOnAnotherDomainThatNeedsTheBackendLoginOpensThePreviewPage(int $pageId, string $frontendUrl): void
     {
         $this->assertPreviewPage($frontendUrl, PreviewUriBuilder::create($pageId)->buildBackendPreviewUri());
+    }
+
+    /**
+     * Switched off, every preview opens the page directly, as before the preview token.
+     * The frontend decides with the backend login cookie whether to show it.
+     */
+    #[Test]
+    #[DataProvider('pagesNeedingThePreviewPageDataProvider')]
+    public function pageOnAnotherDomainThatNeedsTheBackendLoginOpensDirectlyWhileThePreviewTokenIsSwitchedOff(int $pageId, string $frontendUrl): void
+    {
+        $GLOBALS['TYPO3_CONF_VARS']['SYS']['features']['backend.previewToken'] = false;
+        $GLOBALS['BE_USER']->workspace = 1;
+
+        $uri = (string)PreviewUriBuilder::create($pageId)->buildBackendPreviewUri();
+
+        self::assertStringStartsWith($frontendUrl, $uri);
+        self::assertSame($uri, json_decode(PreviewUriBuilder::create($pageId)->withModuleLoading(false)->buildDispatcherDataAttributes()['dispatch-args'], true)[0]);
     }
 
     /**
