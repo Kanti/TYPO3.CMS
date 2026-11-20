@@ -27,6 +27,7 @@ use TYPO3\CMS\Backend\Template\PageRendererBackendSetupTrait;
 use TYPO3\CMS\Backend\View\BackendViewFactory;
 use TYPO3\CMS\Core\Authentication\BackendUserAuthentication;
 use TYPO3\CMS\Core\Configuration\ExtensionConfiguration;
+use TYPO3\CMS\Core\Crypto\HashService;
 use TYPO3\CMS\Core\Http\HtmlResponse;
 use TYPO3\CMS\Core\Http\JsonResponse;
 use TYPO3\CMS\Core\Http\RedirectResponse;
@@ -57,14 +58,16 @@ final readonly class PreviewPageController
         private PageRenderer $pageRenderer,
         private ExtensionConfiguration $extensionConfiguration,
         private PolicyRegistry $policyRegistry,
+        private HashService $hashService,
     ) {}
 
     public function showAction(ServerRequestInterface $request): ResponseInterface
     {
         $query = $request->getQueryParams();
         $pageId = (int)($query['page'] ?? 0);
+        $url = is_string($query['url'] ?? null) ? $query['url'] : '';
         try {
-            $frontendUri = new Uri(is_string($query['url'] ?? null) ? $query['url'] : '');
+            $frontendUri = new Uri($url);
         } catch (\InvalidArgumentException) {
             // A malformed address, as a hand-edited or truncated link may carry
             return $this->createDeniedResponse();
@@ -73,7 +76,11 @@ final readonly class PreviewPageController
             $preview = $this->issuer->issue($request, $this->getBackendUser(), $frontendUri, $pageId);
         } catch (AddressOutsidePreviewException) {
             // A frontend address an event listener changed to a host outside the preview, such as a
-            // decoupled frontend, opens as it is, without a token
+            // decoupled frontend, opens as it is, without a token. The route has no CSRF token, so
+            // only a link the backend signed, see PreviewUriBuilder, may leave the backend.
+            if (!is_string($query['hmac'] ?? null) || !$this->hashService->validateHmac($url, 'backend-preview-url', $query['hmac'])) {
+                return $this->createDeniedResponse();
+            }
             return new RedirectResponse(PreviewTokenService::withoutToken($frontendUri), 303);
         } catch (PreviewAccessDeniedException) {
             return $this->createDeniedResponse();
