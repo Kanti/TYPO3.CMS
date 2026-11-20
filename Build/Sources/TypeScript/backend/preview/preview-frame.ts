@@ -30,6 +30,10 @@ export interface PreviewFrameCallbacks {
 
 const parameter = '__t3ct';
 const renewBefore = 60_000;
+// The core admin panel sends up to 30 flags and numbers, the caps leave room for the settings of other modules
+const adminPanelSetting = /^TSFE_ADMIN_PANEL\[\w{1,100}\]$/;
+const adminPanelValueLength = 1024;
+const adminPanelFields = 200;
 
 /**
  * The query is handled as text: only pairs named like the token are touched, all other
@@ -41,6 +45,16 @@ function isTokenPair(pair: string): boolean {
   } catch {
     return false;
   }
+}
+
+function isAdminPanelSetting(field: unknown): field is [string, string] {
+  if (!Array.isArray(field)) {
+    return false;
+  }
+  if (typeof field[0] !== 'string' || typeof field[1] !== 'string') {
+    return false;
+  }
+  return adminPanelSetting.test(field[0]) && field[1].length <= adminPanelValueLength;
 }
 
 function queryPairs(url: URL): string[] {
@@ -213,7 +227,9 @@ export default class PreviewFrame {
   /**
    * The admin panel in the frame cannot reach the backend: the frame has no backend
    * login. It hands its settings to this document, which stores them with the backend
-   * session of the editor and reloads the frame.
+   * session of the editor and reloads the frame. A script of the page can post the same
+   * message with any fields, so only fields shaped like flat settings of the admin panel
+   * are stored, and a message with more fields than an admin panel sends is ignored.
    */
   private relayAdminPanel(action: unknown, fields: unknown): void {
     const ajaxUrls: Record<string, string> = TYPO3.settings?.ajaxUrls ?? {};
@@ -233,19 +249,11 @@ export default class PreviewFrame {
     if (!Array.isArray(fields)) {
       return;
     }
+    if (fields.length > adminPanelFields) {
+      return;
+    }
     const data = new FormData();
-    fields.forEach((field: unknown): void => {
-      if (!Array.isArray(field)) {
-        return;
-      }
-      if (typeof field[0] !== 'string') {
-        return;
-      }
-      if (typeof field[1] !== 'string') {
-        return;
-      }
-      data.append(field[0], field[1]);
-    });
+    fields.filter(isAdminPanelSetting).forEach(([name, value]: [string, string]): void => data.append(name, value));
     new AjaxRequest(ajaxUrls.adminPanel_saveForm).post(data).then((): void => this.reload(), (): void => this.fail());
   }
 
